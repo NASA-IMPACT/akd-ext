@@ -6,6 +6,9 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
     "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
+    "openai-agents>=0.1.0",
+    "openai>=1.0.0",
+    "pydantic>=2.0.0",
 ]
 
 [build-system]
