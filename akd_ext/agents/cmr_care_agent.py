@@ -1,7 +1,7 @@
 from akd_ext.agents._openai_base_agent import OpenAIBaseAgent, OpenAIBaseAgentConfig
 from akd._base import InputSchema, OutputSchema
 from agents import HostedMCPTool, Agent, ModelSettings, TResponseInputItem, Runner, RunConfig, trace
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from openai.types.shared.reasoning import Reasoning
 
 
@@ -16,7 +16,9 @@ class CMRCareInputSchema(InputSchema):
 
 class CMRCareOutputSchema(OutputSchema):
   """Output schema for CMR Care Agent."""
+  __response_field__ = "report"
   dataset_concept_ids: list[str] = Field(..., description="List of dataset concept IDs")
+  report: str = Field(default=None, description="Detailed report pertaining to the query.")
 
 class CMRCareAgent(OpenAIBaseAgent[CMRCareInputSchema, CMRCareOutputSchema]):
   input_schema = CMRCareInputSchema
@@ -47,6 +49,7 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInputSchema, CMRCareOutputSchema]):
 
     class OutputAgentSchema(BaseModel):
       dataset_concept_ids: list[str]
+      report: str
 
     nasa_cmr_data_search_agent = Agent(
       name="NASA CMR Data Search Agent",
@@ -428,7 +431,24 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInputSchema, CMRCareOutputSchema]):
 
     output_agent = Agent(
       name="Output Agent",
-      instructions="Get the ranked list of outputs from the previous response (as indicated in the response) and provide as a flat json",
+      instructions="""
+        Get the ranked list of outputs from the previous response (as indicated in the response) and provide as a flat json. 
+        Also provide a report with the reasoning of the selected list of outputs in markdown format.
+          - Use the following format for the report:
+              ```
+              # Report
+              ## Relevant Datasets
+              ### 1. CMR Concept ID: clickable link to the dataset
+              #### Reasoning: <reasoning>
+              ### 2. CMR Concept ID: clickable link to the dataset
+              #### Reasoning: <reasoning>
+              ....
+              ### N. CMR Concept ID: clickable link to the dataset
+              #### Reasoning: <reasoning>
+              ```
+          - For each ranked list, provide the reasoning for the selection.
+          - For each output concept id, the link to the provided dataset follows the format: https://cmr.earthdata.nasa.gov/search/concepts/<concept_id>.html
+        """,
       model="gpt-5.2",
       output_type=OutputAgentSchema,
       model_settings=ModelSettings(
@@ -491,8 +511,11 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInputSchema, CMRCareOutputSchema]):
           "output_text": output_agent_result_temp.final_output.json(),
           "output_parsed": output_agent_result_temp.final_output.model_dump()
         }
-        return OutputAgentSchema(dataset_concept_ids=output_agent_result["output_parsed"]["dataset_concept_ids"])
+        return OutputAgentSchema(
+          dataset_concept_ids=output_agent_result["output_parsed"]["dataset_concept_ids"],
+          report=output_agent_result["output_parsed"]["report"]
+        )
 
     workflow_result = await run_workflow(WorkflowInput(input_as_text=params.input_as_text))
     # Convert OutputAgentSchema to CMRCareOutputSchema
-    return CMRCareOutputSchema(dataset_concept_ids=workflow_result.dataset_concept_ids)
+    return CMRCareOutputSchema(dataset_concept_ids=workflow_result.dataset_concept_ids, report=workflow_result.report)

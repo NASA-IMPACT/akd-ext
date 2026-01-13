@@ -70,7 +70,7 @@ async def test_agent():
             
             # Run agent
             result = await agent.arun(test_input)
-            
+
             # Display results
             print("\n" + "-"*80)
             print("RESULTS")
@@ -80,6 +80,12 @@ async def test_agent():
             for j, concept_id in enumerate(result.dataset_concept_ids, 1):
                 print(f"{j}. {concept_id}")
             
+            # Display report
+            print("\n" + "-"*80)
+            print("REPORT")
+            print("-"*80)
+            print(result.report)
+
             results.append({
                 "test_case": test_case['name'],
                 "success": True,
