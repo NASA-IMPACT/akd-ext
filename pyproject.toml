@@ -3,9 +3,33 @@ name = "akd-ext"
 version = "0.0.1"
 description = "Misc extension to akd-core"
 readme = "README.md"
+license = "Apache-2.0"
+authors = [
+    {name = "Nish", email = "np0069@uah.edu"},
+]
+keywords = ["akd", "extension", "tools", "agents"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.12",
+]
 requires-python = ">=3.12"
 dependencies = [
     "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
+]
+
+[project.urls]
+Homepage = "https://github.com/NASA-IMPACT/akd-ext"
+Repository = "https://github.com/NASA-IMPACT/akd-ext"
+"AKD Core" = "https://github.com/NASA-IMPACT/accelerated-discovery"
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=8.0.0",
+    "pytest-asyncio>=1.0.0",
+    "pytest-cov>=6.0.0",
+    "pre-commit>=4.2.0",
 ]
 
 [build-system]
@@ -15,3 +39,31 @@ build-backend = "setuptools.build_meta"
 [tool.setuptools.packages.find]
 include = ["akd_ext*"]
 exclude = ["tests*"]
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+python_files = ["test_*.py", "*_test.py"]
+python_functions = ["test_*"]
+addopts = [
+    "--strict-markers",
+    "--strict-config",
+    "-ra",
+    "--cov=akd_ext",
+    "--cov-report=term-missing",
+]
+markers = [
+    "unit: Unit tests",
+    "integration: Integration tests",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 120
+
+[tool.ruff.format]
+line-ending = "lf"
+quote-style = "double"
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["F841"]
