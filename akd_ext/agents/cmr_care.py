@@ -440,6 +440,10 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
     tools: list[Any] = Field(default_factory=_default_cmr_tools)
 
 
+# Resolve forward references from agents SDK
+CMRCareConfig.model_rebuild()
+
+
 # -----------------------------------------------------------------------------
 # Input/Output Schemas
 # -----------------------------------------------------------------------------
@@ -483,6 +487,16 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
     ) -> None:
         super().__init__(config=config, debug=debug)
         self._output_agent = self._create_output_agent()
+
+    def _create_agent(self) -> Agent:
+        """Create search agent without output_type (free-form text output)."""
+        return Agent(
+            name="CMRSearchAgent",
+            instructions=self.config.system_prompt,
+            model=self.config.model_name,
+            tools=self.config.tools,
+            model_settings=self.config.model_settings,
+        )
 
     def _create_output_agent(self) -> Agent:
         """Create output agent for formatting results."""
