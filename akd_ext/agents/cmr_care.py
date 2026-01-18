@@ -441,10 +441,6 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
     tools: list[Any] = Field(default_factory=_default_cmr_tools)
 
 
-# Resolve forward references from agents SDK
-CMRCareConfig.model_rebuild()
-
-
 # -----------------------------------------------------------------------------
 # Input/Output Schemas
 # -----------------------------------------------------------------------------

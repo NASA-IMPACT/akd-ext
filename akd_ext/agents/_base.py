@@ -4,7 +4,7 @@ from typing import Any
 
 from agents import Agent, ModelSettings, RunConfig, Runner, trace
 from openai.types.shared.reasoning import Reasoning
-from pydantic import Field, computed_field
+from pydantic import Field
 
 from akd._base import InputSchema, OutputSchema
 from akd.agents._base import BaseAgent, BaseAgentConfig
@@ -38,7 +38,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     frequency_penalty: float | None = Field(default=None, description="Frequency penalty for token repetition.")
     presence_penalty: float | None = Field(default=None, description="Presence penalty for new topics.")
 
-    @computed_field
+    @property
     def model_settings(self) -> ModelSettings:
         """ModelSettings built from config values.
 
@@ -68,14 +68,10 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
             presence_penalty=self.presence_penalty,
         )
 
-    @computed_field
+    @property
     def run_config(self) -> RunConfig:
         """RunConfig with tracing parameters."""
         return RunConfig(trace_metadata=self.tracing_params or {})
-
-
-# Resolve forward references from agents SDK
-OpenAIBaseAgentConfig.model_rebuild()
 
 
 class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent):
