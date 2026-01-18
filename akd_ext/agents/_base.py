@@ -40,13 +40,25 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
 
     @computed_field
     def model_settings(self) -> ModelSettings:
-        """ModelSettings built from config values."""
+        """ModelSettings built from config values.
+
+        Note: Reasoning models (o1, o3, gpt-5.2, etc.) don't support sampling
+        parameters like temperature, top_p, frequency_penalty, presence_penalty.
+        These are excluded when reasoning_effort is set.
+        """
         reasoning = None
         if self.reasoning_effort:
+            # Reasoning models don't support sampling parameters
             reasoning = Reasoning(
                 effort=self.reasoning_effort,
                 summary=self.reasoning_summary or "auto",
             )
+            return ModelSettings(
+                store=True,
+                max_tokens=self.max_tokens,
+                reasoning=reasoning,
+            )
+        # Non-reasoning models use standard sampling parameters
         return ModelSettings(
             store=True,
             temperature=self.temperature,
@@ -54,7 +66,6 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
             top_p=self.top_p,
             frequency_penalty=self.frequency_penalty,
             presence_penalty=self.presence_penalty,
-            reasoning=reasoning,
         )
 
     @computed_field
