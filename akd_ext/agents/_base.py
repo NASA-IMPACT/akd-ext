@@ -4,7 +4,7 @@ from typing import Any
 
 from agents import Agent, ModelSettings, RunConfig, Runner, trace
 from openai.types.shared.reasoning import Reasoning
-from pydantic import Field, computed_field
+from pydantic import Field
 
 from akd._base import InputSchema, OutputSchema
 from akd.agents._base import BaseAgent, BaseAgentConfig
@@ -38,7 +38,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     frequency_penalty: float | None = Field(default=None, description="Frequency penalty for token repetition.")
     presence_penalty: float | None = Field(default=None, description="Presence penalty for new topics.")
 
-    @computed_field
+    @property
     def model_settings(self) -> ModelSettings:
         """ModelSettings built from config values.
 
@@ -68,14 +68,10 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
             presence_penalty=self.presence_penalty,
         )
 
-    @computed_field
+    @property
     def run_config(self) -> RunConfig:
         """RunConfig with tracing parameters."""
         return RunConfig(trace_metadata=self.tracing_params or {})
-
-
-# Resolve forward references from agents SDK
-OpenAIBaseAgentConfig.model_rebuild()
 
 
 class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent):
@@ -135,24 +131,18 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent)
 
     async def get_response_async(
         self,
-        input: list[dict[str, Any]] | str | None = None,
+        messages: list[dict[str, Any]] | None = None,
         **kwargs,
     ) -> Any:
-        """Run the agent with given input and return the RunResult.
+        """Run the agent and return the RunResult.
 
         Args:
-            input: Conversation input. If None, uses internal memory.
-                   Can be a string (converted to user message) or list of dicts.
+            messages: Conversation messages. If None, uses internal memory.
 
         Returns:
-            RunResult from Runner.run() for full access to outputs.
+            RunResult from the agent execution.
         """
-        if input is None:
-            agent_input = self._memory
-        elif isinstance(input, str):
-            agent_input = [{"role": "user", "content": input}]
-        else:
-            agent_input = input
+        agent_input = messages if messages is not None else self._memory
 
         with trace(self.__class__.__name__):
             return await Runner.run(
@@ -164,18 +154,21 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent)
     async def _arun(self, params: InSchema, **kwargs) -> OutSchema:
         """Run the agent workflow.
 
-        Handles memory management, runs the agent, and returns typed output.
-        Override this for complex multi-agent workflows.
+        Override for custom orchestration (e.g., multi-agent pipelines).
         """
         if self.config.stateless:
             self.reset_memory()
 
+        # Add user input to memory
         self._memory.append({"role": "user", "content": params.model_dump_json()})
 
-        result = await self.get_response_async(input=self._memory)
+        # Run pipeline via get_response_async
+        result = await self.get_response_async(messages=self._memory)
 
+        # Update memory with full conversation
         self._memory = result.to_input_list()
 
+        # Return typed output
         final_output = result.final_output
         if isinstance(final_output, self.output_schema):
             return final_output
@@ -183,3 +176,50 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent)
             return self.output_schema(**final_output.model_dump())
         else:
             return self.output_schema.model_validate_json(str(final_output))
+
+
+class FreeFormOutput(OutputSchema):
+    """Default output schema for free-form agents."""
+
+    response: str = Field(..., description="Free-form text response from agent")
+
+
+class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, FreeFormOutput]):
+    """Base for OpenAI agents returning free-form text (no structured output_type).
+
+    Use when the agent should return unstructured text that gets wrapped
+    in FreeFormOutput. Does NOT set output_type on the OpenAI SDK Agent.
+
+    Subclasses must define:
+    - input_schema: Input schema class
+
+    Subclasses can override:
+    - output_schema: Defaults to FreeFormOutput
+    - _create_agent(): For custom agent creation
+    """
+
+    output_schema = FreeFormOutput
+
+    def _create_agent(self) -> Agent:
+        """Create agent WITHOUT output_type (free-form text output)."""
+        return Agent(
+            name=self.__class__.__name__,
+            instructions=self.config.system_prompt,
+            model=self.config.model_name or "gpt-4o",
+            tools=self.config.tools,
+            model_settings=self.config.model_settings,
+            # NO output_type - returns free-form text
+        )
+
+    async def _arun(self, params: InSchema, **kwargs) -> FreeFormOutput:
+        """Run agent and wrap string response in FreeFormOutput."""
+        if self.config.stateless:
+            self.reset_memory()
+
+        self._memory.append({"role": "user", "content": params.model_dump_json()})
+        result = await self.get_response_async(messages=self._memory)
+        self._memory = result.to_input_list()
+
+        # Wrap string response in output schema
+        response_text = str(result.final_output)
+        return self.output_schema(response=response_text)
