@@ -536,19 +536,27 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareInput, CMRCareOutput]):
         )
 
     async def _arun(self, params: CMRCareInput, **kwargs) -> CMRCareOutput:
-        """Orchestrate search -> output pipeline."""
+        """Orchestrate search -> output pipeline.
+
+        Matches Sanjog's original flow:
+        1. Run search agent with user query
+        2. Pass FULL conversation history (including tool calls) to output agent
+        """
         if self.config.stateless:
             self.reset_memory()
             self._search_agent.reset_memory()
 
         # Stage 1: Run search agent (free-form)
         search_input = CMRSearchInput(query=params.query)
-        search_result = await self._search_agent.arun(search_input)
-        search_response = search_result.response
+        await self._search_agent.arun(search_input)
 
-        # Stage 2: Run output agent (structured)
-        self._memory.append({"role": "user", "content": search_response})
-        result = await self.get_response_async(messages=self._memory)
+        # Stage 2: Run output agent with FULL search conversation history
+        # This includes: user query + tool calls + search agent responses
+        # Matches original semantics where output agent sees full context
+        search_conversation = self._search_agent.memory
+        result = await self.get_response_async(messages=search_conversation)
+
+        # Update our memory with the full conversation
         self._memory = result.to_input_list()
 
         # Return typed output
