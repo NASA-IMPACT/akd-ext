@@ -5,7 +5,8 @@ description = "Misc extension to akd-core"
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
-    "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
+    "akd[ml] @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
+    "PyGithub>=2.1.1",
 ]
 
 [build-system]
