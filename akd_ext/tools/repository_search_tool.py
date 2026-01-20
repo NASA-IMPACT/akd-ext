@@ -91,6 +91,7 @@ class RepositorySearchTool(SDECodeSearchTool):
     return repository_search_result
 
   def _get_reliability_score(self, repository_metadata: RepositoryMetadata) -> float:
+    # TODO: use reliability score calculation formula
     return 1.0
 
 if __name__ == "__main__":
