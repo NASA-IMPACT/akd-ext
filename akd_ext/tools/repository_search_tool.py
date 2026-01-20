@@ -74,9 +74,12 @@ class RepositorySearchTool(SDECodeSearchTool):
       parts = url.rstrip('/').split('github.com/')[-1].split('/')
       owner, repo = parts[0], parts[1]
       repo_name = f"{owner}/{repo}"
+      auth = None
+      if self.config.access_token:
+        auth = Auth.Token(self.config.access_token)
       # collect necessary metadata
       repository_metadata: RepositoryMetadata = RepositoryMetadata()
-      with Github() as g:
+      with Github(auth=auth) as g:
         repo = g.get_repo(repo_name)
         repository_metadata.stars = repo.stargazers_count
         repository_metadata.forks = repo.forks_count
