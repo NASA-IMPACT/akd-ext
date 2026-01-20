@@ -3,7 +3,6 @@ from pydantic import Field, BaseModel
 from github import Github, Auth
 from akd.tools._base import BaseTool
 from akd.tools.search.code_search import SDECodeSearchTool, SDECodeSearchToolConfig, CodeSearchToolInputSchema, CodeSearchToolOutputSchema
-from akd.tools.search._base import SearchToolOutputSchema
 from akd.structures import SearchResultItem
 
 class RepositoryMetadata(BaseModel):
@@ -29,7 +28,7 @@ class RepositorySearchToolInputSchema(CodeSearchToolInputSchema):
     Input query for the repository search tool. Its a text based query that initializes the relevant code search tool.
   """
 
-class RepositorySearchToolOutputSchema(SearchToolOutputSchema):
+class RepositorySearchToolOutputSchema(CodeSearchToolOutputSchema):
   """
     Output schema for the repository search tool.
   """
