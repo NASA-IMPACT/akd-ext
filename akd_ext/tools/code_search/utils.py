@@ -37,9 +37,9 @@ async def fetch_github_metadata(repo_name: str, access_token: str | None = None)
     repository_metadata.open_issues = repo.get_issues(state='open').totalCount
     repository_metadata.pulls = repo.get_pulls(state='open', sort='created', base='master').totalCount
     repository_metadata.closed_pulls = repo.get_pulls(state='closed', sort='created', base='master').totalCount
-    # Get first commit date
     try:
-      commits = repo.get_commits()
+      # Get first commit date
+      commits = repo.get_commits() # TODO: optimize this, this takes a lot of time. even goes through rate limits.
       first_commit = list(commits)[-1] if commits.totalCount > 0 else None
       repository_metadata.first_commit_date = first_commit.commit.author.date.isoformat() if first_commit else ""
     except Exception:
@@ -118,12 +118,14 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
 
 if __name__ == "__main__":
   import asyncio
+  import os
 
   async def main():
-    repository_metadata = await fetch_github_metadata("NASA-IMPACT/veda-config-ghg")
+    access_token = os.getenv("GITHUB_ACCESS_TOKEN", None)
+    repository_metadata = await fetch_github_metadata("NASA-IMPACT/veda-config-ghg", access_token)
     print("#" * 50)
     print(repository_metadata.model_dump())
-    print(get_reliability_score(repository_metadata))
+    print(calculate_reliability_score(repository_metadata))
     print("#" * 50)
 
   asyncio.run(main())
