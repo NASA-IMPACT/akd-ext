@@ -4,7 +4,7 @@ from github import Github, Auth
 from akd.tools._base import BaseTool
 from akd.tools.search.code_search import SDECodeSearchTool, SDECodeSearchToolConfig, CodeSearchToolInputSchema, CodeSearchToolOutputSchema
 from akd.structures import SearchResultItem
-from akd_ext.tools.code_search.utils import RepositoryMetadata, fetch_github_metadata, get_reliability_score
+from akd_ext.tools.code_search.utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
 
 class RepositorySearchResultItem(SearchResultItem):
   """
@@ -67,7 +67,7 @@ class RepositorySearchTool(SDECodeSearchTool):
       repo_name = f"{owner}/{repo}"
       # collect necessary metadata
       repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
-      reliability_score: int | float = get_reliability_score(repository_metadata)
+      reliability_score: int | float = calculate_reliability_score(repository_metadata)
       repository_search_result.results.append(RepositorySearchResultItem(**repository.model_dump(), repository_metadata=repository_metadata, reliability_score=reliability_score))
     return repository_search_result
 

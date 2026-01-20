@@ -26,7 +26,7 @@ async def test_repository_search_tool(query: str):
     """
     config = RepositorySearchToolConfig(page_size=2)
     tool = RepositorySearchTool(config=config)
-    result = await tool._arun(RepositorySearchToolInputSchema(queries=[query]))
+    result = await tool.arun(RepositorySearchToolInputSchema(queries=[query]))
 
     assert isinstance(result, RepositorySearchToolOutputSchema)
     assert len(result.results) > 0

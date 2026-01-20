@@ -46,7 +46,7 @@ async def fetch_github_metadata(repo_name: str, access_token: str | None = None)
       repository_metadata.first_commit_date = ""
   return repository_metadata
 
-def get_reliability_score(repository_metadata: RepositoryMetadata) -> float:
+def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> float:
   """
   Calculate a comprehensive reliability score (0-100) for a repository.
 
