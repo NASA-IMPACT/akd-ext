@@ -48,7 +48,8 @@ class RepositorySearchToolConfig(SDECodeSearchToolConfig):
 # Tool implementation
 class RepositorySearchTool(SDECodeSearchTool):
   """
-  Search for code in the repository.
+  Search for relevant code that exists in the github repository. It extends the code search tool and adds github repository metadata and reliability score to each search result item.
+  Note: The code search tool uses SDE API.
   """
   input_schema = RepositorySearchToolInputSchema
   output_schema = RepositorySearchToolOutputSchema
