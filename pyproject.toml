@@ -17,6 +17,7 @@ classifiers = [
 requires-python = ">=3.12"
 dependencies = [
     "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
+    "fastmcp>=2.0.0",
     "openai-agents>=0.6.7",
 ]
 
@@ -58,6 +59,9 @@ markers = [
     "unit: Unit tests",
     "integration: Integration tests",
 ]
+
+[tool.uv]
+override-dependencies = ["wrapt>=1.14"]
 
 [tool.ruff]
 target-version = "py312"
