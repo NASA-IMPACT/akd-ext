@@ -2,7 +2,7 @@
 
 import pytest
 
-from akd_ext.structures import SDEIndexedDocumentType, NASASMDDivision, TextSearchType
+from akd_ext.structures import SDEIndexedDocumentType, NASASMDDivision
 from akd_ext.tools import SDESearchTool, SDESearchToolInputSchema, SDESearchToolConfig
 
 
@@ -20,24 +20,22 @@ async def test_sde_search_basic():
     )
 
     # Verify response structure
-    assert result.documents is not None
-    assert isinstance(result.documents, list)
-    assert len(result.documents) > 0 and len(result.documents) <= 5
-    assert result.query_used == "climate change"
+    assert result.results is not None
+    assert isinstance(result.results, list)
+    assert len(result.results) > 0 and len(result.results) <= 5
 
     # If results are returned, verify document structure
 
-    print(f"Total results found: {result.total_count}")
-
-    for doc in result.documents:
+    for doc in result.results:
         assert doc.title is not None
         assert doc.url is not None
-        assert doc.snippet is not None
+        assert doc.content is not None
         assert isinstance(doc.score, float)
+        assert doc.query == "climate change"
 
         print(f"title: {doc.title}")
         print(f"url: {doc.url}")
-        print(f"snippet: {doc.snippet[:100]}...")  # Print first 100 chars of snippet
+        print(f"content: {doc.content[:100]}...")  # Print first 100 chars of content
         print(f"score: {doc.score}")
 
 
@@ -56,17 +54,16 @@ async def test_sde_search_with_division_filter():
         )
     )
 
-    assert result.documents is not None
-    for doc in result.documents:
+    assert result.results is not None
+    for doc in result.results:
         print(f"Document division: {doc.division}")
         assert doc.division == NASASMDDivision.EARTH_SCIENCE.value
 
-    assert len(result.documents) <= 5
+    assert len(result.results) <= 5
 
     # If results exist, optionally verify division
-    print(f"Total results found: {result.total_count}")
-    if result.documents:
-        print(f"Found {len(result.documents)} results for Earth Science division")
+    if result.results:
+        print(f"Found {len(result.results)} results for Earth Science division")
 
 
 @pytest.mark.integration
@@ -82,18 +79,18 @@ async def test_sde_search_with_doc_type_filter():
         )
     )
 
-    assert result.documents is not None
-    for doc in result.documents:
+    assert result.results is not None
+    for doc in result.results:
         print(f"Document type: {doc.doc_type}")
         assert doc.doc_type == SDEIndexedDocumentType.DATA.value
-    assert len(result.documents) > 0
+    assert len(result.results) > 0
 
 
 @pytest.mark.integration
 async def test_sde_search_types():
     """Test different search types."""
     config = SDESearchToolConfig(
-        search_type=TextSearchType.HYBRID,
+        search_type="hybrid",
     )
     tool = SDESearchTool(config=config)
 
@@ -104,8 +101,8 @@ async def test_sde_search_types():
             limit=3,
         )
     )
-    assert result_hybrid.documents is not None
-    assert len(result_hybrid.documents) > 0
+    assert result_hybrid.results is not None
+    assert len(result_hybrid.results) > 0
 
 
 @pytest.mark.integration
@@ -121,11 +118,10 @@ async def test_sde_search_obscure_text():
         )
     )
 
-    assert result.documents is not None
-    assert isinstance(result.documents, list)
-    print(f"Number of documents returned: {len(result.documents)}")
-    print(result.documents)
-    assert result.total_count >= 0
+    assert result.results is not None
+    assert isinstance(result.results, list)
+    print(f"Number of results returned: {len(result.results)}")
+    print(result.results)
 
 
 @pytest.mark.integration
@@ -140,6 +136,6 @@ async def test_sde_search_limit_parameter():
         )
     )
 
-    assert result.documents is not None
-    print(f"Number of documents returned: {len(result.documents)}")
-    assert len(result.documents) <= 3
+    assert result.results is not None
+    print(f"Number of results returned: {len(result.results)}")
+    assert len(result.results) <= 3

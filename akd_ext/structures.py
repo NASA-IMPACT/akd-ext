@@ -22,11 +22,3 @@ class SDEIndexedDocumentType(StrEnum):
     DOCUMENTATION = "Documentation"
     SOFTWARE_TOOLS = "Software and Tools"
     MISSIONS_INSTRUMENTS = "Missions and Instruments"
-
-
-class TextSearchType(StrEnum):
-    """Search type for SDE queries."""
-
-    HYBRID = "hybrid"  # Vector + keyword search
-    VECTOR = "vector"  # Semantic search only
-    KEYWORD = "keyword"  # Text-based search only

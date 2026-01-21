@@ -6,19 +6,24 @@ Discovery Engine for relevant scientific documents, datasets, and resources usin
 natural language queries.
 """
 
+import os
 import httpx
-from akd._base import InputSchema, OutputSchema
+from akd._base import InputSchema
+from akd.tools.search import SearchToolOutputSchema
+from akd.structures import SearchResult
 from akd.tools import BaseTool, BaseToolConfig
-from pydantic import BaseModel, Field
+from pydantic import Field
+from typing import Literal
+from loguru import logger
 
-from akd_ext.structures import SDEIndexedDocumentType, NASASMDDivision, TextSearchType
+from akd_ext.structures import SDEIndexedDocumentType, NASASMDDivision
 
 
 class SDESearchToolConfig(BaseToolConfig):
     """Configuration for the SDE Search Tool."""
 
-    api_base_url: str = Field(
-        default="https://dyejsbdumgpqz.cloudfront.net",
+    base_url: str = Field(
+        default=os.getenv("SDE_BASE_URL", "https://dyejsbdumgpqz.cloudfront.net"),
         description="Base URL for the SDE API",
     )
     timeout: float = Field(
@@ -29,30 +34,38 @@ class SDESearchToolConfig(BaseToolConfig):
         None,
         description="Filter results by NASA SMD division",
     )
-    search_type: TextSearchType = Field(
-        default=TextSearchType.HYBRID,
-        description="Search method: hybrid (vector+keyword), vector (semantic), or keyword (text)",
+    search_type: Literal["hybrid", "vector", "keyword"] = Field(
+        default="hybrid",
+        description="Search type: 'hybrid' (vector + keyword), 'vector' (semantic), 'keyword' (text-based)",
     )
 
 
-class SDEDocument(BaseModel):
+class SDEDocument(SearchResult):
     """
     A single document result from SDE search.
 
-    Parsed from the HitBase structure returned by the SDE Elastic Wrapper API.
-    Maps common fields from multiple index types (web, CMR, PDS3/4, SPASE, GCN, etc.)
-    into a unified structure for downstream use.
+    Extends SearchResult with SDE-specific fields. Parsed from the HitBase structure
+    returned by the SDE Elastic Wrapper API. Maps common fields from multiple index
+    types (web, CMR, PDS3/4, SPASE, GCN, etc.) into a unified structure.
+
+    Common fields inherited from SearchResult:
+    - query: Search query that produced this result
+    - title: Document title
+    - content: Snippet or abstract (mapped from snippet field)
+    - score: Relevance score from OpenSearch
     """
 
-    title: str = Field(..., description="Title of the document")
     url: str = Field(..., description="URL to access the document")
-    snippet: str = Field(..., description="Snippet or abstract of the document content (max 500 chars)")
-    score: float = Field(..., description="Relevance score from OpenSearch")
-    division: str | None = Field(None, description="NASA SMD division (e.g., Astrophysics, Planetary Science)")
-    doc_type: str | None = Field(None, description="Document type (e.g., Data, Documentation, Software and Tools)")
+    division: NASASMDDivision | None = Field(
+        None, description="NASA SMD division (e.g., Astrophysics, Planetary Science)"
+    )
+    doc_type: SDEIndexedDocumentType | None = Field(
+        None, description="Document type (e.g., Data, Documentation, Software and Tools)"
+    )
     source: str | None = Field(None, description="Source index (e.g., sde-web, sde-cmr, sde-pds4, sde-code)")
 
 
+# cannot use SearchToolInputSchema because it has plural 'queries' field
 class SDESearchToolInputSchema(InputSchema):
     """Input schema for SDE search queries."""
 
@@ -65,12 +78,10 @@ class SDESearchToolInputSchema(InputSchema):
     )
 
 
-class SDESearchToolOutputSchema(OutputSchema):
+class SDESearchToolOutputSchema(SearchToolOutputSchema):
     """Output schema for SDE search results."""
 
-    documents: list[SDEDocument] = Field(..., description="List of matching documents from SDE")
-    total_count: int = Field(..., description="Total number of results available")
-    query_used: str = Field(..., description="The query that was executed")
+    results: list[SDEDocument] = Field(..., description="List of matching documents from SDE")
 
 
 # not basing it on SearchTool because this just a wrapper around SDE API
@@ -94,7 +105,7 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
             "search_term": params.query,
             "page": 1,
             "pageSize": params.limit,
-            "search_type": self.config.search_type.value,
+            "search_type": self.config.search_type,
         }
 
         # Add optional filters
@@ -107,13 +118,13 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
         if filters:
             request_body["filters"] = filters
 
-        print(f"Request body for SDE API: {request_body}")
+        logger.debug(f"Request body for SDE API: {request_body}")
 
         # Make API request
         async with httpx.AsyncClient(timeout=self.config.timeout) as client:
             try:
                 response = await client.post(
-                    f"{self.config.api_base_url}/api/search",
+                    f"{self.config.base_url}/api/search",
                     json=request_body,
                 )
                 response.raise_for_status()
@@ -164,20 +175,21 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
 
             documents.append(
                 SDEDocument(
+                    query=params.query,
                     title=title,
-                    url=url,
-                    snippet=snippet,
+                    content=snippet,
                     score=score,
-                    division=division,
-                    doc_type=doc_type,
+                    url=url,
+                    division=NASASMDDivision(division) if division else None,
+                    doc_type=SDEIndexedDocumentType(doc_type) if doc_type else None,
                     source=source,
                 )
             )
 
-        total_count = data.get("total_count", len(documents))
-
         return SDESearchToolOutputSchema(
-            documents=documents,
-            total_count=total_count,
-            query_used=params.query,
+            results=documents,
+            extra={
+                "total_count": data.get("total_count", 0),
+                "query_used": params.query,
+            },
         )
