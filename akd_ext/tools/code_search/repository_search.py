@@ -70,8 +70,23 @@ class RepositorySearchToolConfig(SDECodeSearchToolConfig):
 # Tool implementation
 class RepositorySearchTool(SDECodeSearchTool):
     """
-    Search for relevant code that exists in the github repository. It extends the code search tool and adds github repository metadata and reliability score to each search result item.
-    Note: The code search tool uses SDE API.
+    Search for relevant code and implementations within specialized science repositories.
+
+    This tool performs a targeted search across curated scientific codebases to find
+    relevant repositories with README. It enriches the search results with
+    GitHub metadata such as stars, forks, and development activity, which are then
+    used to compute a reliability score for each item.
+
+    The reliability score (0-100) is a weighted average of repository maturity, activity, and community trust.
+
+    The formula: Score = (Age * 0.20) + (Activity * 0.25) + (Stars * 0.25) + (Forks * 0.15) + (History * 0.15)
+
+    How components are calculated:
+      - Age (20%): Higher for older repos; reaches 100% after 4 years.
+      - Activity (25%): Starts at 100% and drops to 0% if the repo hasn't been updated in a year.
+      - Stars (25%): Logarithmic scale where ~1,000 stars = 100%.
+      - Forks (15%): Logarithmic scale where ~500 forks = 100%.
+      - History (15%): Based on the span between the first commit and now; reaches 100% after 4 years.
     """
 
     input_schema = RepositorySearchToolInputSchema
