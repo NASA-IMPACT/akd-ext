@@ -71,7 +71,11 @@ class RepositorySearchTool(SDECodeSearchTool):
       # collect necessary metadata
       repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
       reliability_score: int | float = calculate_reliability_score(repository_metadata)
-      repository_search_result.results.append(RepositorySearchResultItem(**repository.model_dump(), repository_metadata=repository_metadata, reliability_score=reliability_score))
+      repository_search_result.results.append(RepositorySearchResultItem(**{
+        **repository.model_dump(),
+        "repository_metadata": repository_metadata,
+        "reliability_score": reliability_score
+        }))
     return repository_search_result
 
 if __name__ == "__main__":
