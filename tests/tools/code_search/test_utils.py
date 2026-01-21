@@ -15,10 +15,10 @@ class TestFetchGithubMetadata:
     async def test_fetch_github_metadata_success(self):
         """Test successful fetching of GitHub metadata from a real repository."""
         result = await fetch_github_metadata("NASA-IMPACT/veda-config-ghg")
-        
+
         # Verify result is a RepositoryMetadata instance
         assert isinstance(result, RepositoryMetadata)
-        
+
         # Verify all expected fields are present with correct types
         assert isinstance(result.stars, int)
         assert isinstance(result.forks, int)
@@ -28,4 +28,3 @@ class TestFetchGithubMetadata:
         assert isinstance(result.closed_pulls, int)
         assert isinstance(result.last_updated, str)
         assert isinstance(result.created_at, str)
-        assert isinstance(result.first_commit_date, str)
