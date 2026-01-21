@@ -1,5 +1,19 @@
 """Tools module for akd_ext."""
 
 from .dummy import DummyInputSchema, DummyOutputSchema, DummyTool
+from .code_search.repository_search import (
+    RepositorySearchTool,
+    RepositorySearchToolInputSchema,
+    RepositorySearchToolOutputSchema,
+    RepositorySearchToolConfig,
+)
 
-__all__ = ["DummyTool", "DummyInputSchema", "DummyOutputSchema"]
+__all__ = [
+    "DummyTool",
+    "DummyInputSchema",
+    "DummyOutputSchema",
+    "RepositorySearchTool",
+    "RepositorySearchToolInputSchema",
+    "RepositorySearchToolOutputSchema",
+    "RepositorySearchToolConfig",
+]
