@@ -7,6 +7,12 @@ from .sde_search import (
     SDESearchToolConfig,
     SDESearchToolInputSchema,
     SDESearchToolOutputSchema,
+from .code_search.repository_search import (
+    RepositorySearchTool,
+    RepositorySearchToolInputSchema,
+    RepositorySearchToolOutputSchema,
+    RepositorySearchToolConfig,
+
 )
 
 __all__ = [
@@ -18,4 +24,8 @@ __all__ = [
     "SDESearchToolOutputSchema",
     "SDESearchToolConfig",
     "SDEDocument",
+    "RepositorySearchTool",
+    "RepositorySearchToolInputSchema",
+    "RepositorySearchToolOutputSchema",
+    "RepositorySearchToolConfig",
 ]
