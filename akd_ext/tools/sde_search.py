@@ -40,7 +40,7 @@ class SDESearchToolConfig(BaseToolConfig):
         description="Search type: 'hybrid' (vector + keyword), 'vector' (semantic), 'keyword' (text-based)",
     )
     validate_urls: bool = Field(
-        default=True,
+        default=False,
         description="Validate document URLs with HTTP HEAD requests to filter out 404s",
     )
     url_check_timeout: float = Field(
@@ -123,7 +123,7 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
                    or "keyword" (text-based only). Fixed at tool instantiation.
     - division: Optional NASA SMD division filter (Astrophysics, Earth Science, Heliophysics,
                 Planetary Science). If set, all searches are scoped to this division.
-    - validate_urls: Whether to validate result URLs with HTTP HEAD requests (default: True).
+    - validate_urls: Whether to validate result URLs with HTTP HEAD requests (default: False).
                      Filters out inaccessible resources.
     - result_multiplier: When validate_urls=True, fetches this multiple of the limit to account
                         for filtered results (default: 2.0, range: 1.0-10.0)
