@@ -2,6 +2,8 @@ import os
 import asyncio
 from pydantic import Field, model_validator
 from urllib.parse import urlparse
+from loguru import logger
+
 from akd.tools.search.code_search import (
     SDECodeSearchTool,
     SDECodeSearchToolConfig,
@@ -9,8 +11,9 @@ from akd.tools.search.code_search import (
     CodeSearchToolOutputSchema,
 )
 from akd.structures import SearchResultItem
-from akd_ext.tools.code_search.utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
-from loguru import logger
+
+from akd_ext.mcp import mcp_tool
+from .utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
 
 
 class RepositorySearchResultItem(SearchResultItem):
@@ -68,6 +71,7 @@ class RepositorySearchToolConfig(SDECodeSearchToolConfig):
 
 
 # Tool implementation
+@mcp_tool
 class RepositorySearchTool(SDECodeSearchTool):
     """
     Search for relevant code and implementations within specialized science repositories.
