@@ -98,6 +98,54 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
     output_schema = SDESearchToolOutputSchema
     config_schema = SDESearchToolConfig
 
+    def _parse_document(self, doc: dict, query: str) -> SDEDocument:
+        """
+        Parse a single document from the SDE API response.
+
+        Args:
+            doc: Raw document dictionary from the API response
+            query: The search query that produced this result
+
+        Returns:
+            SDEDocument: Parsed and structured document
+        """
+        # Extract core fields
+        score = doc.get("score") or doc.get("_score") or 0.0
+        source_index = doc.get("index") or doc.get("_index") or "unknown"
+
+        # Extract title with multiple fallbacks
+        title = doc.get("title") or doc.get("name") or doc.get("id") or "Untitled"
+
+        # Extract URL with fallbacks
+        url = doc.get("url") or doc.get("readme_url") or ""
+
+        # Extract snippet/description with priority order
+        snippet = (
+            doc.get("full_text")
+            or doc.get("data_product_desc")
+            or doc.get("description")
+            or doc.get("relevant_content")
+            or ""
+        )
+
+        # Extract metadata from HitBase common fields
+        division = doc.get("division")
+        doc_type = doc.get("document_type")
+
+        # Determine source from api_source or index name
+        source = doc.get("api_source") or source_index
+
+        return SDEDocument(
+            query=query,
+            title=title,
+            content=snippet,
+            score=score,
+            url=url,
+            division=NASASMDDivision(division) if division else None,
+            doc_type=SDEIndexedDocumentType(doc_type) if doc_type else None,
+            source=source,
+        )
+
     async def _arun(self, params: SDESearchToolInputSchema) -> SDESearchToolOutputSchema:
         """Execute SDE search query and return formatted results."""
         # Build request payload
@@ -144,47 +192,7 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
             msg = f"SDE API returned unsuccessful response: {data}"
             raise RuntimeError(msg)
 
-        documents = []
-        for doc in data.get("documents", []):
-            # Parse HitBase structure
-            # Extract core fields
-            score = doc.get("score") or doc.get("_score") or 0.0
-            source_index = doc.get("index") or doc.get("_index") or "unknown"
-
-            # Extract title with multiple fallbacks
-            title = doc.get("title") or doc.get("name") or doc.get("id") or "Untitled"
-
-            # Extract URL with fallbacks
-            url = doc.get("url") or doc.get("readme_url") or ""
-
-            # Extract snippet/description with priority order
-            snippet = (
-                doc.get("full_text")
-                or doc.get("data_product_desc")
-                or doc.get("description")
-                or doc.get("relevant_content")
-                or ""
-            )
-
-            # Extract metadata from HitBase common fields
-            division = doc.get("division")
-            doc_type = doc.get("document_type")
-
-            # Determine source from api_source or index name
-            source = doc.get("api_source") or source_index
-
-            documents.append(
-                SDEDocument(
-                    query=params.query,
-                    title=title,
-                    content=snippet,
-                    score=score,
-                    url=url,
-                    division=NASASMDDivision(division) if division else None,
-                    doc_type=SDEIndexedDocumentType(doc_type) if doc_type else None,
-                    source=source,
-                )
-            )
+        documents = [self._parse_document(doc, params.query) for doc in data.get("documents", [])]
 
         return SDESearchToolOutputSchema(
             results=documents,
