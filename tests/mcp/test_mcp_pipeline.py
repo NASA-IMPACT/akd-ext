@@ -36,7 +36,7 @@ class TestToolConverter:
     def test_converter_sets_metadata(self):
         tool = DummyTool()
         mcp_func = tool_converter(tool)
-        assert mcp_func.__name__ == "DummyTool"
+        assert mcp_func.__name__ == "dummy_tool"
         assert "query" in mcp_func.__annotations__
 
     @pytest.mark.asyncio
