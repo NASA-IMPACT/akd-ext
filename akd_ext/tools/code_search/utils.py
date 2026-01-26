@@ -33,17 +33,22 @@ async def fetch_github_metadata(repo_name: str, access_token: str | None = None)
     auth = None
     if access_token:
         auth = Auth.Token(access_token)
-    with Github(auth=auth) as g:
-        repo = g.get_repo(repo_name)
-        repository_metadata.stars = repo.stargazers_count
-        repository_metadata.forks = repo.forks_count
-        repository_metadata.watchers = repo.subscribers_count
-        repository_metadata.last_updated = repo.pushed_at.isoformat() if repo.pushed_at else ""
-        repository_metadata.created_at = repo.created_at.isoformat() if repo.created_at else ""
-        repository_metadata.open_issues = repo.get_issues(state="open").totalCount
-        repository_metadata.pulls = repo.get_pulls(state="open", sort="created", base="master").totalCount
-        repository_metadata.closed_pulls = repo.get_pulls(state="closed", sort="created", base="master").totalCount
-        repository_metadata.first_commit_date = None  # The original comde provided also fell back to created_at if first_commit_date was not available. And it was set to None by default.
+    try:
+        with Github(auth=auth, retry=None) as g:
+            repo = g.get_repo(repo_name)
+            repository_metadata.stars = repo.stargazers_count
+            repository_metadata.forks = repo.forks_count
+            repository_metadata.watchers = repo.subscribers_count
+            repository_metadata.last_updated = repo.pushed_at.isoformat() if repo.pushed_at else ""
+            repository_metadata.created_at = repo.created_at.isoformat() if repo.created_at else ""
+            repository_metadata.open_issues = repo.get_issues(state="open").totalCount
+            repository_metadata.pulls = repo.get_pulls(state="open", sort="created", base="master").totalCount
+            repository_metadata.closed_pulls = repo.get_pulls(state="closed", sort="created", base="master").totalCount
+            repository_metadata.first_commit_date = None  # The original code provided also fell back to created_at if first_commit_date was not available. And it was set to None by default.
+    except Exception as e:
+        logger.error(f"Error fetching metadata for {repo_name}: {e}")
+        return repository_metadata
+
     return repository_metadata
 
 
