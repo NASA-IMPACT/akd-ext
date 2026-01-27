@@ -24,7 +24,7 @@ class SDESearchToolConfig(BaseToolConfig):
     """Configuration for the SDE Search Tool."""
 
     base_url: str = Field(
-        default=os.getenv("SDE_BASE_URL", "https://dyejsbdumgpqz.cloudfront.net"),
+        default=os.getenv("SDE_BASE_URL", "https://d2kqty7z3q8ugg.cloudfront.net"),
         description="Base URL for the SDE API",
     )
     timeout: float = Field(
