@@ -80,7 +80,7 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
         float: reliability score between 0 and 100 or None if metadata is null
     """
 
-    if repository_metadata.is_null_metadata:
+    if not repository_metadata or repository_metadata.is_null_metadata:
         return None
 
     now = datetime.now(timezone.utc)
