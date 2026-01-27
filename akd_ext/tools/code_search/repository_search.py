@@ -21,8 +21,9 @@ class RepositorySearchResultItem(SearchResultItem):
     Search result item with added github repository metadata and computed reliability score.
     """
 
-    reliability_score: float = Field(
-        default=1.0, description="Computed reliability score based on github repository metadata."
+    reliability_score: float | None = Field(
+        default=None,
+        description="Computed reliability score based on github repository metadata. If none, treat it neutrally as if there is no reliability score.",
     )
     repository_metadata: RepositoryMetadata = Field(
         default_factory=RepositoryMetadata,
@@ -118,7 +119,7 @@ class RepositorySearchTool(SDECodeSearchTool):
         owner, repo = path_parts[0], path_parts[1]
         repo_name = f"{owner}/{repo}"
         repository_metadata: RepositoryMetadata = await fetch_github_metadata(repo_name, self.config.access_token)
-        reliability_score: float = calculate_reliability_score(repository_metadata)
+        reliability_score: float | None = calculate_reliability_score(repository_metadata)
         return RepositorySearchResultItem(
             **{
                 **repository_item.model_dump(),

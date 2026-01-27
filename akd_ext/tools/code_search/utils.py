@@ -1,5 +1,5 @@
 from github import Github, Auth
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, computed_field
 from datetime import datetime, timezone
 import math
 from functools import lru_cache
@@ -23,6 +23,14 @@ class RepositoryMetadata(BaseModel):
     pulls: int = Field(default=0, description="Number of open pull requests on the repository.")
     closed_pulls: int = Field(default=0, description="Number of closed pull requests on the repository.")
 
+    @computed_field
+    @property
+    def is_null_metadata(self) -> bool:
+        return all(
+            getattr(self, field_name) == field_info.default
+            for field_name, field_info in RepositoryMetadata.model_fields.items()
+        )
+
 
 @lru_cache(maxsize=128)
 async def fetch_github_metadata(repo_name: str, access_token: str | None = None) -> RepositoryMetadata:
@@ -33,21 +41,26 @@ async def fetch_github_metadata(repo_name: str, access_token: str | None = None)
     auth = None
     if access_token:
         auth = Auth.Token(access_token)
-    with Github(auth=auth) as g:
-        repo = g.get_repo(repo_name)
-        repository_metadata.stars = repo.stargazers_count
-        repository_metadata.forks = repo.forks_count
-        repository_metadata.watchers = repo.subscribers_count
-        repository_metadata.last_updated = repo.pushed_at.isoformat() if repo.pushed_at else ""
-        repository_metadata.created_at = repo.created_at.isoformat() if repo.created_at else ""
-        repository_metadata.open_issues = repo.get_issues(state="open").totalCount
-        repository_metadata.pulls = repo.get_pulls(state="open", sort="created", base="master").totalCount
-        repository_metadata.closed_pulls = repo.get_pulls(state="closed", sort="created", base="master").totalCount
-        repository_metadata.first_commit_date = None  # The original comde provided also fell back to created_at if first_commit_date was not available. And it was set to None by default.
+    try:
+        with Github(auth=auth, retry=None) as g:
+            repo = g.get_repo(repo_name)
+            repository_metadata.stars = repo.stargazers_count
+            repository_metadata.forks = repo.forks_count
+            repository_metadata.watchers = repo.subscribers_count
+            repository_metadata.last_updated = repo.pushed_at.isoformat() if repo.pushed_at else ""
+            repository_metadata.created_at = repo.created_at.isoformat() if repo.created_at else ""
+            repository_metadata.open_issues = repo.get_issues(state="open").totalCount
+            repository_metadata.pulls = repo.get_pulls(state="open", sort="created", base="master").totalCount
+            repository_metadata.closed_pulls = repo.get_pulls(state="closed", sort="created", base="master").totalCount
+            repository_metadata.first_commit_date = None  # The original code provided also fell back to created_at if first_commit_date was not available. And it was set to None by default.
+    except Exception as e:
+        logger.error(f"Error fetching metadata for {repo_name}: {e}")
+        return repository_metadata
+
     return repository_metadata
 
 
-def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> float:
+def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> float | None:
     """
     Calculate a comprehensive reliability score (0-100) for a repository.
 
@@ -64,8 +77,12 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
         repository_metadata: RepositoryMetadata with stars, forks, created_at, last_updated, first_commit_date
 
     Returns:
-        float: reliability score between 0 and 100
+        float: reliability score between 0 and 100 or None if metadata is null
     """
+
+    if repository_metadata.is_null_metadata:
+        return None
+
     now = datetime.now(timezone.utc)
 
     # Parse dates - return 0 if essential data is missing
@@ -122,9 +139,11 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
 
 if __name__ == "__main__":
     import asyncio
+    from dotenv import load_dotenv
     import os
     import sys
 
+    load_dotenv()
     access_token = os.getenv("GITHUB_ACCESS_TOKEN", None)
     repo = "NASA-IMPACT/veda-config-ghg"
     if len(sys.argv) > 1:
