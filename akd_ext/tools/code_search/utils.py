@@ -1,9 +1,9 @@
+import math
+from datetime import datetime, timezone
+from loguru import logger
 from github import Github, Auth
 from pydantic import BaseModel, Field, computed_field
-from datetime import datetime, timezone
-import math
-from functools import lru_cache
-from loguru import logger
+from akd.utils import async_lru_cache
 
 
 class RepositoryMetadata(BaseModel):
@@ -32,7 +32,7 @@ class RepositoryMetadata(BaseModel):
         )
 
 
-@lru_cache(maxsize=128)
+@async_lru_cache(maxsize=128)
 async def fetch_github_metadata(repo_name: str, access_token: str | None = None) -> RepositoryMetadata:
     """
     Repo_name should be in the format of owner/repo
@@ -80,7 +80,7 @@ def calculate_reliability_score(repository_metadata: RepositoryMetadata) -> floa
         float: reliability score between 0 and 100 or None if metadata is null
     """
 
-    if repository_metadata.is_null_metadata:
+    if not repository_metadata or repository_metadata.is_null_metadata:
         return None
 
     now = datetime.now(timezone.utc)
