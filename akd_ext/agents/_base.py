@@ -1,8 +1,15 @@
 from __future__ import annotations
 
+import uuid
+from collections.abc import AsyncIterator
 from typing import Any
 
 from agents import Agent, ModelSettings, RunConfig, Runner, trace
+from agents.stream_events import (
+    RawResponsesStreamEvent,
+    RunItemStreamEvent,
+)
+from akd._base.streaming import StreamEvent, StreamEventType, StreamingMixin
 from openai.types.shared.reasoning import Reasoning
 from pydantic import Field
 
@@ -74,7 +81,9 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
         return RunConfig(trace_metadata=self.tracing_params or {})
 
 
-class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent):
+class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
+    BaseAgent, StreamingMixin
+):
     """Base class for OpenAI Agents SDK based agents.
 
     Provides:
@@ -177,6 +186,174 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent)
         else:
             return self.output_schema.model_validate_json(str(final_output))
 
+    async def _stream_llm_response(
+        self,
+        messages: list[dict[str, Any]],
+        token_batch_size: int = 10,
+    ) -> AsyncIterator[dict[str, Any]]:
+        """Stream using Runner.run_streamed()."""
+        
+        token_buffer = ""
+        
+        stream = Runner.run_streamed(
+            self._agent,
+            input=messages,
+            run_config=self.config.run_config,
+        )
+        
+        async for event in stream.stream_events():
+            
+            if isinstance(event, RawResponsesStreamEvent):
+                event_type = getattr(event.data, "type", "")
+                
+                if event_type == "response.output_text.delta":
+                    delta = getattr(event.data, "delta", "") or ""
+                    token_buffer += delta
+                    if len(token_buffer) >= token_batch_size:
+                        yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        token_buffer = ""
+
+                elif event_type == "response.output_text.done":
+                    if token_buffer:
+                        yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        token_buffer = ""
+                
+                elif "reasoning" in event_type:
+                    content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
+                    if content:
+                        yield {"type": StreamEventType.THINKING, "content": content}
+            
+            elif isinstance(event, RunItemStreamEvent):
+                
+                if event.name == "tool_called":
+                    raw_item = getattr(event.item, "raw_item", None)
+                    if raw_item:
+                        tool_name = getattr(raw_item, "name", "")
+                        tool_input = getattr(raw_item, "arguments", "{}")
+                        tool_output = getattr(raw_item, "output", None)
+                        
+                        yield {
+                            "type": StreamEventType.TOOL_CALLING,
+                            "tool_name": tool_name,
+                            "tool_input": tool_input,
+                        }
+                        
+                        if tool_output:
+                            yield {
+                                "type": StreamEventType.TOOL_RESULT,
+                                "tool_name": tool_name,
+                                "tool_output": tool_output,
+                            }
+                
+                elif event.name == "message_output_created":
+                    if token_buffer:
+                        yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        token_buffer = ""
+        
+        final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
+        if final_output:
+            yield {"type": StreamEventType.COMPLETED, "output": final_output}
+
+
+    async def _astream(
+        self,
+        params: InSchema,
+        context: dict[str, Any] | None = None,
+        token_batch_size: int = 10,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        """Stream execution with akd StreamEvent format."""
+        
+        class_name = self.__class__.__name__
+        run_context = context.copy() if context else {}
+        if "run_id" not in run_context:
+            run_context["run_id"] = uuid.uuid4().hex[:8]
+
+        yield StreamEvent(
+            event_type=StreamEventType.STARTING,
+            source=class_name,
+            message=f"Starting {class_name}",
+            context=run_context,
+        )
+
+        try:
+            messages = [] if self.config.stateless else self._memory.copy()
+            
+            if params:
+                messages.append({"role": "user", "content": params.model_dump_json(exclude={"type"})})
+
+            yield StreamEvent(
+                event_type=StreamEventType.RUNNING,
+                source=class_name,
+                message=f"Running {class_name}",
+                context=run_context,
+            )
+
+            final_output = None
+            async for chunk in self._stream_llm_response(messages, token_batch_size=token_batch_size):
+                
+                if chunk["type"] == StreamEventType.STREAMING:
+                    yield StreamEvent(
+                        event_type=StreamEventType.STREAMING,
+                        source=class_name,
+                        data={"token": chunk["token"]},
+                        context=run_context,
+                    )
+                
+                elif chunk["type"] == StreamEventType.THINKING:
+                    yield StreamEvent(
+                        event_type=StreamEventType.THINKING,
+                        source=class_name,
+                        message="Reasoning...",
+                        data={"thinking_content": chunk["content"]},
+                        context=run_context,
+                    )
+                
+                elif chunk["type"] == StreamEventType.TOOL_CALLING:
+                    yield StreamEvent(
+                        event_type=StreamEventType.TOOL_CALLING,
+                        source=class_name,
+                        message=f"Calling tool: {chunk['tool_name']}",
+                        data={"tool_name": chunk["tool_name"], "tool_input": chunk["tool_input"]},
+                        context=run_context,
+                    )
+                
+                elif chunk["type"] == StreamEventType.TOOL_RESULT:
+                    yield StreamEvent(
+                        event_type=StreamEventType.TOOL_RESULT,
+                        source=class_name,
+                        message=f"Tool result: {chunk['tool_name']}",
+                        data={"tool_name": chunk["tool_name"], "tool_output": chunk["tool_output"]},
+                        context=run_context,
+                    )
+                
+                elif chunk["type"] == StreamEventType.COMPLETED:
+                    final_output = chunk["output"]
+
+            if final_output is None:
+                raise ValueError("No output received from LLM")
+
+            if not self.config.stateless:
+                messages.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
+                self._memory = messages
+
+            yield StreamEvent(
+                event_type=StreamEventType.COMPLETED,
+                source=class_name,
+                message=f"Completed {class_name}",
+                data={"output": final_output},
+                context=run_context,
+            )
+
+        except Exception as e:
+            yield StreamEvent(
+                event_type=StreamEventType.FAILED,
+                source=class_name,
+                message=f"Failed: {e!s}",
+                data={"error": str(e), "error_type": type(e).__name__},
+                context=run_context,
+            )
+            raise
 
 class FreeFormOutput(OutputSchema):
     """Default output schema for free-form agents."""
