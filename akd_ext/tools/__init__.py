@@ -1,6 +1,12 @@
 """Tools module for akd_ext."""
 
 from .dummy import DummyInputSchema, DummyOutputSchema, DummyTool
+from .eie.stac_item_search import (
+    STACItemSearchInputSchema,
+    STACItemSearchToolConfig,
+    STACItemSearchOutputSchema,
+    STACItemSearchTool,
+)
 from .sde_search import (
     SDEDocument,
     SDESearchTool,
@@ -28,4 +34,8 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "STACItemSearchInputSchema",
+    "STACItemSearchOutputSchema",
+    "STACItemSearchTool",
+    "STACItemSearchToolConfig",
 ]
