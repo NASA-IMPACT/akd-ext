@@ -392,7 +392,7 @@ class FreeFormOutput(OutputSchema):
     response: str = Field(..., description="Free-form text response from agent")
 
 
-class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, FreeFormOutput, StreamingMixin]):
+class FreeFormOpenAIBaseAgent[InSchema: InputSchema](OpenAIBaseAgent[InSchema, FreeFormOutput]):
     """Base for OpenAI agents returning free-form text (no structured output_type).
 
     Use when the agent should return unstructured text that gets wrapped
