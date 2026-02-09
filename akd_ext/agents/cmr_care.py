@@ -600,9 +600,18 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
             async for event in self._search_agent.astream(
                 _CMRSearchAgentInputSchema(query=params.query), run_context=run_context
             ):
-                yield event
+                # we should not emit completed event till whole pipeline ends
+                # otherwise astream() will try to validate the output from CompletedEvent data
                 if isinstance(event, CompletedEvent):
                     search_output = event.data.output
+                    yield PartialOutputEvent(
+                        source=class_name,
+                        message="Search completed, received output",
+                        data=PartialEventData(partial_output=search_output),
+                        run_context=run_context,
+                    )
+                    continue
+                yield event
                 if isinstance(event, HumanInputRequiredEvent):
                     return
 
