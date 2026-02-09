@@ -543,6 +543,32 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
         pass
 
 
+# Strucutred output agent
+
+
+class CMRStrAgentInputSchema(InputSchema):
+    """Input schema for CMR CARE Agent."""
+
+    query: str = Field(..., description="Earth science query for dataset discovery")
+
+
+class CMRStrAgentOutputSchema(OutputSchema):
+    """Output schema for CMR CARE Agent."""
+
+    __response_field__ = "report"
+    dataset_concept_ids: list[str] = Field(..., description="List of dataset concept IDs")
+    report: str = Field(default="", description="Detailed report with reasoning")
+
+
+class CMRStrAgent(OpenAIBaseAgent):
+    """
+    CMR stragent
+    """
+
+    input_schema = CMRStrAgentInputSchema
+    output_schema = CMRStrAgentOutputSchema
+
+
 if __name__ == "__main__":
     import asyncio
 
@@ -552,13 +578,15 @@ if __name__ == "__main__":
 
         config = CMRDataSearchCareAgentConfig()
         agent = CMRDataSearchCareAgent(config=config)
+        # agent = CMRStrAgent(config=config)
 
         question = "Can you find me datasets about sea ice?"
 
         async for event in agent.astream(
-            CMRCareAgentInputSchema(query=question),
+            CMRDataSearchCareAgentInputSchema(query=question),
+            # CMRStrAgentInputSchema(query=question),
         ):
-            # print(event)
-            continue
+            print(event)
+            # continue
 
     asyncio.run(main())
