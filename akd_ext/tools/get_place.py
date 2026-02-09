@@ -49,6 +49,10 @@ class GetPlaceOutputSchema(OutputSchema):
         None,
         description="Bounding box as [west, south, east, north] (i.e., [min_lon, min_lat, max_lon, max_lat])",
     )
+    geometry: dict | None = Field(
+        None,
+        description="GeoJSON geometry for the place",
+    )
     error: str | None = Field(
         None,
         description="Error message if geocoding failed",
@@ -126,26 +130,28 @@ class GetPlaceTool(BaseTool[GetPlaceInputSchema, GetPlaceOutputSchema]):
                 return GetPlaceOutputSchema(
                     place=name,
                     bbox=bbox,
+                    geometry=geometry,
                     error=None,
                 )
             else:
                 return GetPlaceOutputSchema(
                     place=name,
                     bbox=None,
+                    geometry=None,
                     error=f"No geometry found for '{params.query}'",
                 )
 
         except httpx.TimeoutException as e:
             msg = f"Geodini request timed out after {self.config.timeout}s"
             logger.error(msg)
-            return GetPlaceOutputSchema(place=None, bbox=None, error=msg)
+            return GetPlaceOutputSchema(place=None, bbox=None, geometry=None, error=msg)
 
         except httpx.HTTPStatusError as e:
             msg = f"Geodini returned error status {e.response.status_code}"
             logger.error(msg)
-            return GetPlaceOutputSchema(place=None, bbox=None, error=msg)
+            return GetPlaceOutputSchema(place=None, bbox=None, geometry=None, error=msg)
 
         except Exception as e:
             msg = f"Geocoding failed: {e}"
             logger.error(msg)
-            return GetPlaceOutputSchema(place=None, bbox=None, error=msg)
+            return GetPlaceOutputSchema(place=None, bbox=None, geometry=None, error=msg)
