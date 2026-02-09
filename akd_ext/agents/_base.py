@@ -43,6 +43,7 @@ from akd._base import (
     RunContext,
     PartialOutputEvent,
     PartialEventData,
+    Memory,
 )
 from akd.agents._base import BaseAgent, BaseAgentConfig
 from akd.tools.human import HumanToolInput
@@ -147,31 +148,12 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     def __init__(
         self,
         config: OpenAIBaseAgentConfig | None = None,
+        memory: Memory | None = None,
         debug: bool = False,
+        **kwargs,
     ) -> None:
-        super().__init__(config=config, debug=debug)
-        self._memory: list[dict[str, Any]] = []
+        super().__init__(config=config, memory=memory, debug=debug)
         self._agent = self._create_agent()
-
-    @property
-    def memory(self) -> list[dict[str, Any]]:
-        """Conversation history for multi-turn interactions."""
-        return self._memory
-
-    @memory.setter
-    def memory(self, value: Any) -> None:
-        """Allow parent class to set memory."""
-        # Parent class passes Memory object, we store as list
-        if hasattr(value, "messages"):
-            self._memory = value.messages
-        elif isinstance(value, list):
-            self._memory = value
-        else:
-            self._memory = []
-
-    def reset_memory(self) -> None:
-        """Clear conversation history."""
-        self._memory.clear()
 
     def _create_agent(self) -> Agent:
         """Create the OpenAI Agent object.
@@ -208,7 +190,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         Returns:
             RunResult from the agent execution.
         """
-        agent_input = messages if messages is not None else self._memory
+        agent_input = messages if messages is not None else self.memory
 
         with trace(self.__class__.__name__):
             return await Runner.run(
@@ -223,16 +205,16 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         Override for custom orchestration (e.g., multi-agent pipelines).
         """
         if self.config.stateless:
-            self.reset_memory()
+            self.memory.clear()
 
         # Add user input to memory
-        self._memory.append({"role": "user", "content": params.model_dump_json()})
+        self.memory.append({"role": "user", "content": params.model_dump_json()})
 
         # Run pipeline via get_response_async
-        result = await self.get_response_async(messages=self._memory)
+        result = await self.get_response_async(messages=self.memory)
 
         # Update memory with full conversation
-        self._memory = result.to_input_list()
+        self.memory = result.to_input_list()
 
         # Return typed output
         final_output = result.final_output
@@ -488,7 +470,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
             final_output = None
             # interact with the LLM and yield events
-            async for event in self._stream_llm_response(messages=self._memory, token_batch_size=token_batch_size):
+            async for event in self._stream_llm_response(messages=self.memory, token_batch_size=token_batch_size):
                 if isinstance(event, CompletedEvent):
                     final_output = event.data.output
                 yield event
@@ -499,7 +481,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             if final_output is None:
                 raise UnexpectedModelBehavior("No output received from LLM")
 
-            self._memory.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
+            self.memory.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
 
             # final_output may already be parsed model or JSON string
             if isinstance(final_output, response_model):
