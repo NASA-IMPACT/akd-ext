@@ -353,9 +353,12 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                     raw_item = getattr(event.item, "raw_item", None)
                     if raw_item:
                         tool_name = getattr(raw_item, "name", "")
-                        tool_input = getattr(raw_item, "arguments", "{}")
+                        tool_input_raw = getattr(raw_item, "arguments", "{}")
+                        tool_input = json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
                         tool_output = getattr(raw_item, "output", None)
                         tool_call_id = getattr(raw_item, "id", uuid.uuid4().hex[:8])
+
+                        # Parse JSON string arguments into dict for ToolCall
 
                         tool_calls_for_message.append(
                             {
@@ -473,7 +476,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         class_name = self.__class__.__name__
         run_context = (run_context or RunContext()).model_copy()
         if "run_id" not in run_context:
-            run_context["run_id"] = uuid.uuid4().hex[:8]
+            run_context.run_id = uuid.uuid4().hex[:8]
 
         yield StartingEvent(
             source=class_name,
@@ -512,7 +515,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
                 final_output = None
                 # interact with the LLM and yield events
-                async for event in self._stream_llm_response(messages=messages, token_batch_size=token_batch_size):
+                async for event in self._stream_llm_response(
+                    messages=messages, run_context=run_context, token_batch_size=token_batch_size
+                ):
                     if isinstance(event, CompletedEvent):
                         final_output = event.data.output
                     yield event
