@@ -459,7 +459,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     async def _astream(
         self,
         params: InSchema,
-        context: dict[str, Any] | None = None,
+        run_context: dict[str, Any] | None = None,
         token_batch_size: int = 10,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
@@ -467,14 +467,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
         class_name = self.__class__.__name__
         response_model = self.output_schema
-        run_context = context.copy() if context else {}
-
-        if self.config.stateless:
-            self.reset_memory()
-
-        # Add user input to memory
-        self._memory.append({"role": "user", "content": params.model_dump_json()})
-
+        run_context = (run_context or RunContext()).model_copy()
         if "run_id" not in run_context:
             run_context["run_id"] = uuid.uuid4().hex[:8]
 
