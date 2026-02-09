@@ -45,6 +45,10 @@ from akd._base import (
 from akd.agents._base import BaseAgent, BaseAgentConfig
 from akd.tools.human import HumanToolInput
 
+from akd._base.errors import (
+    UnexpectedModelBehavior,
+)
+
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
     """Configuration for OpenAI Agents SDK based AKD Agents.
@@ -231,15 +235,33 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     async def _stream_llm_response(
         self,
         messages: list[dict[str, Any]],
-        context: RunContext | None = None,
+        run_context: RunContext,
+        response_model: type[OutSchema] | None = None,
         token_batch_size: int = 10,
     ) -> AsyncIterator[StreamEvent]:
         """Stream using Runner.run_streamed()."""
 
         class_name = self.__class__.__name__
-        run_context = context or {"run_id": uuid.uuid4().hex[:8]}
-        token_buffer = ""
+        run_context.messages = messages
 
+        # check for human response
+        human_response = run_context.human_response
+        if human_response:
+            tool_call_id = human_response.tool_call_id
+            content = human_response.content
+
+            # Inject human response into messages. # update messages by reference
+            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(content)})
+
+            # Emit event to notify that human response has been injected
+            yield HumanResponseEvent(
+                source=class_name,
+                message="Resumed with human input",
+                data=HumanResponseEventData(tool_call_id=tool_call_id, response=content),
+                run_context=run_context,
+            )
+
+        token_buffer = ""
         stream = Runner.run_streamed(
             self._agent,
             input=messages,
@@ -293,13 +315,14 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         tool_name = getattr(raw_item, "name", "")
                         tool_input = getattr(raw_item, "arguments", "{}")
                         tool_output = getattr(raw_item, "output", None)
+                        tool_call_id = getattr(raw_item, "id", uuid.uuid4().hex[:8])
 
                         yield ToolCallingEvent(
                             source=class_name,
                             message=f"Calling tool: {tool_name}",
                             data=ToolCallingEventData(
                                 tool_call=ToolCall(
-                                    tool_call_id=uuid.uuid4().hex[:8],
+                                    tool_call_id=tool_call_id,
                                     tool_name=tool_name,
                                     arguments=tool_input,
                                 )
@@ -307,11 +330,26 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             run_context=run_context,
                         )
 
-                        # yield {
-                        #     "type": StreamEventType.TOOL_CALLING,
-                        #     "tool_name": tool_name,
-                        #     "tool_input": tool_input,
-                        # }
+                        if tool_name == "ask_human":  # TODO: what if the tool_name is other than ask_human?
+                            try:
+                                human_input = HumanToolInput(**tool_input)
+                            except Exception:
+                                human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
+
+                            # Yield HUMAN_INPUT_REQUIRED with full state for resumption
+                            run_context.messages = list(messages)
+                            yield HumanInputRequiredEvent(
+                                source=class_name,
+                                message=f"Human input required: {tool_input.get('question', 'Input needed')}",
+                                data=HumanInputRequiredEventData(
+                                    human_input=human_input,
+                                    tool_call_id=tool_call_id,
+                                    tool_name=tool_name,
+                                ),
+                                run_context=run_context,
+                            )
+                            # End generator gracefully, replicating an interruption to HumanToolInput
+                            return
 
                         if tool_output:
                             yield ToolResultEvent(
@@ -375,24 +413,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         if "run_id" not in run_context:
             run_context["run_id"] = uuid.uuid4().hex[:8]
 
-        if run_context.get("human_response"):
-            content = run_context.get("human_response").content
-            self._memory.append(
-                {
-                    "role": "user",
-                    "content": content if isinstance(content, str) else json.dumps(content),
-                },
-            )
-            yield HumanResponseEvent(
-                source=class_name,
-                message="Resumed with human input",
-                data=HumanResponseEventData(
-                    tool_call_id=run_context.human_response.tool_call_id,
-                    response=content,
-                ),
-                run_context=run_context,
-            )
-
         yield StartingEvent(
             source=class_name,
             message=f"Starting {class_name}",
@@ -411,50 +431,17 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             final_output = None
             # interact with the LLM and yield events
             async for event in self._stream_llm_response(messages=self._memory, token_batch_size=token_batch_size):
-                if (
-                    isinstance(event, ToolCallingEvent) and event.data.tool_call.tool_name == "ask_human"
-                ):  # TODO: what if tool_name is not ask_human and it was modified?
-                    # Store messages in run_context for resumption
-                    run_context["messages"] = list(self._memory) if self._memory else []
-                    run_context["messages"].append(
-                        {
-                            "role": "assistant",
-                            "content": None,
-                            "tool_calls": {
-                                "id": event.data.tool_call.tool_call_id,
-                                "type": "function",
-                                "function": {"name": event.data.tool_call.tool_name, "arguments": event.data.arguments},
-                            },
-                        },
-                    )
-
-                    # Yield HUMAN_INPUT_REQUIRED with full state for resumption
-                    yield HumanInputRequiredEvent(
-                        source=class_name,
-                        message=f"Human input required: {event.data.tool_call.arguments.get('question', 'Input needed')}",
-                        data=HumanInputRequiredEventData(
-                            human_input=HumanToolInput(
-                                question=event.data.tool_call.arguments.get("question", "Input needed"),
-                            ),
-                            tool_call_id=event.data.tool_call.tool_call_id,
-                            tool_name=event.data.tool_call.tool_name,
-                            arguments=event.data.tool_call.arguments,
-                        ),
-                        run_context=run_context,
-                    )
-
-                    # ask the human for input and interrupt the stream
-                    return
-
                 if isinstance(event, CompletedEvent):
                     final_output = event.data.output
                 yield event
+                if isinstance(event, HumanInputRequiredEvent):
+                    # ask the human for input and interrupt the stream
+                    return
 
             if final_output is None:
-                raise ValueError("No output received from LLM")
+                raise UnexpectedModelBehavior("No output received from LLM")
 
-            if not self.config.stateless:
-                self._memory.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
+            self._memory.append({"role": "assistant", "content": final_output.model_dump_json(exclude={"type"})})
 
             # final_output may already be parsed model or JSON string
             if isinstance(final_output, response_model):
