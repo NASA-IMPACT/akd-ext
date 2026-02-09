@@ -44,6 +44,7 @@ from akd._base import (
     PartialOutputEvent,
     PartialEventData,
     Memory,
+    TextOutput,
 )
 from akd.agents._base import BaseAgent, BaseAgentConfig
 from akd.tools.human import HumanToolInput
@@ -167,7 +168,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             instructions=self.config.system_prompt,
             model=self.config.model_name or "gpt-5-nano",
             tools=self.config.tools,
-            output_type=self.output_schema,
+            output_type=None if issubclass(self.output_schema, TextOutput) else self.output_schema,
             model_settings=self.config.model_settings,
         )
 
@@ -255,11 +256,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         class_name = self.__class__.__name__
         run_context.messages = messages
 
-        if self.enable_trimming:
-            messages = trim_messages(
-                messages, model=self.model_name, max_tokens=self.max_tokens, trim_ratio=self.trim_ratio
-            )
-
         # check for human response
         human_response = run_context.human_response
         if human_response:
@@ -298,7 +294,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
                 if event_type == "response.output_text.delta":
                     delta = getattr(event.data, "delta", "") or ""
-
                     token_buffer += delta
                     accumulated += delta
                     if len(token_buffer) >= token_batch_size:
@@ -445,7 +440,11 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
                         token_buffer = ""
 
-        final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
+        if issubclass(self.output_schema, TextOutput):
+            final_output = self.output_schema(content=accumulated)
+        else:
+            final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
+
         if final_output:
             messages.append(
                 {
