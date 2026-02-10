@@ -14,7 +14,7 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
-from .get_place import (
+from .eie import (
     GetPlaceTool,
     GetPlaceToolConfig,
     GetPlaceInputSchema,
