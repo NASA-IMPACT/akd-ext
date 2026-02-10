@@ -596,78 +596,107 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
         )
 
         try:
-            # Step 1: Stream search agent
-            search_output = None
-            async for event in self._search_agent.astream(
-                _CMRSearchAgentInputSchema(query=params.query),
+            async with self.memory.asession(
+                stateless=self.stateless,
                 run_context=run_context,
-                token_batch_size=token_batch_size,
-            ):
-                # we should not emit completed event till whole pipeline ends
-                # otherwise astream() will try to validate the output from CompletedEvent data
-                if isinstance(event, CompletedEvent):
-                    search_output = event.data.output
-                    yield PartialOutputEvent(
+                enable_trimming=self.enable_trimming,
+                model_name=self.model_name,
+                max_tokens=self.max_tokens,
+                trim_ratio=self.trim_ratio,
+            ) as messages:
+                if not messages:
+                    messages.append(self._default_system_message())
+
+                # Don't re-append user message on human_response resumption
+                if params and not (run_context and run_context.human_response):
+                    messages.append({"role": "user", "content": params.model_dump_json(exclude={"type"})})
+
+                run_context.messages = messages
+
+                yield RunningEvent(
+                    source=class_name,
+                    message=f"Running {class_name}",
+                    run_context=run_context,
+                )
+
+                # Step 1: Stream search agent
+                search_output = None
+                async for event in self._search_agent.astream(
+                    _CMRSearchAgentInputSchema(query=params.query),
+                    run_context=run_context,
+                    token_batch_size=token_batch_size,
+                ):
+                    # Don't forward sub-agent CompletedEvent (wrong output type for orchestrator)
+                    if isinstance(event, CompletedEvent):
+                        search_output = event.data.output
+                        yield PartialOutputEvent(
+                            source=class_name,
+                            message="Search completed, received output",
+                            data=PartialEventData(partial_output=search_output),
+                            run_context=run_context,
+                        )
+                        continue
+                    yield event
+                    if isinstance(event, HumanInputRequiredEvent):
+                        return
+
+                if not search_output or not search_output.content:
+                    yield FailedEvent(
                         source=class_name,
-                        message="Search completed, received output",
-                        data=PartialEventData(partial_output=search_output),
+                        message="Search returned no results",
+                        data=FailedEventData(error="Search returned no results", error_type="EmptySearchResult"),
                         run_context=run_context,
                     )
-                    continue
-                yield event
-                if isinstance(event, HumanInputRequiredEvent):
                     return
 
-            if not search_output or not search_output.content:
-                yield FailedEvent(
+                # Emit partial output with raw search results
+                PartialOutput = PartialModel[self.output_schema]
+                yield PartialOutputEvent(
                     source=class_name,
-                    message="Search returned no results",
-                    data=FailedEventData(error="Search returned no results", error_type="EmptySearchResult"),
+                    message="Search complete, formatting...",
+                    data=PartialEventData(partial_output=PartialOutput(report=search_output.content)),
                     run_context=run_context,
                 )
-                return
 
-            # Emit partial output with raw search results
-            PartialOutput = PartialModel[self.output_schema]
-            yield PartialOutputEvent(
-                source=class_name,
-                message="Search complete, formatting...",
-                data=PartialEventData(partial_output=PartialOutput(report=search_output.content)),
-                run_context=run_context,
-            )
-
-            # Step 2: Stream formatter agent
-            yield RunningEvent(
-                source=class_name,
-                message="Formatting output",
-                run_context=run_context,
-            )
-
-            final_output = None
-            async for event in self._formatter_agent.astream(
-                _CMROutputAgentInputSchema(
-                    search_result=search_output.content
-                ),  # avoid run context since this is a fresh agent run
-                token_batch_size=token_batch_size,
-            ):
-                if isinstance(event, CompletedEvent):
-                    final_output = event.data.output
-                    continue
-                yield event
-            if final_output:
-                yield CompletedEvent(
+                # Step 2: Stream formatter agent (fresh run_context with only run_id)
+                formatter_run_context = RunContext(run_id=run_context.run_id)
+                yield RunningEvent(
                     source=class_name,
-                    message=f"Completed {class_name}",
-                    data=CompletedEventData(output=final_output),
+                    message="Formatting output",
                     run_context=run_context,
                 )
-            else:
-                yield FailedEvent(
-                    source=class_name,
-                    message="Formatter returned no output",
-                    data=FailedEventData(error="Formatter returned no output", error_type="EmptyFormatterResult"),
-                    run_context=run_context,
-                )
+
+                final_output = None
+                async for event in self._formatter_agent.astream(
+                    _CMROutputAgentInputSchema(search_result=search_output.content),
+                    run_context=formatter_run_context,
+                    token_batch_size=token_batch_size,
+                ):
+                    if isinstance(event, CompletedEvent):
+                        final_output = event.data.output
+                        continue
+                    yield event
+
+                if final_output:
+                    messages.append(
+                        {
+                            "role": "assistant",
+                            "content": final_output.model_dump_json(exclude={"type"}),
+                        }
+                    )
+                    yield CompletedEvent(
+                        source=class_name,
+                        message=f"Completed {class_name}",
+                        data=CompletedEventData(output=final_output),
+                        run_context=run_context,
+                    )
+                else:
+                    yield FailedEvent(
+                        source=class_name,
+                        message="Formatter returned no output",
+                        data=FailedEventData(error="Formatter returned no output", error_type="EmptyFormatterResult"),
+                        run_context=run_context,
+                    )
 
         except Exception as e:
             yield FailedEvent(
