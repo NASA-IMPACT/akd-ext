@@ -5,18 +5,24 @@ import uuid
 from collections.abc import AsyncIterator
 from typing import Any
 
-from agents import Agent, ModelSettings, RunConfig, Runner, trace
+from agents import (
+    Agent,
+    ModelSettings,
+    RunConfig,
+    Runner,
+    function_tool,
+    trace,
+)
 from agents.stream_events import (
     RawResponsesStreamEvent,
     RunItemStreamEvent,
 )
+from openai.types.shared.reasoning import Reasoning
 
 from loguru import logger
+from pydantic import Field, field_validator
 
 from akd._base.streaming import StreamEvent, StreamingMixin
-from openai.types.shared.reasoning import Reasoning
-from pydantic import Field
-
 from akd._base import (
     InputSchema,
     OutputSchema,
@@ -57,6 +63,9 @@ from akd._base.errors import (
 
 from akd.utils import PartialModel
 
+from akd_ext._types import AKDTool, OPENAI_TOOL_TYPES
+from akd_ext.mcp.converter import tool_converter
+
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
     """Configuration for OpenAI Agents SDK based AKD Agents.
@@ -78,7 +87,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     )
     tools: list[Any] = Field(
         default_factory=list,
-        description="Tools for the agent (FunctionTool, HostedMCPTool, WebSearchTool, etc.)",
+        description="Tools for the agent (OpenAITool, AKDTool(akd.tools._base.BaseTool) — AKDTools auto-converted to FunctionTool).",
     )
     tracing_params: dict[str, Any] = Field(
         default_factory=dict,
@@ -89,6 +98,20 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     top_p: float | None = Field(default=None, description="Nucleus sampling parameter.")
     frequency_penalty: float | None = Field(default=None, description="Frequency penalty for token repetition.")
     presence_penalty: float | None = Field(default=None, description="Presence penalty for new topics.")
+
+    @field_validator("tools", mode="before")
+    @classmethod
+    def _validate_and_convert_tools(cls, v: list) -> list:
+        """Validate tool types and convert AKDTool instances to OpenAI FunctionTool."""
+        converted = []
+        for t in v:
+            if isinstance(t, AKDTool):
+                converted.append(function_tool(tool_converter(t)))
+            elif isinstance(t, OPENAI_TOOL_TYPES):
+                converted.append(t)
+            else:
+                raise ValueError(f"Invalid tool type: {type(t).__name__}. Expected OpenAITool or AKDTool.")
+        return converted
 
     @property
     def model_settings(self) -> ModelSettings:
@@ -420,6 +443,35 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             ),
                             run_context=run_context,
                         )
+
+                        # HostedMCPTool: server-side execution, output on the raw_item itself
+                        if getattr(raw_item, "type", "") == "mcp_call":
+                            mcp_output = getattr(raw_item, "output", None)
+                            if mcp_output is not None:
+                                if not current_turn_has_outputs and current_turn_tool_calls:
+                                    messages.append(
+                                        {
+                                            "role": "assistant",
+                                            "content": None,
+                                            "tool_calls": list(current_turn_tool_calls),
+                                        }
+                                    )
+                                    current_turn_has_outputs = True
+
+                                serialized = mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output)
+                                messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": serialized})
+                                yield ToolResultEvent(
+                                    source=class_name,
+                                    message="Tool result",
+                                    data=ToolResultEventData(
+                                        result=ToolResult(
+                                            tool_call_id=tool_call_id,
+                                            tool_name=tool_name,
+                                            content=mcp_output,
+                                        )
+                                    ),
+                                    run_context=run_context,
+                                )
 
                         if tool_name == "ask_human":
                             try:
