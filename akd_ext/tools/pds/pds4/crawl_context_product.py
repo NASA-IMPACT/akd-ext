@@ -55,16 +55,6 @@ class PDS4CrawlContextProductTool(BaseTool[PDS4CrawlContextProductInputSchema, P
     - id: URN identifier
     - title: Product title
     - description: Product description (if available)
-
-    Example Usage:
-        tool = CrawlContextProductTool()
-        result = await tool.arun(PDS4CrawlContextProductInputSchema(
-            urn="urn:nasa:pds:context:investigation:mission.mars2020"
-        ))
-
-        # Access related products
-        print(f"Targets: {result.targets}")
-        print(f"Instruments: {result.observing_system_components}")
     """
 
     input_schema = PDS4CrawlContextProductInputSchema
