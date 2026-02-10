@@ -181,6 +181,42 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         except json.JSONDecodeError:
             return None
 
+    @staticmethod
+    def _to_runner_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        """Convert Chat Completions messages to Responses API format for Runner input.
+
+        The internal messages list uses Chat Completions format (akd-core standard),
+        but Runner.run_streamed() expects Responses API format for tool calls/results.
+        """
+        runner_input: list[dict[str, Any]] = []
+        for msg in messages:
+            role = msg.get("role")
+            if role in ("system", "user", "developer"):
+                runner_input.append({"role": role, "content": msg["content"]})
+            elif role == "assistant":
+                if msg.get("content"):
+                    runner_input.append({"role": "assistant", "content": msg["content"]})
+                for tc in msg.get("tool_calls", []):
+                    func = tc.get("function", {})
+                    arguments = func.get("arguments", {})
+                    runner_input.append(
+                        {
+                            "type": "function_call",
+                            "call_id": tc["id"],
+                            "name": func["name"],
+                            "arguments": json.dumps(arguments) if isinstance(arguments, dict) else str(arguments),
+                        }
+                    )
+            elif role == "tool":
+                runner_input.append(
+                    {
+                        "type": "function_call_output",
+                        "call_id": msg["tool_call_id"],
+                        "output": msg["content"],
+                    }
+                )
+        return runner_input
+
     async def get_response_async(
         self,
         messages: list[dict[str, Any]],
@@ -202,7 +238,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         with trace(self.__class__.__name__):
             return await Runner.run(
                 self._agent,
-                input=messages,
+                input=self._to_runner_input(messages),
                 run_config=self.config.run_config,
             )
 
@@ -282,11 +318,12 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         accumulated = ""
         token_buffer = ""
         last_partial_dict = None
-        tool_calls_for_message: list[dict[str, Any]] = []  # message history of tool calls.
+        current_turn_tool_calls: list[dict[str, Any]] = []  # tool calls for current assistant turn
+        current_turn_has_outputs: bool = False  # whether any tool_output seen for current turn
 
         stream = Runner.run_streamed(
             self._agent,
-            input=messages,
+            input=self._to_runner_input(messages),
             run_config=self.config.run_config,
         )
 
@@ -363,12 +400,15 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         tool_input = json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
                         tool_call_id = getattr(raw_item, "id", uuid.uuid4().hex[:8])
 
-                        # Parse JSON string arguments into dict for ToolCall
+                        # Turn boundary: new tool_called after previous turn's outputs → reset
+                        if current_turn_has_outputs:
+                            current_turn_tool_calls = []
+                            current_turn_has_outputs = False
 
-                        tool_calls_for_message.append(
+                        current_turn_tool_calls.append(
                             {
                                 "id": tool_call_id,
-                                "type": "function",  # TODO: check if other types available via raw_item
+                                "type": "function",
                                 "function": {"name": tool_name, "arguments": tool_input},
                             }
                         )
@@ -385,18 +425,18 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             run_context=run_context,
                         )
 
-                        if tool_name == "ask_human":  # TODO: what if the tool_name is other than ask_human?
+                        if tool_name == "ask_human":
                             try:
                                 human_input = HumanToolInput(**tool_input)
                             except Exception:
                                 human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
 
-                            # Yield HUMAN_INPUT_REQUIRED with full state for resumption
+                            # Flush current turn's assistant message for resumption
                             messages.append(
                                 {
                                     "role": "assistant",
-                                    "content": accumulated or None,
-                                    "tool_calls": tool_calls_for_message,
+                                    "content": None,
+                                    "tool_calls": list(current_turn_tool_calls),
                                 }
                             )
                             run_context.messages = list(messages)
@@ -410,7 +450,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 ),
                                 run_context=run_context,
                             )
-                            # End generator gracefully, replicating an interruption to HumanToolInput
                             return
 
                 elif event.name == "tool_output":
@@ -418,6 +457,31 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                     tool_output_content = getattr(event.item, "output", None)
                     tool_call_id = getattr(raw_item, "call_id", "") or uuid.uuid4().hex[:8]
                     if tool_output_content is not None:
+                        # Flush assistant message on first tool_output (correct ordering)
+                        if not current_turn_has_outputs and current_turn_tool_calls:
+                            messages.append(
+                                {
+                                    "role": "assistant",
+                                    "content": None,
+                                    "tool_calls": list(current_turn_tool_calls),
+                                }
+                            )
+                            current_turn_has_outputs = True
+
+                        # Append tool result message
+                        serialized = (
+                            tool_output_content
+                            if isinstance(tool_output_content, str)
+                            else json.dumps(tool_output_content)
+                        )
+                        messages.append(
+                            {
+                                "role": "tool",
+                                "tool_call_id": tool_call_id,
+                                "content": serialized,
+                            }
+                        )
+
                         yield ToolResultEvent(
                             source=class_name,
                             message="Tool result",
@@ -461,7 +525,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 {
                     "role": "assistant",
                     "content": accumulated or None,
-                    "tool_calls": tool_calls_for_message,
                 }
             )
             yield CompletedEvent(

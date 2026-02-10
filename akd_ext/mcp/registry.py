@@ -9,7 +9,7 @@ class MCPToolRegistry:
 
     Example:
         from akd_ext.mcp.registry import MCPToolRegistry
-        
+
         registry = MCPToolRegistry()
         registry.register(MyTool)
         tools = registry.get_tools()
