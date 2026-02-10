@@ -17,7 +17,7 @@ from akd_ext.tools.pds.utils.pds_catalog_api_models import PDSDataset, load_from
 logger = logging.getLogger(__name__)
 
 # Default catalog directory containing scraped JSONL files
-DEFAULT_CATALOG_DIR = Path(__file__).parent.parent.parent / "sde-data-agents" / "src" / "pds_catalog_mcp" / "scraped_data"
+DEFAULT_CATALOG_DIR = Path(__file__).parent.parent / "pds_catalog" / "scraped_data"
 
 # Response limits
 MAX_RESULTS_LIMIT = 50
