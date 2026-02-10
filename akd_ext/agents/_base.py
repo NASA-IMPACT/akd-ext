@@ -421,6 +421,35 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             run_context=run_context,
                         )
 
+                        # HostedMCPTool: server-side execution, output on the raw_item itself
+                        if getattr(raw_item, "type", "") == "mcp_call":
+                            mcp_output = getattr(raw_item, "output", None)
+                            if mcp_output is not None:
+                                if not current_turn_has_outputs and current_turn_tool_calls:
+                                    messages.append(
+                                        {
+                                            "role": "assistant",
+                                            "content": None,
+                                            "tool_calls": list(current_turn_tool_calls),
+                                        }
+                                    )
+                                    current_turn_has_outputs = True
+
+                                serialized = mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output)
+                                messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": serialized})
+                                yield ToolResultEvent(
+                                    source=class_name,
+                                    message="Tool result",
+                                    data=ToolResultEventData(
+                                        result=ToolResult(
+                                            tool_call_id=tool_call_id,
+                                            tool_name=tool_name,
+                                            content=mcp_output,
+                                        )
+                                    ),
+                                    run_context=run_context,
+                                )
+
                         if tool_name == "ask_human":
                             try:
                                 human_input = HumanToolInput(**tool_input)
