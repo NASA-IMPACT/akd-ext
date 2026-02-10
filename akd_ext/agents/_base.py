@@ -206,7 +206,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 run_config=self.config.run_config,
             )
 
-    async def _arun(self, params: InSchema, run_context: dict[str, Any] | None = None, **kwargs) -> OutSchema:
+    async def _arun(self, params: InSchema, run_context: RunContext | None = None, **kwargs) -> OutSchema:
         """Run the agent workflow.
 
         Override for custom orchestration (e.g., multi-agent pipelines).
@@ -477,16 +477,15 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     async def _astream(
         self,
         params: InSchema,
-        run_context: dict[str, Any] | None = None,
+        run_context: RunContext | None = None,
         token_batch_size: int = 10,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Stream execution with akd StreamEvent format."""
 
         class_name = self.__class__.__name__
-        run_context = (run_context or RunContext()).model_copy()
-        if "run_id" not in run_context:
-            run_context.run_id = uuid.uuid4().hex[:8]
+        run_context: RunContext = (run_context or RunContext()).model_copy()
+        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
 
         yield StartingEvent(
             source=class_name,
