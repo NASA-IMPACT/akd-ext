@@ -398,7 +398,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         tool_name = getattr(raw_item, "name", "")
                         tool_input_raw = getattr(raw_item, "arguments", "{}")
                         tool_input = json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
-                        tool_call_id = getattr(raw_item, "id", uuid.uuid4().hex[:8])
+                        tool_call_id = getattr(raw_item, "call_id", None) or getattr(
+                            raw_item, "id", uuid.uuid4().hex[:8]
+                        )
 
                         # Turn boundary: new tool_called after previous turn's outputs → reset
                         if current_turn_has_outputs:
@@ -455,7 +457,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 elif event.name == "tool_output":
                     raw_item = getattr(event.item, "raw_item", None)
                     tool_output_content = getattr(event.item, "output", None)
-                    tool_call_id = getattr(raw_item, "call_id", "") or uuid.uuid4().hex[:8]
+                    tool_call_id = (
+                        raw_item.get("call_id", "") if isinstance(raw_item, dict) else getattr(raw_item, "call_id", "")
+                    ) or uuid.uuid4().hex[:8]
                     if tool_output_content is not None:
                         # Flush assistant message on first tool_output (correct ordering)
                         if not current_turn_has_outputs and current_turn_tool_calls:
