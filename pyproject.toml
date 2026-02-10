@@ -45,6 +45,9 @@ build-backend = "setuptools.build_meta"
 include = ["akd_ext*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+"akd_ext.tools.pds.pds_catalog" = ["scraped_data/*.jsonl"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
