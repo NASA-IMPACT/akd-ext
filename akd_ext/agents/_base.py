@@ -56,7 +56,6 @@ from akd._base.errors import (
 )
 
 from akd.utils import PartialModel
-from litellm.utils import trim_messages
 
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
@@ -230,11 +229,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         Returns:
             RunResult from the agent execution.
         """
-        if self.enable_trimming:
-            messages = trim_messages(
-                messages, model=self.model_name, max_tokens=self.max_tokens, trim_ratio=self.trim_ratio
-            )
-
         with trace(self.__class__.__name__):
             return await Runner.run(
                 self._agent,
