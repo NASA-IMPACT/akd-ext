@@ -73,5 +73,3 @@ Once connected:
 2. Fill in any required parameters
 3. Click **"Run"** or **"Execute"** to test the tool
 4. View the response/results
-
----
