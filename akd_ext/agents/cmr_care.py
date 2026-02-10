@@ -580,6 +580,7 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
         self,
         params: CMRCareAgentInputSchema,
         run_context: RunContext | None = None,
+        token_batch_size: int = 10,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         """Orchestrate: search agent → output formatter agent."""
@@ -598,7 +599,9 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
             # Step 1: Stream search agent
             search_output = None
             async for event in self._search_agent.astream(
-                _CMRSearchAgentInputSchema(query=params.query), run_context=run_context
+                _CMRSearchAgentInputSchema(query=params.query),
+                run_context=run_context,
+                token_batch_size=token_batch_size,
             ):
                 # we should not emit completed event till whole pipeline ends
                 # otherwise astream() will try to validate the output from CompletedEvent data
@@ -644,11 +647,13 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
             async for event in self._formatter_agent.astream(
                 _CMROutputAgentInputSchema(
                     search_result=search_output.content
-                )  # avoid run context since this is a fresh agent run
+                ),  # avoid run context since this is a fresh agent run
+                token_batch_size=token_batch_size,
             ):
-                yield event
                 if isinstance(event, CompletedEvent):
                     final_output = event.data.output
+                    continue
+                yield event
             if final_output:
                 yield CompletedEvent(
                     source=class_name,
