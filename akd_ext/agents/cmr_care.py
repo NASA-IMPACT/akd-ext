@@ -560,18 +560,20 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
     ) -> None:
         super().__init__(config=config, **kwargs)
 
-        # Search agent: gets system_prompt, tools, model, reasoning from CMRCareConfig
+        # Search agent: stateful (multi-turn with tools/human-in-the-loop)
         search_config = OpenAIBaseAgentConfig(
             system_prompt=self.config.system_prompt,
             model_name=self.config.model_name,
             reasoning_effort=self.config.reasoning_effort,
             tools=self.config.tools,
+            stateless=False,
         )
-        # Formatter agent: own prompt, same model/reasoning, no tools
+        # Formatter agent: stateless (one-shot transform, no tools)
         formatter_config = OpenAIBaseAgentConfig(
             system_prompt=self.config.formatter_system_prompt,
             model_name=self.config.model_name,
             reasoning_effort=self.config.reasoning_effort,
+            stateless=True,
         )
         self._search_agent = _CMRSearchAgent(config=search_config, debug=self.debug)
         self._formatter_agent = _CMROutputAgent(config=formatter_config, debug=self.debug)
