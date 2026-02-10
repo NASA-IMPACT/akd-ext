@@ -7,7 +7,6 @@ datasets based on natural language queries.
 """
 
 import os
-from datetime import datetime, timezone
 from typing import Literal
 
 import httpx
@@ -18,6 +17,7 @@ from pydantic import Field
 from loguru import logger
 
 from akd_ext.mcp import mcp_tool
+from akd_ext.tools.eie.utils import bboxes_overlap, intervals_overlap
 
 
 class CollectionsRagToolConfig(BaseToolConfig):
@@ -44,6 +44,10 @@ class CollectionsRagToolConfig(BaseToolConfig):
         ge=1,
         le=20,
         description="Default number of results to return",
+    )
+    table_name: str = Field(
+        default=os.getenv("COLLECTIONS_RAG_TABLE", "veda_collections"),
+        description="Name of the LanceDB table containing collection embeddings",
     )
 
 
@@ -102,64 +106,6 @@ class CollectionsRagOutputSchema(OutputSchema):
     )
 
 
-def _bboxes_overlap(bbox1: list[float], bbox2: list[float]) -> bool:
-    """Check if two bounding boxes overlap.
-    
-    Args:
-        bbox1: First bounding box as [west, south, east, north]
-        bbox2: Second bounding box in the same format
-    
-    Returns:
-        True if the boxes overlap, False otherwise
-    """
-    if len(bbox1) < 4 or len(bbox2) < 4:
-        return False
-    
-    w1, s1, e1, n1 = bbox1[:4]
-    w2, s2, e2, n2 = bbox2[:4]
-    
-    # Two boxes do NOT overlap if one is entirely to the left, right, above, or below
-    return not (e1 < w2 or e2 < w1 or n1 < s2 or n2 < s1)
-
-
-def _parse_iso_date(s: str | None) -> datetime | None:
-    """Parse ISO-8601 date string to UTC-aware datetime."""
-    if not s:
-        return None
-    try:
-        dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-        if dt.tzinfo is None:
-            dt = dt.replace(tzinfo=timezone.utc)
-        return dt
-    except (ValueError, AttributeError):
-        return None
-
-
-def _intervals_overlap(interval: list[str | None], start: str, end: str) -> bool:
-    """Check if a collection's temporal interval overlaps with a requested time range."""
-    if not interval or len(interval) < 2:
-        return False
-    
-    col_start = _parse_iso_date(interval[0])
-    col_end = _parse_iso_date(interval[1])
-    req_start = _parse_iso_date(start)
-    req_end = _parse_iso_date(end)
-    
-    # Open-ended intervals: assume overlap if we can't determine otherwise
-    if (req_start is None and req_end is None) or (col_start is None and col_end is None):
-        return True
-    
-    # Collection ends before requested range starts → no overlap
-    if col_end and req_start and col_end < req_start:
-        return False
-    
-    # Collection starts after requested range ends → no overlap
-    if col_start and req_end and col_start > req_end:
-        return False
-    
-    return True
-
-
 @mcp_tool
 class CollectionsRagTool(BaseTool[CollectionsRagInputSchema, CollectionsRagOutputSchema]):
     """
@@ -210,87 +156,95 @@ class CollectionsRagTool(BaseTool[CollectionsRagInputSchema, CollectionsRagOutpu
 
     async def _arun(self, params: CollectionsRagInputSchema) -> CollectionsRagOutputSchema:
         """Execute semantic search over collections and return matches."""
-        try:
-            # Generate query embedding
-            logger.debug(f"Generating embedding for query: {params.query[:100]}")
-            query_vector = await self._embed_query(params.query)
+        output = CollectionsRagOutputSchema(collections=[], matches=[], error=None)
 
-            # Connect to LanceDB and search
+        # Generate query embedding
+        logger.debug(f"Generating embedding for query: {params.query[:100]}")
+        try:
+            query_vector = await self._embed_query(params.query)
+        except httpx.TimeoutException:
+            output.error = f"Ollama embedding request timed out after {self.config.timeout}s"
+            logger.error(output.error)
+            return output
+        except httpx.HTTPStatusError as e:
+            output.error = f"Ollama embedding request failed with status {e.response.status_code}"
+            logger.error(output.error)
+            return output
+        except ValueError as e:
+            output.error = str(e)
+            logger.error(output.error)
+            return output
+
+        # Connect to LanceDB
+        try:
             db = lancedb.connect(self.config.db_path)
-            table = db.open_table("veda_collections")
-            
-            # Perform vector similarity search
+            table = db.open_table(self.config.table_name)
+        except FileNotFoundError:
+            output.error = f"LanceDB database not found at {self.config.db_path}. Run index refresh first."
+            logger.error(output.error)
+            return output
+        except Exception as e:
+            output.error = f"Failed to connect to LanceDB: {e}"
+            logger.error(output.error)
+            return output
+
+        # Perform vector similarity search
+        try:
             results = (
                 table.search(query_vector, vector_column_name="vector")
                 .metric("cosine")
                 .limit(params.limit)
                 .to_list()
             )
+        except Exception as e:
+            output.error = f"LanceDB search failed: {e}"
+            logger.error(output.error)
+            return output
 
-            # Parse datetime range if provided
-            req_start, req_end = None, None
-            if params.datetime and "/" in params.datetime:
-                parts = params.datetime.split("/")
-                if len(parts) == 2:
-                    req_start, req_end = parts[0].strip(), parts[1].strip()
+        # Parse datetime range if provided
+        # Expected format: ISO-8601 interval with "/" separator, e.g., "2021-10-01/2021-12-31"
+        # This follows the STAC API datetime parameter convention for temporal ranges
+        req_start, req_end = None, None
+        if params.datetime and "/" in params.datetime:
+            parts = params.datetime.split("/")
+            if len(parts) == 2:
+                req_start, req_end = parts[0].strip(), parts[1].strip()
 
-            # Process results and check overlaps
-            matches: list[CollectionMatchInfo] = []
-            collection_ids: list[str] = []
+        # Process results and check overlaps
+        for r in results:
+            if not r.get("id"):
+                continue
 
-            for r in results:
-                if not r.get("id"):
-                    continue
+            meta = r.get("meta") or {}
+            spatial_bboxes = meta.get("extent_spatial_bbox")
+            temporal_intervals = meta.get("extent_temporal_interval")
 
-                meta = r.get("meta") or {}
-                spatial_bboxes = meta.get("extent_spatial_bbox")
-                temporal_intervals = meta.get("extent_temporal_interval")
-
-                # Check spatial overlap if bbox provided
-                spatial_overlap = True
-                if params.bbox and spatial_bboxes:
-                    spatial_overlap = any(
-                        _bboxes_overlap(params.bbox, sb)
-                        for sb in spatial_bboxes
-                        if sb
-                    )
-
-                # Check temporal overlap if datetime range provided
-                temporal_overlap = True
-                if req_start and req_end and temporal_intervals:
-                    temporal_overlap = any(
-                        _intervals_overlap(ti, req_start, req_end)
-                        for ti in temporal_intervals
-                        if ti
-                    )
-
-                collection_ids.append(r["id"])
-                matches.append(
-                    CollectionMatchInfo(
-                        id=r["id"],
-                        title=meta.get("title"),
-                        spatial_overlap=spatial_overlap,
-                        temporal_overlap=temporal_overlap,
-                    )
+            # Check spatial overlap if bbox provided
+            spatial_overlap = True
+            if params.bbox and spatial_bboxes:
+                spatial_overlap = any(
+                    bboxes_overlap(params.bbox, sb)
+                    for sb in spatial_bboxes
+                    if sb
                 )
 
-            return CollectionsRagOutputSchema(
-                collections=collection_ids,
-                matches=matches,
-                error=None,
+            # Check temporal overlap if datetime range provided
+            temporal_overlap = True
+            if req_start and req_end and temporal_intervals:
+                temporal_overlap = any(
+                    intervals_overlap(ti, req_start, req_end)
+                    for ti in temporal_intervals
+                    if ti
+                )
+
+            output.collections.append(r["id"])
+            output.matches.append(
+                CollectionMatchInfo(
+                    id=r["id"],
+                    title=meta.get("title"),
+                    spatial_overlap=spatial_overlap,
+                    temporal_overlap=temporal_overlap,
+                )
             )
 
-        except FileNotFoundError as e:
-            msg = f"LanceDB database not found at {self.config.db_path}. Run index refresh first."
-            logger.error(msg)
-            return CollectionsRagOutputSchema(collections=[], matches=[], error=msg)
-
-        except httpx.TimeoutException as e:
-            msg = f"Ollama embedding request timed out after {self.config.timeout}s"
-            logger.error(msg)
-            return CollectionsRagOutputSchema(collections=[], matches=[], error=msg)
-
-        except Exception as e:
-            msg = f"Collections search failed: {e}"
-            logger.error(msg)
-            return CollectionsRagOutputSchema(collections=[], matches=[], error=msg)
+        return output

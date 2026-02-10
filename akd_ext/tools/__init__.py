@@ -14,7 +14,7 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
-from .collections_rag import (
+from .eie import (
     CollectionsRagTool,
     CollectionsRagToolConfig,
     CollectionsRagInputSchema,
