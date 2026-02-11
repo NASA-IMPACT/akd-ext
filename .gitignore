@@ -25,6 +25,8 @@ __marimo__/
 .DS_Store
 .devcontainer
 .node_modules/
+cdk.out/
+infra/cdk.out/
 
 
 # dirs
