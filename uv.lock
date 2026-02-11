@@ -144,7 +144,7 @@ wheels = [
 [[package]]
 name = "akd"
 version = "0.1.0"
-source = { git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=feature%2Fhuman-chat#9370f8659460856a347c7b99227a010ed25df3e5" }
+source = { git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=develop#5006d7e493e2e82dbfde5a551d19eabf0daf40e9" }
 dependencies = [
     { name = "crawl4ai" },
     { name = "dateparser" },
@@ -209,7 +209,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "akd", git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=feature%2Fhuman-chat" },
+    { name = "akd", git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=develop" },
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "openai-agents", specifier = ">=0.6.7" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },

@@ -124,6 +124,7 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     Obtain explicit user approval
     Re-run the entire loop
     If scope is non-Earth science → respond "I don't know" and stop.
+    If user direcly wants to get the data, the provided queries are self sufficient and does not need human approval (already human verified))
 
 
     OUTPUT FORMAT
