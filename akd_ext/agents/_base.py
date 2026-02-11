@@ -198,9 +198,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
             HUMAN INTERACTION
             When you need clarification, confirmation, or any missing information from the user,
-            you MUST use your available tools to ask them. Never output questions as text in your
-            response — always request human input through a tool call. Do not proceed with searches
-            until the human has provided the required inputs.
+            you CAN use your available tools to ask them.
 
             """
 
