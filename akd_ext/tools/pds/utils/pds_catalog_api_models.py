@@ -5,14 +5,12 @@ used by the PDSCatalogClient for parsing catalog JSONL files.
 """
 
 import json
-import logging
+from loguru import logger
 from datetime import date, datetime
 from enum import Enum
 from pathlib import Path
 
 from pydantic import BaseModel, Field
-
-logger = logging.getLogger(__name__)
 
 
 class PDSNode(str, Enum):

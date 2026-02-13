@@ -1,6 +1,8 @@
 """OPUS Get Files Tool - Get downloadable file URLs for observations."""
 
-import logging
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -8,8 +10,6 @@ from pydantic import BaseModel, Field
 
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.opus_client import OPUSClient, OPUSClientError
-
-logger = logging.getLogger(__name__)
 
 
 class OPUSBrowseImages(BaseModel):
@@ -57,8 +57,8 @@ class OPUSGetFilesToolConfig(BaseToolConfig):
     """Configuration for OPUSGetFilesTool."""
 
     base_url: str = Field(
-        default="https://opus.pds-rings.seti.org/opus/api/",
-        description="OPUS API base URL",
+        default=os.getenv("OPUS_BASE_URL", "https://opus.pds-rings.seti.org/opus/api/"),
+        description="OPUS API base URL (override with OPUS_BASE_URL env var)",
     )
     timeout: float = Field(
         default=30.0,

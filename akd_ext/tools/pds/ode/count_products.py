@@ -1,7 +1,8 @@
 """Count products matching criteria without retrieving them."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -11,8 +12,6 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.ode.types import TargetType
 from akd_ext.tools.pds.utils.ode_client import ODEClient, ODEClientError
 
-logger = logging.getLogger(__name__)
-
 
 class ODECountProductsInputSchema(InputSchema):
     """Input schema for ODECountProductsTool."""
@@ -21,10 +20,10 @@ class ODECountProductsInputSchema(InputSchema):
     ihid: str = Field(..., description="Instrument Host ID (e.g., 'MRO', 'LRO', 'MESS')")
     iid: str = Field(..., description="Instrument ID (e.g., 'HIRISE', 'CTX', 'LROC', 'MDIS')")
     pt: str = Field(..., description="Product Type (e.g., 'RDRV11', 'EDR')")
-    minlat: Annotated[float, Field(ge=-90, le=90)] | None = Field(None, description="Minimum latitude filter")
-    maxlat: Annotated[float, Field(ge=-90, le=90)] | None = Field(None, description="Maximum latitude filter")
-    westlon: Annotated[float, Field(ge=0, le=360)] | None = Field(None, description="Western longitude filter")
-    eastlon: Annotated[float, Field(ge=0, le=360)] | None = Field(None, description="Eastern longitude filter")
+    minlat: float | None = Field(None, ge=-90, le=90, description="Minimum latitude filter")
+    maxlat: float | None = Field(None, ge=-90, le=90, description="Maximum latitude filter")
+    westlon: float | None = Field(None, ge=0, le=360, description="Western longitude filter")
+    eastlon: float | None = Field(None, ge=0, le=360, description="Eastern longitude filter")
     minobtime: str | None = Field(
         None, description="Minimum observation time in UTC format (e.g., '2020-01-01' or '2020-01-01T00:00:00')"
     )
@@ -49,8 +48,8 @@ class ODECountProductsToolConfig(BaseToolConfig):
     """Configuration for ODECountProductsTool."""
 
     base_url: str = Field(
-        default="https://oderest.rsl.wustl.edu/live2/",
-        description="ODE API base URL (can be overridden with ODE_BASE_URL env var)",
+        default=os.getenv("ODE_BASE_URL", "https://oderest.rsl.wustl.edu/live2/"),
+        description="ODE API base URL (override with ODE_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

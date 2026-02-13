@@ -30,7 +30,7 @@ In the MCP Inspector interface, you'll see a connection form. Configure it as fo
 Select: `Streamable HTTP`
 
 ### **URL**
-Enter your Fastmcp cloud url. 
+Enter your Fastmcp cloud url.
 
 ### **Connection Type**
 Select: `Via Proxy` (should be default)
@@ -41,7 +41,7 @@ Select: `Via Proxy` (should be default)
    - Make sure the toggle switch next to "Authorization" is **ON** (enabled)
    - Header name: `Authorization`
    - Header value: `Bearer YOUR_API_KEY_HERE`
-   
+
    ⚠️ **Important:** Replace `YOUR_API_KEY_HERE` with the actual API key provided to you
 
 **Example:**

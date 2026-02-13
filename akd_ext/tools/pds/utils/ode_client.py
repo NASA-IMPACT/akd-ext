@@ -7,7 +7,7 @@ Base URL: https://oderest.rsl.wustl.edu/live2/
 """
 
 import asyncio
-import logging
+from loguru import logger
 from types import TracebackType
 from typing import Any, Literal
 
@@ -22,7 +22,6 @@ from akd_ext.tools.pds.utils.ode_api_models import (
     ODEProductSearchResponse,
 )
 
-logger = logging.getLogger(__name__)
 
 # Valid ODE targets
 ODETarget = Literal["mars", "moon", "mercury", "phobos", "deimos", "venus"]

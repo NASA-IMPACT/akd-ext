@@ -1,6 +1,6 @@
 """Get detailed information about a specific PDS dataset."""
 
-import logging
+from loguru import logger
 from typing import Any
 
 from akd._base import InputSchema, OutputSchema
@@ -8,9 +8,12 @@ from akd.tools import BaseTool, BaseToolConfig
 from pydantic import Field
 
 from akd_ext.mcp.decorators import mcp_tool
-from akd_ext.tools.pds.utils.pds_catalog_client import FIELD_PROFILES, PDSCatalogClient, PDSCatalogClientError, filter_dataset
-
-logger = logging.getLogger(__name__)
+from akd_ext.tools.pds.utils.pds_catalog_client import (
+    FIELD_PROFILES,
+    PDSCatalogClient,
+    PDSCatalogClientError,
+    filter_dataset,
+)
 
 
 class PDSCatalogGetDatasetInputSchema(InputSchema):

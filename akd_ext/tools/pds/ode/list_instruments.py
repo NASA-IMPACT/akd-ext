@@ -1,6 +1,8 @@
 """Get valid instrument and product type combinations for a planetary target."""
 
-import logging
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,7 +12,6 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.ode.types import TargetType
 from akd_ext.tools.pds.utils.ode_client import ODEClient, ODEClientError
 
-logger = logging.getLogger(__name__)
 
 MAX_INSTRUMENTS_LIMIT = 25  # Max instruments returned
 
@@ -31,9 +32,7 @@ class ODEListInstrumentsInputSchema(InputSchema):
     """Input schema for ODEListInstrumentsTool."""
 
     target: TargetType = Field(..., description="Planetary body to query")
-    ihid: str | None = Field(
-        None, description="Filter by Instrument Host ID (e.g., 'MRO', 'LRO', 'MESS'). Optional."
-    )
+    ihid: str | None = Field(None, description="Filter by Instrument Host ID (e.g., 'MRO', 'LRO', 'MESS'). Optional.")
     iid: str | None = Field(None, description="Filter by Instrument ID (e.g., 'HIRISE', 'CTX', 'LROC'). Optional.")
     limit: int = Field(25, ge=1, le=25, description="Maximum combinations to return (default 25, max 25)")
 
@@ -56,8 +55,8 @@ class ODEListInstrumentsToolConfig(BaseToolConfig):
     """Configuration for ODEListInstrumentsTool."""
 
     base_url: str = Field(
-        default="https://oderest.rsl.wustl.edu/live2/",
-        description="ODE API base URL (can be overridden with ODE_BASE_URL env var)",
+        default=os.getenv("ODE_BASE_URL", "https://oderest.rsl.wustl.edu/live2/"),
+        description="ODE API base URL (override with ODE_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

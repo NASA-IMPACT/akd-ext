@@ -7,15 +7,13 @@ Base URL: https://pds-imaging.jpl.nasa.gov/solr/pds_archives/
 """
 
 import asyncio
-import logging
+from loguru import logger
 from types import TracebackType
 from typing import Any
 
 import httpx
 
 from .img_api_models import IMGCountResponse, IMGFacetResponse, IMGSearchResponse
-
-logger = logging.getLogger(__name__)
 
 
 class IMGAtlasClientError(Exception):
@@ -448,7 +446,7 @@ class IMGAtlasClient:
         # Validate facet field
         if facet_field not in self.VALID_FACET_FIELDS:
             raise IMGAtlasClientError(
-                f"Invalid facet field: {facet_field}. " f"Valid fields: {', '.join(sorted(self.VALID_FACET_FIELDS))}"
+                f"Invalid facet field: {facet_field}. Valid fields: {', '.join(sorted(self.VALID_FACET_FIELDS))}"
             )
 
         # Build filter queries for optional filters

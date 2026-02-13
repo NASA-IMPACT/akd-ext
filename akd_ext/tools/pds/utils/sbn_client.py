@@ -7,7 +7,7 @@ Base URL: https://catch-api.astro.umd.edu/
 """
 
 import asyncio
-import logging
+from loguru import logger
 from types import TracebackType
 from typing import Any
 
@@ -20,8 +20,6 @@ from .sbn_api_models import (
     CatchSourcesResponse,
     CatchStatusResponse,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class SBNCatchClientError(Exception):

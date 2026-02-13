@@ -1,7 +1,8 @@
 """Search PDS data collections filtered by instrument, target, instrument host, and investigation."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,8 +11,6 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import PROCESSING_LEVEL
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
-
-logger = logging.getLogger(__name__)
 
 
 class CollectionSummary(BaseModel):
@@ -50,10 +49,8 @@ class PDS4SearchCollectionsInputSchema(InputSchema):
     end_time: str | None = Field(
         None, description="End of time range in ISO 8601 format (e.g., '2021-01-01T00:00:00Z')"
     )
-    processing_level: PROCESSING_LEVEL | None = Field(
-        None, description="Filter by calibration level"
-    )
-    limit: Annotated[int, Field(ge=0, le=100)] = Field(10, description="Max results (default 10)")
+    processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by calibration level")
+    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
 
 
 class PDS4SearchCollectionsOutputSchema(OutputSchema):
@@ -70,8 +67,8 @@ class PDS4SearchCollectionsToolConfig(BaseToolConfig):
     """Configuration for PDS4SearchCollectionsTool."""
 
     base_url: str = Field(
-        default="https://pds.mcp.nasa.gov/api/search/1/",
-        description="PDS4 API base URL",
+        default=os.getenv("PDS4_BASE_URL", "https://pds.mcp.nasa.gov/api/search/1/"),
+        description="PDS4 API base URL (override with PDS4_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")

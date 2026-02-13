@@ -17,7 +17,7 @@ Always extract URNs dynamically from search results rather than using hardcoded 
 """
 
 import asyncio
-import logging
+from loguru import logger
 import re
 from types import TracebackType
 from typing import Any
@@ -25,8 +25,6 @@ from urllib.parse import urlencode, urljoin
 
 import httpx
 from pydantic import ValidationError
-
-logger = logging.getLogger(__name__)
 
 
 def validate_urn(urn: str) -> str:

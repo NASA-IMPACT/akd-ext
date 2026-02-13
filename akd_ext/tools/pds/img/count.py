@@ -1,17 +1,17 @@
 """IMG Atlas count tool for counting imagery products."""
 
-import logging
-from typing import Annotated, Any
+import os
+
+from loguru import logger
+from typing import Any
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
 from pydantic import Field
 
 from akd_ext.mcp.decorators import mcp_tool
-from akd_ext.tools.pds.img._types import IMGInstrument, IMGMission, IMGProductType, IMGTarget
+from akd_ext.tools.pds.img.types import IMGInstrument, IMGMission, IMGProductType, IMGTarget
 from akd_ext.tools.pds.utils.img_client import IMGAtlasClient, IMGAtlasClientError
-
-logger = logging.getLogger(__name__)
 
 
 class IMGCountInputSchema(InputSchema):
@@ -48,21 +48,15 @@ class IMGCountInputSchema(InputSchema):
     stop_time: str | None = Field(
         None, description="End of time range in ISO 8601 format (e.g., '2020-12-31T23:59:59Z')"
     )
-    sol_min: Annotated[int, Field(ge=0)] | None = Field(None, description="Minimum sol number (Mars missions only)")
-    sol_max: Annotated[int, Field(ge=0)] | None = Field(None, description="Maximum sol number (Mars missions only)")
+    sol_min: int | None = Field(None, ge=0, description="Minimum sol number (Mars missions only)")
+    sol_max: int | None = Field(None, ge=0, description="Maximum sol number (Mars missions only)")
     product_type: IMGProductType | None = Field(
         None, description="Product type: 'EDR' for raw data, 'RDR' for processed data"
     )
-    filter_name: str | None = Field(
-        None, description="Camera filter name (e.g., 'L0', 'R0', 'RED', 'GREEN', 'BLUE')"
-    )
+    filter_name: str | None = Field(None, description="Camera filter name (e.g., 'L0', 'R0', 'RED', 'GREEN', 'BLUE')")
     frame_type: str | None = Field(None, description="Frame type filter (e.g., 'FULL', 'SUBFRAME')")
-    exposure_min: Annotated[float, Field(ge=0)] | None = Field(
-        None, description="Minimum exposure duration in milliseconds"
-    )
-    exposure_max: Annotated[float, Field(ge=0)] | None = Field(
-        None, description="Maximum exposure duration in milliseconds"
-    )
+    exposure_min: float | None = Field(None, ge=0, description="Minimum exposure duration in milliseconds")
+    exposure_max: float | None = Field(None, ge=0, description="Maximum exposure duration in milliseconds")
     local_solar_time: str | None = Field(
         None, description="Local true solar time filter (e.g., '12:00' for noon images)"
     )
@@ -74,9 +68,7 @@ class IMGCountOutputSchema(OutputSchema):
     status: str = Field(..., description="Status of the request: 'success' or 'error'")
     count: int = Field(..., description="Total number of products matching the criteria")
     query_time_ms: int = Field(..., description="Query execution time in milliseconds")
-    filters: dict[str, Any] = Field(
-        default_factory=dict, description="Applied filters echoed back for reference"
-    )
+    filters: dict[str, Any] = Field(default_factory=dict, description="Applied filters echoed back for reference")
     error: str | None = Field(None, description="Error message if status is 'error'")
 
 
@@ -84,8 +76,8 @@ class IMGCountToolConfig(BaseToolConfig):
     """Configuration for IMGCountTool."""
 
     base_url: str = Field(
-        default="https://pds-imaging.jpl.nasa.gov/solr/pds_archives/",
-        description="Base URL for the IMG Atlas API",
+        default=os.getenv("IMG_BASE_URL", "https://pds-imaging.jpl.nasa.gov/solr/pds_archives/"),
+        description="IMG Atlas API base URL (override with IMG_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

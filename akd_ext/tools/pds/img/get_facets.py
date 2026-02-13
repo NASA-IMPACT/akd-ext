@@ -1,17 +1,15 @@
 """IMG Atlas get facets tool for discovering available field values."""
 
-import logging
-from typing import Annotated
+import os
 
+from loguru import logger
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
 from pydantic import BaseModel, Field
 
 from akd_ext.mcp.decorators import mcp_tool
-from akd_ext.tools.pds.img._types import IMGFacetField, IMGInstrument, IMGMission, IMGTarget
+from akd_ext.tools.pds.img.types import IMGFacetField, IMGInstrument, IMGMission, IMGTarget
 from akd_ext.tools.pds.utils.img_client import IMGAtlasClient, IMGAtlasClientError
-
-logger = logging.getLogger(__name__)
 
 
 class IMGFacetValueItem(BaseModel):
@@ -38,18 +36,10 @@ class IMGGetFacetsInputSchema(InputSchema):
             "- 'pds_standard': PDS version (PDS3, PDS4)"
         ),
     )
-    limit: Annotated[int, Field(ge=1, le=1000)] = Field(
-        100, description="Maximum number of values to return"
-    )
-    target: IMGTarget | None = Field(
-        None, description="Optional target filter to narrow results"
-    )
-    mission: IMGMission | None = Field(
-        None, description="Optional mission filter to narrow results"
-    )
-    instrument: IMGInstrument | None = Field(
-        None, description="Optional instrument filter to narrow results"
-    )
+    limit: int = Field(100, ge=1, le=1000, description="Maximum number of values to return")
+    target: IMGTarget | None = Field(None, description="Optional target filter to narrow results")
+    mission: IMGMission | None = Field(None, description="Optional mission filter to narrow results")
+    instrument: IMGInstrument | None = Field(None, description="Optional instrument filter to narrow results")
 
 
 class IMGGetFacetsOutputSchema(OutputSchema):
@@ -69,8 +59,8 @@ class IMGGetFacetsToolConfig(BaseToolConfig):
     """Configuration for IMGGetFacetsTool."""
 
     base_url: str = Field(
-        default="https://pds-imaging.jpl.nasa.gov/solr/pds_archives/",
-        description="Base URL for the IMG Atlas API",
+        default=os.getenv("IMG_BASE_URL", "https://pds-imaging.jpl.nasa.gov/solr/pds_archives/"),
+        description="IMG Atlas API base URL (override with IMG_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")
@@ -139,10 +129,7 @@ class IMGGetFacetsTool(BaseTool[IMGGetFacetsInputSchema, IMGGetFacetsOutputSchem
                 )
 
             # Convert to output schema format
-            values = [
-                IMGFacetValueItem(value=v.value, count=v.count)
-                for v in response.values
-            ]
+            values = [IMGFacetValueItem(value=v.value, count=v.count) for v in response.values]
 
             return IMGGetFacetsOutputSchema(
                 status="success",

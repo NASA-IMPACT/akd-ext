@@ -1,6 +1,8 @@
 """Get available feature types for a planetary target."""
 
-import logging
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -9,8 +11,6 @@ from pydantic import Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.ode.types import TargetType
 from akd_ext.tools.pds.utils.ode_client import ODEClient, ODEClientError
-
-logger = logging.getLogger(__name__)
 
 
 class ODEListFeatureClassesInputSchema(InputSchema):
@@ -33,8 +33,8 @@ class ODEListFeatureClassesToolConfig(BaseToolConfig):
     """Configuration for ODEListFeatureClassesTool."""
 
     base_url: str = Field(
-        default="https://oderest.rsl.wustl.edu/live2/",
-        description="ODE API base URL (can be overridden with ODE_BASE_URL env var)",
+        default=os.getenv("ODE_BASE_URL", "https://oderest.rsl.wustl.edu/live2/"),
+        description="ODE API base URL (override with ODE_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

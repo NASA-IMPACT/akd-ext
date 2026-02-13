@@ -1,7 +1,8 @@
 """Search PDS Context products that are Targets (celestial bodies, phenomena)."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,8 +11,6 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import TARGET_TYPE
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
-
-logger = logging.getLogger(__name__)
 
 
 class TargetSummary(BaseModel):
@@ -32,7 +31,7 @@ class PDS4SearchTargetsInputSchema(InputSchema):
         None, description="Space-delimited search terms (e.g. 'jupiter moon', 'asteroid belt')"
     )
     target_type: TARGET_TYPE | None = Field(None, description="Filter by target type")
-    limit: Annotated[int, Field(ge=0, le=100)] = Field(10, description="Max results (default 10)")
+    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
 
 
 class PDS4SearchTargetsOutputSchema(OutputSchema):
@@ -48,7 +47,10 @@ class PDS4SearchTargetsOutputSchema(OutputSchema):
 class PDS4SearchTargetsToolConfig(BaseToolConfig):
     """Configuration for PDS4SearchTargetsTool."""
 
-    base_url: str = Field(default="https://pds.mcp.nasa.gov/api/search/1/", description="PDS4 API base URL")
+    base_url: str = Field(
+        default=os.getenv("PDS4_BASE_URL", "https://pds.mcp.nasa.gov/api/search/1/"),
+        description="PDS4 API base URL (override with PDS4_BASE_URL env var)",
+    )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")
 

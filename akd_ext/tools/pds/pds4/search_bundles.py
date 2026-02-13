@@ -1,7 +1,8 @@
 """Search for bundles in PDS4 with comprehensive results."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,8 +11,6 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import PROCESSING_LEVEL
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
-
-logger = logging.getLogger(__name__)
 
 
 class BundleSummary(BaseModel):
@@ -36,19 +35,13 @@ class PDS4SearchBundlesInputSchema(InputSchema):
         None, description="Start of time range (ISO 8601 format, e.g., '2020-01-01T00:00:00Z')"
     )
     end_time: str | None = Field(None, description="End of time range (ISO 8601 format)")
-    processing_level: PROCESSING_LEVEL | None = Field(
-        None, description="Filter by processing level"
-    )
-    limit: Annotated[int, Field(ge=0, le=100)] = Field(
-        0, description="Number of actual products to return (set to 0 for facets only)"
-    )
+    processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by processing level")
+    limit: int = Field(0, ge=0, le=100, description="Number of actual products to return (set to 0 for facets only)")
     facet_fields: str | None = Field(
         None,
         description="Comma-separated list of fields to facet on (e.g., 'pds:Identification_Area.pds:title,lidvid')",
     )
-    facet_limit: Annotated[int, Field(ge=1, le=100)] = Field(
-        25, description="Maximum number of facet values to return (default: 25)"
-    )
+    facet_limit: int = Field(25, ge=1, le=100, description="Maximum number of facet values to return (default: 25)")
 
 
 class PDS4SearchBundlesOutputSchema(OutputSchema):
@@ -66,8 +59,8 @@ class PDS4SearchBundlesToolConfig(BaseToolConfig):
     """Configuration for PDS4SearchBundlesTool."""
 
     base_url: str = Field(
-        default="https://pds.mcp.nasa.gov/api/search/1/",
-        description="PDS4 API base URL (can be overridden with PDS4_BASE_URL env var)",
+        default=os.getenv("PDS4_BASE_URL", "https://pds.mcp.nasa.gov/api/search/1/"),
+        description="PDS4 API base URL (override with PDS4_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

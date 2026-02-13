@@ -1,6 +1,8 @@
 """OPUS Get Metadata Tool - Get detailed metadata for observations."""
 
-import logging
+import os
+
+from loguru import logger
 from typing import Any
 
 from akd._base import InputSchema, OutputSchema
@@ -9,8 +11,6 @@ from pydantic import Field
 
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.opus_client import OPUSClient, OPUSClientError
-
-logger = logging.getLogger(__name__)
 
 
 class OPUSGetMetadataInputSchema(InputSchema):
@@ -61,8 +61,8 @@ class OPUSGetMetadataToolConfig(BaseToolConfig):
     """Configuration for OPUSGetMetadataTool."""
 
     base_url: str = Field(
-        default="https://opus.pds-rings.seti.org/opus/api/",
-        description="OPUS API base URL",
+        default=os.getenv("OPUS_BASE_URL", "https://opus.pds-rings.seti.org/opus/api/"),
+        description="OPUS API base URL (override with OPUS_BASE_URL env var)",
     )
     timeout: float = Field(
         default=30.0,
@@ -125,7 +125,9 @@ class OPUSGetMetadataTool(BaseTool[OPUSGetMetadataInputSchema, OPUSGetMetadataOu
                 image=metadata.image_constraints if metadata.image_constraints else None,
                 wavelength=metadata.wavelength_constraints if metadata.wavelength_constraints else None,
                 ring_geometry=metadata.ring_geometry_constraints if metadata.ring_geometry_constraints else None,
-                surface_geometry=metadata.surface_geometry_constraints if metadata.surface_geometry_constraints else None,
+                surface_geometry=metadata.surface_geometry_constraints
+                if metadata.surface_geometry_constraints
+                else None,
                 instrument_specific=metadata.instrument_constraints if metadata.instrument_constraints else None,
             )
 

@@ -1,6 +1,8 @@
 """Crawl a single PDS Context product and return other PDS Context products it is associated with."""
 
-import logging
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -8,8 +10,6 @@ from pydantic import Field
 
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
-
-logger = logging.getLogger(__name__)
 
 
 class PDS4CrawlContextProductInputSchema(InputSchema):
@@ -34,7 +34,10 @@ class PDS4CrawlContextProductOutputSchema(OutputSchema):
 class PDS4CrawlContextProductToolConfig(BaseToolConfig):
     """Configuration for PDS4CrawlContextProductTool."""
 
-    base_url: str = Field(default="https://pds.mcp.nasa.gov/api/search/1/", description="PDS4 API base URL")
+    base_url: str = Field(
+        default=os.getenv("PDS4_BASE_URL", "https://pds.mcp.nasa.gov/api/search/1/"),
+        description="PDS4 API base URL (override with PDS4_BASE_URL env var)",
+    )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")
 

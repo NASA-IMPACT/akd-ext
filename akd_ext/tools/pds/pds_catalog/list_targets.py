@@ -1,7 +1,6 @@
 """List targets (celestial bodies) available in the PDS catalog."""
 
-import logging
-from typing import Annotated
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,8 +9,6 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds_catalog.types import PDS_NODE
 from akd_ext.tools.pds.utils.pds_catalog_client import PDSCatalogClient, PDSCatalogClientError
-
-logger = logging.getLogger(__name__)
 
 
 class PDSCatalogTargetItem(BaseModel):
@@ -29,8 +26,10 @@ class PDSCatalogListTargetsInputSchema(InputSchema):
         None,
         description="Filter by PDS node (optional)",
     )
-    limit: Annotated[int, Field(ge=1, le=50)] = Field(
+    limit: int = Field(
         50,
+        ge=1,
+        le=50,
         description="Maximum targets to return (default 50)",
     )
 

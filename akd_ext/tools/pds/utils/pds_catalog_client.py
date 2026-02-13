@@ -4,7 +4,7 @@ This client provides an in-memory search index for PDS datasets stored in JSONL 
 It supports filtering by node, mission, instrument, target, and temporal range.
 """
 
-import logging
+from loguru import logger
 import os
 from datetime import date
 from pathlib import Path
@@ -14,7 +14,6 @@ from rapidfuzz import fuzz
 
 from akd_ext.tools.pds.utils.pds_catalog_api_models import PDSDataset, load_from_jsonl
 
-logger = logging.getLogger(__name__)
 
 # Default catalog directory containing scraped JSONL files
 DEFAULT_CATALOG_DIR = Path(__file__).parent.parent / "pds_catalog" / "scraped_data"

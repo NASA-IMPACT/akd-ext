@@ -1,7 +1,8 @@
 """Search ODE planetary data products with geographic and temporal filtering."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -11,7 +12,6 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.ode.types import TargetType
 from akd_ext.tools.pds.utils.ode_client import ODEClient, ODEClientError
 
-logger = logging.getLogger(__name__)
 
 # Response size limits to prevent overwhelming LLM context windows
 MAX_SEARCH_LIMIT = 10  # Max products per search
@@ -64,18 +64,18 @@ class ODESearchProductsInputSchema(InputSchema):
     iid: str | None = Field(None, description="Instrument ID (e.g., 'HIRISE', 'CTX', 'LROC', 'MDIS')")
     pt: str | None = Field(None, description="Product Type (e.g., 'RDRV11', 'EDR')")
     pdsid: str | None = Field(None, description="PDS Product ID for direct lookup (e.g., 'ESP_012600_1655_RED')")
-    minlat: Annotated[float, Field(ge=-90, le=90)] | None = Field(None, description="Minimum latitude (-90 to 90)")
-    maxlat: Annotated[float, Field(ge=-90, le=90)] | None = Field(None, description="Maximum latitude (-90 to 90)")
-    westlon: Annotated[float, Field(ge=0, le=360)] | None = Field(None, description="Western longitude (0 to 360)")
-    eastlon: Annotated[float, Field(ge=0, le=360)] | None = Field(None, description="Eastern longitude (0 to 360)")
+    minlat: float | None = Field(None, ge=-90, le=90, description="Minimum latitude (-90 to 90)")
+    maxlat: float | None = Field(None, ge=-90, le=90, description="Maximum latitude (-90 to 90)")
+    westlon: float | None = Field(None, ge=0, le=360, description="Western longitude (0 to 360)")
+    eastlon: float | None = Field(None, ge=0, le=360, description="Eastern longitude (0 to 360)")
     minobtime: str | None = Field(
         None, description="Minimum observation time in UTC format (e.g., '2018-05-01' or '2018-05-01T00:00:00')"
     )
     maxobtime: str | None = Field(
         None, description="Maximum observation time in UTC format (e.g., '2018-08-31' or '2018-08-31T23:59:59')"
     )
-    limit: Annotated[int, Field(ge=1, le=10)] = Field(10, description="Maximum products to return (default 10)")
-    offset: Annotated[int, Field(ge=0)] = Field(0, description="Pagination offset (default 0)")
+    limit: int = Field(10, ge=1, le=10, description="Maximum products to return (default 10)")
+    offset: int = Field(0, ge=0, description="Pagination offset (default 0)")
 
 
 class ODESearchProductsOutputSchema(OutputSchema):
@@ -97,8 +97,8 @@ class ODESearchProductsToolConfig(BaseToolConfig):
     """Configuration for ODESearchProductsTool."""
 
     base_url: str = Field(
-        default="https://oderest.rsl.wustl.edu/live2/",
-        description="ODE API base URL (can be overridden with ODE_BASE_URL env var)",
+        default=os.getenv("ODE_BASE_URL", "https://oderest.rsl.wustl.edu/live2/"),
+        description="ODE API base URL (override with ODE_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

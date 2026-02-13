@@ -1,7 +1,8 @@
 """Search PDS observational products with advanced filtering."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,8 +11,6 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import PROCESSING_LEVEL
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
-
-logger = logging.getLogger(__name__)
 
 
 class ProductSummary(BaseModel):
@@ -37,25 +36,19 @@ class PDS4SearchProductsInputSchema(InputSchema):
     end_time: str | None = Field(
         None, description="End of time range in ISO 8601 format (e.g., '2021-01-01T00:00:00Z')"
     )
-    processing_level: PROCESSING_LEVEL | None = Field(
-        None, description="Filter by calibration level"
+    processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by calibration level")
+    bbox_north: float | None = Field(None, ge=-90, le=90, description="North bounding coordinate (latitude, -90 to 90)")
+    bbox_south: float | None = Field(None, ge=-90, le=90, description="South bounding coordinate (latitude, -90 to 90)")
+    bbox_east: float | None = Field(
+        None, ge=-180, le=180, description="East bounding coordinate (longitude, -180 to 180)"
     )
-    bbox_north: Annotated[float, Field(ge=-90, le=90)] | None = Field(
-        None, description="North bounding coordinate (latitude, -90 to 90)"
-    )
-    bbox_south: Annotated[float, Field(ge=-90, le=90)] | None = Field(
-        None, description="South bounding coordinate (latitude, -90 to 90)"
-    )
-    bbox_east: Annotated[float, Field(ge=-180, le=180)] | None = Field(
-        None, description="East bounding coordinate (longitude, -180 to 180)"
-    )
-    bbox_west: Annotated[float, Field(ge=-180, le=180)] | None = Field(
-        None, description="West bounding coordinate (longitude, -180 to 180)"
+    bbox_west: float | None = Field(
+        None, ge=-180, le=180, description="West bounding coordinate (longitude, -180 to 180)"
     )
     ref_lid_target: str | None = Field(
         None, description="URN identifier for target (e.g., 'urn:nasa:pds:context:target:planet.mars')"
     )
-    limit: Annotated[int, Field(ge=0, le=100)] = Field(100, description="Maximum results to return (default 100)")
+    limit: int = Field(100, ge=0, le=100, description="Maximum results to return (default 100)")
 
 
 class PDS4SearchProductsOutputSchema(OutputSchema):
@@ -72,8 +65,8 @@ class PDS4SearchProductsToolConfig(BaseToolConfig):
     """Configuration for PDS4SearchProductsTool."""
 
     base_url: str = Field(
-        default="https://pds.mcp.nasa.gov/api/search/1/",
-        description="PDS4 API base URL (can be overridden with PDS4_BASE_URL env var)",
+        default=os.getenv("PDS4_BASE_URL", "https://pds.mcp.nasa.gov/api/search/1/"),
+        description="PDS4 API base URL (override with PDS4_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

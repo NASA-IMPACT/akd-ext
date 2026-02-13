@@ -1,6 +1,6 @@
 """Get statistics about the PDS catalog."""
 
-import logging
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -8,8 +8,6 @@ from pydantic import Field
 
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.pds_catalog_client import PDSCatalogClient, PDSCatalogClientError
-
-logger = logging.getLogger(__name__)
 
 
 class PDSCatalogStatsInputSchema(InputSchema):

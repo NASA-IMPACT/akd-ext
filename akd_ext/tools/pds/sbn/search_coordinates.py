@@ -1,7 +1,9 @@
 """Search for observations at fixed sky coordinates."""
 
-import logging
-from typing import Annotated, Any, Literal
+import os
+
+from loguru import logger
+from typing import Any, Literal
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -18,8 +20,6 @@ from akd_ext.tools.pds.sbn.types import (
 )
 from akd_ext.tools.pds.utils.sbn_client import SBNCatchClient, SBNCatchClientError
 
-logger = logging.getLogger(__name__)
-
 
 class SBNSearchCoordinatesInputSchema(InputSchema):
     """Input schema for SBNSearchCoordinatesTool."""
@@ -32,16 +32,14 @@ class SBNSearchCoordinatesInputSchema(InputSchema):
         ...,
         description="Declination. Formats: Sexagesimal '+12:34:56.7' or '-12:34:56.7', or decimal degrees '-30.5'",
     )
-    radius: Annotated[float, Field(gt=0, le=120)] = Field(
-        10.0, description="Search radius in arcminutes (0-120, default 10)"
-    )
+    radius: float = Field(10.0, gt=0, le=120, description="Search radius in arcminutes (0-120, default 10)")
     sources: list[str] | None = Field(None, description=VALID_SOURCES_DESCRIPTION)
     start_date: str | None = Field(None, description="Start date filter (format: 'YYYY-MM-DD')")
     stop_date: str | None = Field(None, description="Stop date filter (format: 'YYYY-MM-DD')")
-    limit: Annotated[int, Field(ge=1, le=10)] = Field(
-        DEFAULT_OBSERVATIONS_LIMIT, description="Maximum observations to return (default 10, max 10)"
+    limit: int = Field(
+        DEFAULT_OBSERVATIONS_LIMIT, ge=1, le=10, description="Maximum observations to return (default 10, max 10)"
     )
-    offset: Annotated[int, Field(ge=0)] = Field(0, description="Skip first N observations for pagination (default 0)")
+    offset: int = Field(0, ge=0, description="Skip first N observations for pagination (default 0)")
     fields: Literal["essential", "summary", "full"] = Field(
         "summary", description="Field profile: 'essential' (minimal), 'summary' (default), or 'full' (all fields)"
     )
@@ -68,8 +66,8 @@ class SBNSearchCoordinatesToolConfig(BaseToolConfig):
     """Configuration for SBNSearchCoordinatesTool."""
 
     base_url: str = Field(
-        default="https://catch-api.astro.umd.edu/",
-        description="CATCH API base URL (can be overridden with SBN_BASE_URL env var)",
+        default=os.getenv("SBN_BASE_URL", "https://catch-api.astro.umd.edu/"),
+        description="CATCH API base URL (override with SBN_BASE_URL env var)",
     )
     timeout: float = Field(default=60.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

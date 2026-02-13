@@ -1,6 +1,8 @@
 """OPUS Count Tool - Count observations matching criteria."""
 
-import logging
+import os
+
+from loguru import logger
 from typing import Any
 
 from akd._base import InputSchema, OutputSchema
@@ -10,8 +12,6 @@ from pydantic import Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.opus.types import OPUS_INSTRUMENTS, OPUS_MISSIONS, OPUS_PLANETS
 from akd_ext.tools.pds.utils.opus_client import OPUSClient, OPUSClientError
-
-logger = logging.getLogger(__name__)
 
 
 class OPUSCountInputSchema(InputSchema):
@@ -69,8 +69,8 @@ class OPUSCountToolConfig(BaseToolConfig):
     """Configuration for OPUSCountTool."""
 
     base_url: str = Field(
-        default="https://opus.pds-rings.seti.org/opus/api/",
-        description="OPUS API base URL",
+        default=os.getenv("OPUS_BASE_URL", "https://opus.pds-rings.seti.org/opus/api/"),
+        description="OPUS API base URL (override with OPUS_BASE_URL env var)",
     )
     timeout: float = Field(
         default=30.0,

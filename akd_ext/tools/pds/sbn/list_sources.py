@@ -1,6 +1,8 @@
 """List available CATCH data sources with their current status."""
 
-import logging
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -8,8 +10,6 @@ from pydantic import BaseModel, Field
 
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.sbn_client import SBNCatchClient, SBNCatchClientError
-
-logger = logging.getLogger(__name__)
 
 
 class SBNSourceSummary(BaseModel):
@@ -44,8 +44,8 @@ class SBNListSourcesToolConfig(BaseToolConfig):
     """Configuration for SBNListSourcesTool."""
 
     base_url: str = Field(
-        default="https://catch-api.astro.umd.edu/",
-        description="CATCH API base URL (can be overridden with SBN_BASE_URL env var)",
+        default=os.getenv("SBN_BASE_URL", "https://catch-api.astro.umd.edu/"),
+        description="CATCH API base URL (override with SBN_BASE_URL env var)",
     )
     timeout: float = Field(default=60.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

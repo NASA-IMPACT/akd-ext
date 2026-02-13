@@ -7,7 +7,7 @@ Base URL: https://opus.pds-rings.seti.org/opus/api/
 """
 
 import asyncio
-import logging
+from loguru import logger
 from types import TracebackType
 from typing import Any
 
@@ -19,8 +19,6 @@ from .opus_api_models import (
     OPUSMetadataResponse,
     OPUSSearchResponse,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class OPUSClientError(Exception):
@@ -317,4 +315,3 @@ class OPUSClient:
         except Exception as e:
             logger.error(f"Failed to parse OPUS files response: {e}")
             raise OPUSClientError(f"Invalid response format: {e}")
-

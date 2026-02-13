@@ -1,6 +1,8 @@
 """IMG Atlas get product tool for retrieving detailed product metadata."""
 
-import logging
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -8,8 +10,6 @@ from pydantic import BaseModel, Field
 
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.img_client import IMGAtlasClient, IMGAtlasClientError
-
-logger = logging.getLogger(__name__)
 
 
 class IMGProductDetailURLs(BaseModel):
@@ -62,8 +62,8 @@ class IMGGetProductToolConfig(BaseToolConfig):
     """Configuration for IMGGetProductTool."""
 
     base_url: str = Field(
-        default="https://pds-imaging.jpl.nasa.gov/solr/pds_archives/",
-        description="Base URL for the IMG Atlas API",
+        default=os.getenv("IMG_BASE_URL", "https://pds-imaging.jpl.nasa.gov/solr/pds_archives/"),
+        description="IMG Atlas API base URL (override with IMG_BASE_URL env var)",
     )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum number of retry attempts for failed requests")

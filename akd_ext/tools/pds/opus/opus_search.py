@@ -1,7 +1,8 @@
 """OPUS Search Tool - Search outer planets observations."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,8 +11,6 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.opus.types import OPUS_INSTRUMENTS, OPUS_MISSIONS, OPUS_PLANETS
 from akd_ext.tools.pds.utils.opus_client import OPUSClient, OPUSClientError
-
-logger = logging.getLogger(__name__)
 
 
 class OPUSObservationSummary(BaseModel):
@@ -65,12 +64,15 @@ class OPUSSearchInputSchema(InputSchema):
         None,
         description="End of time range (ISO 8601 format)",
     )
-    limit: Annotated[int, Field(ge=1, le=1000)] = Field(
+    limit: int = Field(
         100,
+        ge=1,
+        le=1000,
         description="Maximum observations to return",
     )
-    startobs: Annotated[int, Field(ge=1)] = Field(
+    startobs: int = Field(
         1,
+        ge=1,
         description="Starting observation index for pagination",
     )
 
@@ -93,8 +95,8 @@ class OPUSSearchToolConfig(BaseToolConfig):
     """Configuration for OPUSSearchTool."""
 
     base_url: str = Field(
-        default="https://opus.pds-rings.seti.org/opus/api/",
-        description="OPUS API base URL",
+        default=os.getenv("OPUS_BASE_URL", "https://opus.pds-rings.seti.org/opus/api/"),
+        description="OPUS API base URL (override with OPUS_BASE_URL env var)",
     )
     timeout: float = Field(
         default=30.0,

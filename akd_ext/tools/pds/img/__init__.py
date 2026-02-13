@@ -1,6 +1,6 @@
 """IMG Atlas tools for planetary imagery search and discovery."""
 
-from akd_ext.tools.pds.img._types import (
+from akd_ext.tools.pds.img.types import (
     IMGFacetField,
     IMGInstrument,
     IMGMission,

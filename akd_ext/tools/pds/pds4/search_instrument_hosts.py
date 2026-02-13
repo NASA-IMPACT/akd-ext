@@ -1,7 +1,8 @@
 """Search PDS Context products that are Instrument Hosts (spacecraft, rovers, telescopes)."""
 
-import logging
-from typing import Annotated
+import os
+
+from loguru import logger
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -10,8 +11,6 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import INSTRUMENT_HOST_TYPE
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
-
-logger = logging.getLogger(__name__)
 
 
 class InstrumentHostSummary(BaseModel):
@@ -30,10 +29,8 @@ class PDS4SearchInstrumentHostsInputSchema(InputSchema):
     keywords: str | None = Field(
         None, description="Space-delimited search terms (e.g. 'mars rover', 'voyager spacecraft')"
     )
-    instrument_host_type: INSTRUMENT_HOST_TYPE | None = Field(
-        None, description="Filter by instrument host type"
-    )
-    limit: Annotated[int, Field(ge=0, le=100)] = Field(10, description="Max results (default 10)")
+    instrument_host_type: INSTRUMENT_HOST_TYPE | None = Field(None, description="Filter by instrument host type")
+    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
 
 
 class PDS4SearchInstrumentHostsOutputSchema(OutputSchema):
@@ -51,13 +48,18 @@ class PDS4SearchInstrumentHostsOutputSchema(OutputSchema):
 class PDS4SearchInstrumentHostsToolConfig(BaseToolConfig):
     """Configuration for PDS4SearchInstrumentHostsTool."""
 
-    base_url: str = Field(default="https://pds.mcp.nasa.gov/api/search/1/", description="PDS4 API base URL")
+    base_url: str = Field(
+        default=os.getenv("PDS4_BASE_URL", "https://pds.mcp.nasa.gov/api/search/1/"),
+        description="PDS4 API base URL (override with PDS4_BASE_URL env var)",
+    )
     timeout: float = Field(default=30.0, description="Request timeout in seconds")
     max_retries: int = Field(default=3, description="Maximum retry attempts")
 
 
 @mcp_tool
-class PDS4SearchInstrumentHostsTool(BaseTool[PDS4SearchInstrumentHostsInputSchema, PDS4SearchInstrumentHostsOutputSchema]):
+class PDS4SearchInstrumentHostsTool(
+    BaseTool[PDS4SearchInstrumentHostsInputSchema, PDS4SearchInstrumentHostsOutputSchema]
+):
     """Search PDS Context products that are Instrument Hosts (spacecraft, rovers, telescopes).
 
     Instrument Hosts are platforms that carry scientific instruments: spacecraft, rovers, landers, telescopes.

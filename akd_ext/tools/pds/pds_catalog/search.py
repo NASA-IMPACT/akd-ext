@@ -1,8 +1,8 @@
 """Search the PDS dataset catalog."""
 
-import logging
+from loguru import logger
 from datetime import date
-from typing import Annotated, Any
+from typing import Any
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
@@ -17,8 +17,6 @@ from akd_ext.tools.pds.utils.pds_catalog_client import (
     PDSCatalogClientError,
     filter_dataset,
 )
-
-logger = logging.getLogger(__name__)
 
 
 class PDSCatalogSearchInputSchema(InputSchema):
@@ -67,12 +65,15 @@ class PDSCatalogSearchInputSchema(InputSchema):
         None,
         description="Filter datasets that have data on or before this date (YYYY-MM-DD)",
     )
-    limit: Annotated[int, Field(ge=1, le=50)] = Field(
+    limit: int = Field(
         20,
+        ge=1,
+        le=50,
         description="Maximum results to return (default 20, max 50)",
     )
-    offset: Annotated[int, Field(ge=0)] = Field(
+    offset: int = Field(
         0,
+        ge=0,
         description="Skip first N results for pagination (default 0)",
     )
     fields: FIELD_PROFILE = Field(
