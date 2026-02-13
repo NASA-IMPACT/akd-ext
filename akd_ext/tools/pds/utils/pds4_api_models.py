@@ -325,6 +325,8 @@ class PDS4Product(BaseModel):
             Populated PDS4Product instance
         """
         props = data.get("properties", {}) if "properties" in data else data
+        if not isinstance(props, dict):
+            props = {}
 
         identification_area = PDS4IdentificationArea.from_properties(props)
         investigation_area = PDS4InvestigationArea.from_properties(props)
@@ -454,11 +456,16 @@ class PDS4SearchResponse(BaseModel):
     def from_raw_data(cls, data: dict[str, Any]) -> "PDS4SearchResponse":
         """Create PDS4SearchResponse from raw API response data."""
         summary_data = data.get("summary", {})
+        if not isinstance(summary_data, dict):
+            summary_data = {}
 
         # Parse facets from summary
         facets = []
-        for facet_data in summary_data.get("facets", []):
-            facets.append(PDS4Facet(**facet_data))
+        facets_data = summary_data.get("facets", [])
+        if isinstance(facets_data, list):
+            for facet_data in facets_data:
+                if isinstance(facet_data, dict):
+                    facets.append(PDS4Facet(**facet_data))
 
         # Create summary without facets (they're handled separately)
         summary = PDS4Summary(
@@ -470,8 +477,12 @@ class PDS4SearchResponse(BaseModel):
         )
 
         products = []
-        for item in data.get("data", []):
-            products.append(PDS4Product.from_raw_data(item))
+        data_list = data.get("data", [])
+        if not isinstance(data_list, list):
+            data_list = []
+        for item in data_list:
+            if isinstance(item, dict):
+                products.append(PDS4Product.from_raw_data(item))
 
         return cls(
             summary=summary,

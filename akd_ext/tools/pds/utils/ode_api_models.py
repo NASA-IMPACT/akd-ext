@@ -152,6 +152,11 @@ class ODEProductSearchResponse(BaseModel):
         if not isinstance(data, dict):
             return cls(status="ERROR", error=f"Invalid response format: expected dict, got {type(data).__name__}")
         ode_results = data.get("ODEResults", {})
+        if not isinstance(ode_results, dict):
+            return cls(
+                status="ERROR",
+                error=f"Invalid response format: expected dict for ODEResults, got {type(ode_results).__name__}: {ode_results}",
+            )
         status = ode_results.get("Status", "ERROR")
 
         if status == "ERROR":
@@ -160,8 +165,10 @@ class ODEProductSearchResponse(BaseModel):
                 error=ode_results.get("Error"),
             )
 
-        # Parse products
+        # Parse products - API returns "No Products Found" string when empty
         products_data = ode_results.get("Products", {})
+        if not isinstance(products_data, dict):
+            return cls(status=status, count=_parse_int(ode_results.get("Count", 0)), products=[])
         product_list = products_data.get("Product", [])
 
         # Handle single product (dict) vs multiple (list)
@@ -194,6 +201,11 @@ class ODEProductCountResponse(BaseModel):
         if not isinstance(data, dict):
             return cls(status="ERROR", error=f"Invalid response format: expected dict, got {type(data).__name__}")
         ode_results = data.get("ODEResults", {})
+        if not isinstance(ode_results, dict):
+            return cls(
+                status="ERROR",
+                error=f"Invalid response format: expected dict for ODEResults, got {type(ode_results).__name__}: {ode_results}",
+            )
         status = ode_results.get("Status", "ERROR")
 
         if status == "ERROR":
@@ -244,6 +256,11 @@ class ODEIIPTResponse(BaseModel):
         if not isinstance(data, dict):
             return cls(status="ERROR", error=f"Invalid response format: expected dict, got {type(data).__name__}")
         ode_results = data.get("ODEResults", {})
+        if not isinstance(ode_results, dict):
+            return cls(
+                status="ERROR",
+                error=f"Invalid response format: expected dict for ODEResults, got {type(ode_results).__name__}: {ode_results}",
+            )
         status = ode_results.get("Status", "ERROR")
 
         if status == "ERROR":
@@ -301,6 +318,11 @@ class ODEFeatureDataResponse(BaseModel):
         if not isinstance(data, dict):
             return cls(status="ERROR", error=f"Invalid response format: expected dict, got {type(data).__name__}")
         ode_results = data.get("ODEResults", {})
+        if not isinstance(ode_results, dict):
+            return cls(
+                status="ERROR",
+                error=f"Invalid response format: expected dict for ODEResults, got {type(ode_results).__name__}: {ode_results}",
+            )
         status = ode_results.get("Status", "ERROR")
 
         if status == "ERROR":
@@ -376,6 +398,11 @@ class ODEFeatureClassesResponse(BaseModel):
         if not isinstance(data, dict):
             return cls(status="ERROR", error=f"Invalid response format: expected dict, got {type(data).__name__}")
         ode_results = data.get("ODEResults", {})
+        if not isinstance(ode_results, dict):
+            return cls(
+                status="ERROR",
+                error=f"Invalid response format: expected dict for ODEResults, got {type(ode_results).__name__}: {ode_results}",
+            )
         status = ode_results.get("Status", "ERROR")
 
         if status == "ERROR":
@@ -404,6 +431,11 @@ class ODEFeatureNamesResponse(BaseModel):
         if not isinstance(data, dict):
             return cls(status="ERROR", error=f"Invalid response format: expected dict, got {type(data).__name__}")
         ode_results = data.get("ODEResults", {})
+        if not isinstance(ode_results, dict):
+            return cls(
+                status="ERROR",
+                error=f"Invalid response format: expected dict for ODEResults, got {type(ode_results).__name__}: {ode_results}",
+            )
         status = ode_results.get("Status", "ERROR")
 
         if status == "ERROR":

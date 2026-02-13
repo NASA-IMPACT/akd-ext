@@ -154,13 +154,14 @@ class IMGSearchResponse(BaseModel):
         # Check for error response
         if "error" in data:
             error_info = data.get("error", {})
-            return cls(
-                status="error",
-                error=error_info.get("msg", "Unknown error"),
-            )
+            if isinstance(error_info, dict):
+                return cls(status="error", error=error_info.get("msg", "Unknown error"))
+            return cls(status="error", error=str(error_info))
 
         # Parse response header
         response_header = data.get("responseHeader", {})
+        if not isinstance(response_header, dict):
+            response_header = {}
         status_code = response_header.get("status", 0)
         query_time = response_header.get("QTime", 0)
 
@@ -173,11 +174,15 @@ class IMGSearchResponse(BaseModel):
 
         # Parse response body
         response = data.get("response", {})
+        if not isinstance(response, dict):
+            return cls(status="error", error=f"Invalid response format: expected dict, got {type(response).__name__}")
         num_found = response.get("numFound", 0)
         start = response.get("start", 0)
         docs = response.get("docs", [])
+        if not isinstance(docs, list):
+            docs = []
 
-        products = [IMGProduct.from_raw_data(doc) for doc in docs]
+        products = [IMGProduct.from_raw_data(doc) for doc in docs if isinstance(doc, dict)]
 
         return cls(
             status="success",
@@ -202,13 +207,14 @@ class IMGCountResponse(BaseModel):
         # Check for error response
         if "error" in data:
             error_info = data.get("error", {})
-            return cls(
-                status="error",
-                error=error_info.get("msg", "Unknown error"),
-            )
+            if isinstance(error_info, dict):
+                return cls(status="error", error=error_info.get("msg", "Unknown error"))
+            return cls(status="error", error=str(error_info))
 
         # Parse response header
         response_header = data.get("responseHeader", {})
+        if not isinstance(response_header, dict):
+            response_header = {}
         status_code = response_header.get("status", 0)
         query_time = response_header.get("QTime", 0)
 
@@ -221,6 +227,8 @@ class IMGCountResponse(BaseModel):
 
         # Parse response body - just need numFound
         response = data.get("response", {})
+        if not isinstance(response, dict):
+            return cls(status="error", error=f"Invalid response format: expected dict, got {type(response).__name__}")
         num_found = response.get("numFound", 0)
 
         return cls(
@@ -262,14 +270,14 @@ class IMGFacetResponse(BaseModel):
         # Check for error response
         if "error" in data:
             error_info = data.get("error", {})
-            return cls(
-                status="error",
-                facet_field=facet_field,
-                error=error_info.get("msg", "Unknown error"),
-            )
+            if isinstance(error_info, dict):
+                return cls(status="error", facet_field=facet_field, error=error_info.get("msg", "Unknown error"))
+            return cls(status="error", facet_field=facet_field, error=str(error_info))
 
         # Parse response header
         response_header = data.get("responseHeader", {})
+        if not isinstance(response_header, dict):
+            response_header = {}
         status_code = response_header.get("status", 0)
         query_time = response_header.get("QTime", 0)
 
@@ -283,8 +291,14 @@ class IMGFacetResponse(BaseModel):
 
         # Parse facet data
         facet_counts = data.get("facet_counts", {})
+        if not isinstance(facet_counts, dict):
+            facet_counts = {}
         facet_fields = facet_counts.get("facet_fields", {})
+        if not isinstance(facet_fields, dict):
+            facet_fields = {}
         raw_values = facet_fields.get(facet_field, [])
+        if not isinstance(raw_values, list):
+            raw_values = []
 
         # Convert alternating list [value, count, value, count, ...] to list of dicts
         values: list[IMGFacetValue] = []

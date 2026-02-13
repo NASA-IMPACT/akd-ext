@@ -103,6 +103,10 @@ class OPUSSearchResponse(BaseModel):
         # Parse page data - OPUS returns arrays, not dictionaries
         page = data.get("page", [])
         columns = data.get("columns", [])
+        if not isinstance(page, list):
+            page = []
+        if not isinstance(columns, list):
+            columns = []
 
         # Handle both array format (API default) and dict format
         observations: list[OPUSObservation] = []
@@ -143,7 +147,9 @@ class OPUSCountResponse(BaseModel):
 
         # Extract count from data array
         data_array = data.get("data", [])
-        if data_array and len(data_array) > 0:
+        if not isinstance(data_array, list):
+            data_array = []
+        if data_array and isinstance(data_array[0], dict):
             count = data_array[0].get("result_count", 0)
         else:
             count = 0
@@ -258,7 +264,10 @@ class OPUSFiles(BaseModel):
         All categories (including browse images) are lists of URL strings.
         """
         # API nests files under data -> opusid
-        file_data = data.get("data", {}).get(opusid, {})
+        data_wrapper = data.get("data", {})
+        if not isinstance(data_wrapper, dict):
+            data_wrapper = {}
+        file_data = data_wrapper.get(opusid, {})
 
         raw_files: list[str] = []
         calibrated_files: list[str] = []
@@ -330,5 +339,3 @@ class OPUSFilesResponse(BaseModel):
             status="success",
             files=files,
         )
-
-

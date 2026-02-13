@@ -221,11 +221,15 @@ class CatchResultsResponse(BaseModel):
 
         # Parse observations from data array
         observations_data = data.get("data", [])
-        observations = [CatchObservation.from_raw_data(obs) for obs in observations_data]
+        if not isinstance(observations_data, list):
+            observations_data = []
+        observations = [CatchObservation.from_raw_data(obs) for obs in observations_data if isinstance(obs, dict)]
 
         # Parse source status
         status_data = data.get("status", [])
-        source_status = [CatchSourceStatus.from_raw_data(s) for s in status_data]
+        if not isinstance(status_data, list):
+            status_data = []
+        source_status = [CatchSourceStatus.from_raw_data(s) for s in status_data if isinstance(s, dict)]
 
         return cls(
             status="success",
@@ -259,7 +263,9 @@ class CatchStatusResponse(BaseModel):
 
         # Parse source status
         status_data = data.get("status", [])
-        source_status = [CatchSourceStatus.from_raw_data(s) for s in status_data]
+        if not isinstance(status_data, list):
+            status_data = []
+        source_status = [CatchSourceStatus.from_raw_data(s) for s in status_data if isinstance(s, dict)]
 
         return cls(
             status="success",
@@ -290,7 +296,9 @@ class CatchFixedResponse(BaseModel):
 
         # Parse observations from data array
         observations_data = data.get("data", [])
-        observations = [CatchObservation.from_raw_data(obs) for obs in observations_data]
+        if not isinstance(observations_data, list):
+            observations_data = []
+        observations = [CatchObservation.from_raw_data(obs) for obs in observations_data if isinstance(obs, dict)]
 
         return cls(
             status="success",
