@@ -249,9 +249,16 @@ class OPUSFiles(BaseModel):
 
     @classmethod
     def from_raw_data(cls, opusid: str, data: dict[str, Any]) -> "OPUSFiles":
-        """Create from raw API response."""
-        # Get the file data for this opusid
-        file_data = data.get(opusid, {})
+        """Create from raw API response.
+
+        The OPUS files API returns::
+
+            {"data": {opusid: {category: [url, ...], ...}}, "versions": {...}}
+
+        All categories (including browse images) are lists of URL strings.
+        """
+        # API nests files under data -> opusid
+        file_data = data.get("data", {}).get(opusid, {})
 
         raw_files: list[str] = []
         calibrated_files: list[str] = []
@@ -263,24 +270,23 @@ class OPUSFiles(BaseModel):
 
         for category, category_data in file_data.items():
             if category.startswith("browse_"):
-                # Browse images are direct URLs
+                # Browse images are lists of URLs; extract first element
+                url = cls._extract_first_url(category_data)
                 if category == "browse_thumb":
-                    browse_thumb = category_data if isinstance(category_data, str) else None
+                    browse_thumb = url
                 elif category == "browse_small":
-                    browse_small = category_data if isinstance(category_data, str) else None
+                    browse_small = url
                 elif category == "browse_medium":
-                    browse_medium = category_data if isinstance(category_data, str) else None
+                    browse_medium = url
                 elif category == "browse_full":
-                    browse_full = category_data if isinstance(category_data, str) else None
-            elif isinstance(category_data, dict):
-                # Data files are nested by version
-                files = category_data.get("Current", [])
-                if isinstance(files, list):
-                    all_files[category] = files
-                    if "raw" in category.lower():
-                        raw_files.extend(files)
-                    elif "calib" in category.lower():
-                        calibrated_files.extend(files)
+                    browse_full = url
+            elif isinstance(category_data, list):
+                # Data file categories are flat lists of URL strings
+                all_files[category] = category_data
+                if "raw" in category.lower():
+                    raw_files.extend(category_data)
+                elif "calib" in category.lower():
+                    calibrated_files.extend(category_data)
 
         return cls(
             opusid=opusid,
@@ -292,6 +298,15 @@ class OPUSFiles(BaseModel):
             browse_full=browse_full,
             all_files=all_files,
         )
+
+    @staticmethod
+    def _extract_first_url(value: Any) -> str | None:
+        """Extract the first URL from a value that may be a list or string."""
+        if isinstance(value, list) and value:
+            return str(value[0])
+        if isinstance(value, str):
+            return value
+        return None
 
 
 class OPUSFilesResponse(BaseModel):
@@ -317,52 +332,3 @@ class OPUSFilesResponse(BaseModel):
         )
 
 
-class OPUSField(BaseModel):
-    """OPUS search field definition."""
-
-    field_id: str
-    label: str
-    category: str
-    search_label: str | None = None
-    full_label: str | None = None
-
-
-class OPUSFieldsResponse(BaseModel):
-    """OPUS fields response wrapper."""
-
-    status: str = "success"
-    fields: list[OPUSField] = Field(default_factory=list)
-    categories: list[str] = Field(default_factory=list)
-    error: str | None = None
-
-    @classmethod
-    def from_raw_data(cls, data: dict[str, Any]) -> "OPUSFieldsResponse":
-        """Create from raw API response."""
-        if "error" in data:
-            return cls(
-                status="error",
-                error=str(data.get("error")),
-            )
-
-        fields: list[OPUSField] = []
-        categories: set[str] = set()
-
-        for field_id, field_data in data.items():
-            if isinstance(field_data, dict):
-                category = field_data.get("category", "")
-                categories.add(category)
-                fields.append(
-                    OPUSField(
-                        field_id=field_id,
-                        label=field_data.get("label", field_id),
-                        category=category,
-                        search_label=field_data.get("search_label"),
-                        full_label=field_data.get("full_label"),
-                    )
-                )
-
-        return cls(
-            status="success",
-            fields=fields,
-            categories=sorted(categories),
-        )

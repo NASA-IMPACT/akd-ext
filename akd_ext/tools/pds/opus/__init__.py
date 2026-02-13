@@ -12,13 +12,6 @@ from akd_ext.tools.pds.opus.opus_count import (
     OPUSCountTool,
     OPUSCountToolConfig,
 )
-from akd_ext.tools.pds.opus.opus_get_fields import (
-    OPUSFieldItem,
-    OPUSGetFieldsInputSchema,
-    OPUSGetFieldsOutputSchema,
-    OPUSGetFieldsTool,
-    OPUSGetFieldsToolConfig,
-)
 from akd_ext.tools.pds.opus.opus_get_files import (
     OPUSBrowseImages,
     OPUSGetFilesInputSchema,
@@ -63,10 +56,4 @@ __all__ = [
     "OPUSGetFilesOutputSchema",
     "OPUSGetFilesToolConfig",
     "OPUSBrowseImages",
-    # opus_get_fields
-    "OPUSGetFieldsTool",
-    "OPUSGetFieldsInputSchema",
-    "OPUSGetFieldsOutputSchema",
-    "OPUSGetFieldsToolConfig",
-    "OPUSFieldItem",
 ]

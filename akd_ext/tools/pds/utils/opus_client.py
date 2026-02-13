@@ -15,7 +15,6 @@ import httpx
 
 from .opus_api_models import (
     OPUSCountResponse,
-    OPUSFieldsResponse,
     OPUSFilesResponse,
     OPUSMetadataResponse,
     OPUSSearchResponse,
@@ -319,17 +318,3 @@ class OPUSClient:
             logger.error(f"Failed to parse OPUS files response: {e}")
             raise OPUSClientError(f"Invalid response format: {e}")
 
-    async def get_fields(self) -> OPUSFieldsResponse:
-        """Get all available search fields.
-
-        Returns:
-            OPUSFieldsResponse with field definitions and categories
-        """
-        response = await self._request("fields.json")
-
-        try:
-            data = response.json()
-            return OPUSFieldsResponse.from_raw_data(data)
-        except Exception as e:
-            logger.error(f"Failed to parse OPUS fields response: {e}")
-            raise OPUSClientError(f"Invalid response format: {e}")
