@@ -2,10 +2,46 @@
 
 from collections.abc import Callable
 from inspect import Signature, Parameter
-from typing import Awaitable, Any
+from typing import Annotated, Awaitable, Any
 
+from pydantic import Field as PydanticField
+from pydantic.fields import FieldInfo
 from fastmcp import FastMCP
 from akd.tools._base import BaseTool
+
+# FieldInfo constraint attributes that map to JSON Schema keywords
+_CONSTRAINT_ATTRS = ("ge", "gt", "le", "lt", "multiple_of", "min_length", "max_length", "pattern", "strict")
+
+
+def _build_annotated_type(field: FieldInfo) -> Any:
+    """Reconstruct an Annotated type that preserves Field constraints.
+
+    Pydantic strips Annotated wrappers for non-union types, storing constraints in
+    field.metadata instead of field.annotation. This function re-wraps the annotation
+    so FastMCP's TypeAdapter emits minimum/maximum/etc. in the JSON Schema.
+
+    Note: Field descriptions are intentionally excluded here because the tool
+    description already exposes all input/output field descriptions to the LLM.
+    """
+    field_type = field.annotation
+    field_kwargs: dict[str, Any] = {}
+
+    for attr in _CONSTRAINT_ATTRS:
+        val = getattr(field, attr, None)
+        if val is not None:
+            field_kwargs[attr] = val
+
+    # Also check metadata list for constraint objects (e.g. Ge, Le) that Pydantic stores there
+    for m in field.metadata:
+        for attr in _CONSTRAINT_ATTRS:
+            val = getattr(m, attr, None)
+            if val is not None:
+                field_kwargs.setdefault(attr, val)
+
+    if not field_kwargs:
+        return field_type
+
+    return Annotated[field_type, PydanticField(**field_kwargs)]
 
 
 def tool_converter(tool: BaseTool) -> Callable[..., Awaitable[Any]]:
@@ -33,7 +69,7 @@ def tool_converter(tool: BaseTool) -> Callable[..., Awaitable[Any]]:
     annotations = {}
 
     for field_name, field in field_info.items():
-        field_type = field.annotation
+        field_type = _build_annotated_type(field)
         annotations[field_name] = field_type
 
         if field.default is not ...:
