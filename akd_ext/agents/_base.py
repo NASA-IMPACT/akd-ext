@@ -379,7 +379,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
         Override for custom orchestration (e.g., multi-agent pipelines).
         """
-        run_context: RunContext = (run_context or RunContext()).model_copy()
+        run_context: RunContext = (
+            run_context or kwargs.get("run_context", RunContext())
+        ).model_copy()  # have arun call _arun with run_contex
         run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
 
         async with self.memory.asession(
@@ -407,11 +409,15 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             messages.append(
                 {
                     "role": "assistant",
-                    "content": final_output.model_dump_json(exclude={"type"}),
+                    "content": final_output
+                    if isinstance(final_output, str)
+                    else final_output.model_dump_json(exclude={"type"}),
                 }
             )
 
-            if isinstance(final_output, self.output_schema):
+            if issubclass(self.output_schema, TextOutput):
+                return self.output_schema(content=final_output)
+            elif isinstance(final_output, self.output_schema):
                 return final_output
             elif hasattr(final_output, "model_dump"):
                 return self.output_schema(**final_output.model_dump())

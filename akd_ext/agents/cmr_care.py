@@ -725,6 +725,38 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
             )
             raise
 
+    async def _arun(
+        self, params: CMRCareAgentInputSchema, run_context: RunContext | None = None, **kwargs
+    ) -> CMRCareAgentOutputSchema:
+        """Run the agent workflow.
+
+        Overriden for custom orchestration of multi-agent pipeline.
+        """
+        run_context: RunContext = (run_context or kwargs.get("run_context", RunContext())).model_copy()
+        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
+
+        async with self.memory.asession(
+            stateless=self.stateless,
+            run_context=run_context,
+            enable_trimming=self.enable_trimming,
+            model_name=self.model_name,
+            max_tokens=self.max_tokens,
+            trim_ratio=self.trim_ratio,
+        ) as messages:
+            freeform_result: _CMRSearchAgentOutputSchema = await self._search_agent.arun(
+                _CMRSearchAgentInputSchema(**params.model_dump(exclude={"type"})), run_context=run_context
+            )
+            search_agent_messages = self._search_agent.memory.messages or []
+
+            result: CMRCareAgentOutputSchema = await self._formatter_agent.arun(
+                _CMROutputAgentInputSchema(search_result=freeform_result.content), run_context=run_context
+            )
+            formatter_agent_messages = self._formatter_agent.memory.messages or []
+
+            # update memory message by reference. message now includes sub agents messages combined
+            messages[:] = search_agent_messages + formatter_agent_messages
+            return result
+
 
 if __name__ == "__main__":
     import asyncio
