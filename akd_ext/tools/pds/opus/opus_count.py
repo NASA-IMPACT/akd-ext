@@ -38,7 +38,7 @@ class OPUSCountInputSchema(InputSchema):
     )
     instrument: OPUS_INSTRUMENTS | None = Field(
         None,
-        description='Instrument name filter (e.g., "ISS", "VIMS")',
+        description='Instrument name filter (e.g., "Cassini ISS", "Cassini VIMS")',
     )
     planet: OPUS_PLANETS | None = Field(
         None,

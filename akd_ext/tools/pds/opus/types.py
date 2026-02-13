@@ -12,29 +12,31 @@ OPUS_PLANETS = Literal["Jupiter", "Saturn", "Uranus", "Neptune", "Pluto", "Other
 # Valid missions in OPUS database
 OPUS_MISSIONS = Literal["Cassini", "Voyager 1", "Voyager 2", "Galileo", "New Horizons", "Juno", "Hubble"]
 
-# Valid instruments in OPUS database (from MCP resource://opus_instruments)
-# Organized by mission for clarity
+# Valid instruments in OPUS database.
+# Values must match the full instrument names expected by the OPUS API
+# ``instrument`` query parameter (e.g. "Cassini ISS", not just "ISS").
 OPUS_INSTRUMENTS = Literal[
     # Cassini
-    "ISS",
-    "VIMS",
-    "UVIS",
-    "CIRS",
-    "RSS",
+    "Cassini ISS",
+    "Cassini VIMS",
+    "Cassini UVIS",
+    "Cassini CIRS",
+    "Cassini RSS",
     # Voyager
-    "IRIS",
+    "Voyager ISS",
+    "Voyager IRIS",
     # Galileo
-    "SSI",
+    "Galileo SSI",
     # New Horizons
-    "LORRI",
-    "MVIC",
+    "New Horizons LORRI",
+    "New Horizons MVIC",
     # Juno
-    "JunoCam",
-    "JIRAM",
+    "Juno JunoCam",
+    "Juno JIRAM",
     # Hubble
-    "WFPC2",
-    "WFC3",
-    "ACS",
-    "STIS",
-    "NICMOS",
+    "Hubble WFPC2",
+    "Hubble WFC3",
+    "Hubble ACS",
+    "Hubble STIS",
+    "Hubble NICMOS",
 ]

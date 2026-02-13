@@ -32,13 +32,13 @@ class OPUSSearchInputSchema(InputSchema):
 
     Valid planets: Jupiter, Saturn, Uranus, Neptune, Pluto, Other
     Valid missions: Cassini, Voyager 1, Voyager 2, Galileo, New Horizons, Juno, Hubble
-    Valid instruments by mission:
-      - Cassini: ISS, VIMS, UVIS, CIRS, RSS
-      - Voyager: ISS, IRIS
-      - Galileo: SSI
-      - New Horizons: LORRI, MVIC
-      - Juno: JunoCam, JIRAM
-      - Hubble: WFPC2, WFC3, ACS, STIS, NICMOS
+    Valid instruments (use full name with mission prefix):
+      - Cassini ISS, Cassini VIMS, Cassini UVIS, Cassini CIRS, Cassini RSS
+      - Voyager ISS, Voyager IRIS
+      - Galileo SSI
+      - New Horizons LORRI, New Horizons MVIC
+      - Juno JunoCam, Juno JIRAM
+      - Hubble WFPC2, Hubble WFC3, Hubble ACS, Hubble STIS, Hubble NICMOS
     """
 
     target: str | None = Field(
@@ -51,7 +51,7 @@ class OPUSSearchInputSchema(InputSchema):
     )
     instrument: OPUS_INSTRUMENTS | None = Field(
         None,
-        description='Instrument name filter (e.g., "ISS", "VIMS")',
+        description='Instrument name filter (e.g., "Cassini ISS", "Cassini VIMS")',
     )
     planet: OPUS_PLANETS | None = Field(
         None,
