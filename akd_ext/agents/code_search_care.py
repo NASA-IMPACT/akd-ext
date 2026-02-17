@@ -12,7 +12,7 @@ from __future__ import annotations
 import os
 from typing import Any, Literal
 
-from agents import HostedMCPTool, WebSearchTool
+from agents import HostedMCPTool, WebSearchTool, function_tool
 from pydantic import Field, BaseModel
 
 from akd_ext._types import OpenAITool
@@ -26,6 +26,8 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
+from akd.tools import HumanTool
+from akd_ext.mcp.converter import tool_converter
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -191,7 +193,7 @@ CODE_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """
 # -----------------------------------------------------------------------------
 
 
-def get_default_cmr_tools() -> list[OpenAITool]:
+def get_default_code_search_tools() -> list[OpenAITool]:
     """Default Code Search MCP tools. Uses CODE_SEARCH_MCP_URL env var if set."""
     return [
         HostedMCPTool(
@@ -213,6 +215,7 @@ def get_default_cmr_tools() -> list[OpenAITool]:
             }
         ),
         WebSearchTool(),
+        function_tool(tool_converter(HumanTool())),
     ]
 
 
@@ -222,7 +225,7 @@ class CodeSearchCareConfig(OpenAIBaseAgentConfig):
     system_prompt: str = Field(default=CODE_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
-    tools: list[Any] = Field(default_factory=get_default_cmr_tools)
+    tools: list[Any] = Field(default_factory=get_default_code_search_tools)
 
 
 # -----------------------------------------------------------------------------
