@@ -10,8 +10,6 @@ Public API:
 from __future__ import annotations
 
 import os
-import uuid
-from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from agents import HostedMCPTool
@@ -22,21 +20,7 @@ from akd_ext._types import OpenAITool
 from akd._base import (
     InputSchema,
     OutputSchema,
-    TextOutput,
-    RunContext,
-    StreamEvent,
-    StartingEvent,
-    StartingEventData,
-    RunningEvent,
-    CompletedEvent,
-    CompletedEventData,
-    FailedEvent,
-    FailedEventData,
-    PartialOutputEvent,
-    PartialEventData,
-    HumanInputRequiredEvent,
 )
-from akd.utils import PartialModel
 from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
@@ -46,6 +30,7 @@ from akd_ext.agents._base import (
 # -----------------------------------------------------------------------------
 # System Prompts
 # -----------------------------------------------------------------------------
+
 
 CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     You are the NASA Earthdata / CMR Scientific Data Discovery Agent.
@@ -413,29 +398,6 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     - **UMM Specification**: https://earthdata.nasa.gov/eosdis/science-system-description/eosdis-components/common-metadata-repository
     """
 
-_OUTPUT_AGENT_PROMPT = """You are a NASA Earthdata dataset discovery assistant speaking directly to the user.
-
-If the input contains CMR dataset concept IDs and ranked results, extract and format them as structured output:
-- Extract all concept IDs into the dataset_concept_ids list.
-- Provide a report in this markdown format:
-
-    # Report
-    ## Relevant Datasets
-    ### 1. CMR Concept ID: clickable link to the dataset
-    #### Reasoning: <reasoning>
-    ### 2. CMR Concept ID: clickable link to the dataset
-    #### Reasoning: <reasoning>
-    ....
-    ### N. CMR Concept ID: clickable link to the dataset
-    #### Reasoning: <reasoning>
-
-    For each concept ID, use the link format: https://cmr.earthdata.nasa.gov/search/concepts/<concept_id>.html
-
-If the input does NOT contain any CMR dataset concept IDs (e.g. it is a clarification request
-or a message asking the user for more information), use the original text verbatim as the report.
-Do not summarize, rephrase, or add your own commentary. Speak as if you are the one asking
-the user directly.
-"""
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -477,7 +439,6 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     tools: list[Any] = Field(default_factory=get_default_cmr_tools)
-    formatter_system_prompt: str = Field(default=_OUTPUT_AGENT_PROMPT)
 
 
 # -----------------------------------------------------------------------------
@@ -500,56 +461,6 @@ class CMRCareAgentOutputSchema(OutputSchema):
 
 
 # -----------------------------------------------------------------------------
-# Private sub-agent schemas
-# -----------------------------------------------------------------------------
-
-
-class _CMRSearchAgentInputSchema(InputSchema):
-    """Input schema for the internal CMR search agent."""
-
-    query: str = Field(..., description="Earth science query for dataset discovery")
-
-
-class _CMRSearchAgentOutputSchema(TextOutput):
-    """Output schema for the internal CMR search agent (free-form text)."""
-
-    pass
-
-
-class _CMROutputAgentInputSchema(InputSchema):
-    """Input for output formatter — receives raw search results."""
-
-    search_result: str = Field(..., description="Raw search result text to format")
-
-
-# -----------------------------------------------------------------------------
-# Private sub-agents
-# -----------------------------------------------------------------------------
-
-
-class _CMRSearchAgent(OpenAIBaseAgent[_CMRSearchAgentInputSchema, _CMRSearchAgentOutputSchema]):
-    """CMR Search Agent - free-form search using CARE methodology.
-
-    Internal helper for CMRCareAgent pipeline.
-    Returns TextOutput with unstructured search results.
-    """
-
-    input_schema = _CMRSearchAgentInputSchema
-    output_schema = _CMRSearchAgentOutputSchema
-
-
-class _CMROutputAgent(OpenAIBaseAgent[_CMROutputAgentInputSchema, CMRCareAgentOutputSchema]):
-    """CMR Output Agent - formats free-form search results into structured output.
-
-    Internal helper for CMRCareAgent pipeline.
-    Returns CMRCareAgentOutputSchema with concept IDs and report.
-    """
-
-    input_schema = _CMROutputAgentInputSchema
-    output_schema = CMRCareAgentOutputSchema
-
-
-# -----------------------------------------------------------------------------
 # CMR CARE Orchestrator Agent (Public)
 # -----------------------------------------------------------------------------
 
@@ -564,198 +475,6 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
     input_schema = CMRCareAgentInputSchema
     output_schema = CMRCareAgentOutputSchema
     config_schema = CMRCareConfig
-
-    def __init__(
-        self,
-        config: CMRCareConfig | None = None,
-        **kwargs,
-    ) -> None:
-        super().__init__(config=config, **kwargs)
-
-        # Search agent: stateful (multi-turn with tools/human-in-the-loop)
-        search_config = OpenAIBaseAgentConfig(
-            system_prompt=self.config.system_prompt,
-            model_name=self.config.model_name,
-            reasoning_effort=self.config.reasoning_effort,
-            tools=self.config.tools,
-            stateless=False,
-        )
-        # Formatter agent: stateless (one-shot transform, no tools)
-        formatter_config = OpenAIBaseAgentConfig(
-            system_prompt=self.config.formatter_system_prompt,
-            model_name=self.config.model_name,
-            reasoning_effort=self.config.reasoning_effort,
-            stateless=True,
-        )
-        self._search_agent = _CMRSearchAgent(config=search_config, debug=self.debug)
-        self._formatter_agent = _CMROutputAgent(config=formatter_config, debug=self.debug)
-
-    async def _astream(
-        self,
-        params: CMRCareAgentInputSchema,
-        run_context: RunContext | None = None,
-        token_batch_size: int = 10,
-        **kwargs: Any,
-    ) -> AsyncIterator[StreamEvent]:
-        """Orchestrate: search agent → output formatter agent."""
-        class_name = self.__class__.__name__
-        run_context = (run_context or RunContext()).model_copy()
-        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
-
-        yield StartingEvent(
-            source=class_name,
-            message=f"Starting {class_name}",
-            data=StartingEventData(params=params),
-            run_context=run_context,
-        )
-
-        try:
-            async with self.memory.asession(
-                stateless=self.stateless,
-                run_context=run_context,
-                enable_trimming=self.enable_trimming,
-                model_name=self.model_name,
-                max_tokens=self.max_tokens,
-                trim_ratio=self.trim_ratio,
-            ) as messages:
-                if not messages:
-                    messages.append(self._default_system_message())
-
-                if params and not (run_context and run_context.human_response):
-                    messages.append({"role": "user", "content": params.model_dump_json(exclude={"type"})})
-
-                run_context.messages = messages
-
-                yield RunningEvent(
-                    source=class_name,
-                    message=f"Running {class_name}",
-                    run_context=run_context,
-                )
-
-                # Step 1: Stream search agent
-                search_output = None
-                async for event in self._search_agent.astream(
-                    _CMRSearchAgentInputSchema(query=params.query),
-                    run_context=run_context,
-                    token_batch_size=token_batch_size,
-                ):
-                    # Don't forward sub-agent CompletedEvent (wrong output type for orchestrator)
-                    if isinstance(event, CompletedEvent):
-                        search_output = event.data.output
-                        # Merge sub-agent's intermediate messages (tool calls/results) into orchestrator
-                        # Skip messages already present (e.g. from HITL resume memory restore)
-                        for msg in event.run_context.messages or []:
-                            if msg.get("role") in ("assistant", "tool") and msg not in messages:
-                                messages.append(msg)
-                        yield PartialOutputEvent(
-                            source=class_name,
-                            message="Search completed, received output",
-                            data=PartialEventData(partial_output=search_output),
-                            run_context=run_context,
-                        )
-                        continue
-                    yield event
-                    if isinstance(event, HumanInputRequiredEvent):
-                        return
-
-                if not search_output or not search_output.content:
-                    yield FailedEvent(
-                        source=class_name,
-                        message="Search returned no results",
-                        data=FailedEventData(error="Search returned no results", error_type="EmptySearchResult"),
-                        run_context=run_context,
-                    )
-                    return
-
-                # Emit partial output with raw search results
-                PartialOutput = PartialModel[self.output_schema]
-                yield PartialOutputEvent(
-                    source=class_name,
-                    message="Search complete, formatting...",
-                    data=PartialEventData(partial_output=PartialOutput(report=search_output.content)),
-                    run_context=run_context,
-                )
-
-                # Step 2: Stream formatter agent (fresh run_context with only run_id)
-                formatter_run_context = RunContext(run_id=run_context.run_id)
-                yield RunningEvent(
-                    source=class_name,
-                    message="Formatting output",
-                    run_context=run_context,
-                )
-
-                final_output = None
-                async for event in self._formatter_agent.astream(
-                    _CMROutputAgentInputSchema(search_result=search_output.content),
-                    run_context=formatter_run_context,
-                    token_batch_size=token_batch_size,
-                ):
-                    if isinstance(event, CompletedEvent):
-                        final_output = event.data.output
-                        continue
-                    yield event
-
-                if final_output:
-                    messages.append(
-                        {
-                            "role": "assistant",
-                            "content": final_output.model_dump_json(exclude={"type"}),
-                        }
-                    )
-                    yield CompletedEvent(
-                        source=class_name,
-                        message=f"Completed {class_name}",
-                        data=CompletedEventData(output=final_output),
-                        run_context=run_context,
-                    )
-                else:
-                    yield FailedEvent(
-                        source=class_name,
-                        message="Formatter returned no output",
-                        data=FailedEventData(error="Formatter returned no output", error_type="EmptyFormatterResult"),
-                        run_context=run_context,
-                    )
-
-        except Exception as e:
-            yield FailedEvent(
-                source=class_name,
-                message=f"Failed: {e!s}",
-                data=FailedEventData(error=str(e), error_type=type(e).__name__),
-                run_context=run_context,
-            )
-            raise
-
-    async def _arun(
-        self, params: CMRCareAgentInputSchema, run_context: RunContext | None = None, **kwargs
-    ) -> CMRCareAgentOutputSchema:
-        """Run the agent workflow.
-
-        Overriden for custom orchestration of multi-agent pipeline.
-        """
-        run_context: RunContext = (run_context or RunContext()).model_copy()
-        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
-
-        async with self.memory.asession(
-            stateless=self.stateless,
-            run_context=run_context,
-            enable_trimming=self.enable_trimming,
-            model_name=self.model_name,
-            max_tokens=self.max_tokens,
-            trim_ratio=self.trim_ratio,
-        ) as messages:
-            freeform_result: _CMRSearchAgentOutputSchema = await self._search_agent.arun(
-                _CMRSearchAgentInputSchema(**params.model_dump(exclude={"type"})), run_context=run_context
-            )
-            search_agent_messages = self._search_agent.memory.messages or []
-
-            result: CMRCareAgentOutputSchema = await self._formatter_agent.arun(
-                _CMROutputAgentInputSchema(search_result=freeform_result.content), run_context=run_context
-            )
-            formatter_agent_messages = self._formatter_agent.memory.messages or []
-
-            # update memory message by reference. message now includes sub agents messages combined
-            messages[:] = search_agent_messages + formatter_agent_messages
-            return result
 
 
 if __name__ == "__main__":
