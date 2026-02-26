@@ -457,11 +457,17 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                 except Exception:
                     continue
 
-        # Try JSON string parsing
-        try:
-            return cast(OutSchema, schemas[0].model_validate_json(str(final_output)))
-        except Exception:
-            pass
+        # Raw string fallback: if TextOutput is a union branch and model returned plain text,
+        # wrap it as TextOutput (e.g., clarification questions, intermediate responses)
+        if isinstance(final_output, str):
+            text_schemas = [s for s in schemas if issubclass(s, TextOutput)]
+            if text_schemas:
+                return cast(OutSchema, text_schemas[0](content=final_output))
+            # Try JSON string parsing against first schema
+            try:
+                return cast(OutSchema, schemas[0].model_validate_json(final_output))
+            except Exception:
+                pass
 
         raise UnexpectedModelBehavior(f"Could not resolve output to any of: {[s.__name__ for s in schemas]}")
 
