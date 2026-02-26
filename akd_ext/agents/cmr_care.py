@@ -20,6 +20,7 @@ from akd_ext._types import OpenAITool
 from akd._base import (
     InputSchema,
     OutputSchema,
+    TextOutput,
 )
 from akd_ext.agents._base import (
     OpenAIBaseAgent,
@@ -473,7 +474,7 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
     """
 
     input_schema = CMRCareAgentInputSchema
-    output_schema = CMRCareAgentOutputSchema
+    output_schema = CMRCareAgentOutputSchema | TextOutput
     config_schema = CMRCareConfig
 
 
