@@ -454,7 +454,7 @@ class CMRCareAgentInputSchema(InputSchema):
 
 
 class CMRCareAgentOutputSchema(OutputSchema):
-    """Output schema for CMR CARE Agent."""
+    """Structured CMR dataset results. Used when returning dataset concept IDs from completed CMR searches."""
 
     __response_field__ = "report"
     dataset_concept_ids: list[str] = Field(..., description="List of dataset concept IDs")
