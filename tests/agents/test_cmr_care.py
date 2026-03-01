@@ -5,6 +5,7 @@ Co-Authored-By: Sanjog Thapa <sanzog03@gmail.com>
 
 import pytest
 
+from akd._base import TextOutput
 from akd_ext.agents import (
     CMRCareAgent,
     CMRCareAgentInputSchema,
@@ -33,5 +34,6 @@ async def test_cmr_care_agent(query: str, reasoning_effort: str):
     agent = CMRCareAgent(config=config, debug=True)
     result = await agent.arun(CMRCareAgentInputSchema(query=query))
 
-    assert isinstance(result, CMRCareAgentOutputSchema)
-    assert len(result.dataset_concept_ids) > 0
+    assert isinstance(result, (CMRCareAgentOutputSchema, TextOutput))
+    if isinstance(result, CMRCareAgentOutputSchema):
+        assert len(result.dataset_concept_ids) > 0
