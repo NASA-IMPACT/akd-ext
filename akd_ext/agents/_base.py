@@ -470,7 +470,16 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         last_partial_dict = None
         current_turn_tool_calls: list[dict[str, Any]] = []  # tool calls for current assistant turn
         current_turn_has_outputs: bool = False  # whether any tool_output seen for current turn
-        with trace(class_name):
+        """
+            Note:
+            with trace(class_name): creates a bug. So, need to manually enter the trace and exit it.
+            This happens because we need to cancel the stream after human tool interruption.
+            The stream closure followed by human interruption causes the context of trace() be change
+            from its original context where it was created. The __exit__ of with trace(): breaks when this happens.
+        """
+        current_trace = trace(class_name)
+        current_trace.__enter__()
+        try:
             stream = Runner.run_streamed(
                 self._agent,
                 input=self._to_runner_input(messages),
@@ -627,6 +636,8 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 run_context.messages = list(messages)
                                 # Cancel the Runner to prevent background tool execution and retry loop
                                 stream.cancel()
+                                # finish the trace
+                                current_trace.finish(reset_current=True)
                                 yield HumanInputRequiredEvent(
                                     source=class_name,
                                     message=f"Human input required: {tool_input.get('question', 'Input needed')}",
@@ -727,6 +738,13 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 # yield {"type": StreamEventType.COMPLETED, "output": final_output}
 
             # TODO: Check how to add reflection_prompt to the Runner after the output is generated.
+        finally:
+            # try to exit the current trace.
+            try:
+                current_trace.__exit__(None, None, None)
+            except (ValueError, RuntimeError) as err:
+                logger.warning(str(err))
+                pass
 
     async def _astream(
         self,
