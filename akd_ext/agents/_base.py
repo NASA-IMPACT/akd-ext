@@ -24,6 +24,7 @@ from loguru import logger
 from pydantic import Field, field_validator
 
 from akd._base.streaming import StreamEvent, StreamingMixin
+from akd._base.structures import RunUsage
 from akd._base import (
     InputSchema,
     OutputSchema,
@@ -256,6 +257,27 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
             return None
 
     @staticmethod
+    def _extract_usage(raw_responses: list[Any]) -> RunUsage:
+        """Aggregate token usage from OpenAI SDK ModelResponse list into RunUsage."""
+        run_usage = RunUsage()
+        for response in raw_responses:
+            usage = response.usage
+            details: dict[str, int] = {}
+            cached = usage.input_tokens_details.cached_tokens or 0
+            if cached > 0:
+                details["input_tokens_details.cached_tokens"] = cached
+            reasoning = usage.output_tokens_details.reasoning_tokens or 0
+            if reasoning > 0:
+                details["output_tokens_details.reasoning_tokens"] = reasoning
+            run_usage += RunUsage(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                requests=1,
+                details=details,
+            )
+        return run_usage
+
+    @staticmethod
     def _to_runner_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert Chat Completions messages to Responses API format for Runner input.
 
@@ -420,6 +442,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                 run_config=self.config.run_config,
             )
             messages[:] = self._from_runner_output(result.to_input_list())
+            run_context.usage += self._extract_usage(result.raw_responses)
             return result
 
     # ── _arun: routes between direct call and streaming engine ───────
@@ -684,6 +707,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                                     }
                                 )
                                 run_context.messages = list(messages)
+                                run_context.usage += self._extract_usage(stream.raw_responses)
                                 stream.cancel()
                                 yield HumanInputRequiredEvent(
                                     source=class_name,
@@ -751,6 +775,8 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                                 run_context=run_context,
                             )
                             token_buffer = ""
+
+            run_context.usage += self._extract_usage(stream.raw_responses)
 
             if self.debug:
                 logger.debug(
