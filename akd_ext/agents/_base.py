@@ -556,7 +556,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
         last_partial_dict = None
         current_turn_tool_calls: list[dict[str, Any]] = []
         current_turn_has_outputs: bool = False
-        with trace(class_name):
+        current_trace = trace(class_name)
+        current_trace.__enter__()
+        try:
             stream = Runner.run_streamed(
                 self._agent,
                 input=self._to_runner_input(messages),
@@ -709,6 +711,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                                 run_context.messages = list(messages)
                                 run_context.usage += self._extract_usage(stream.raw_responses)
                                 stream.cancel()
+                                current_trace.finish(reset_current=True)
                                 yield HumanInputRequiredEvent(
                                     source=class_name,
                                     message=f"Human input required: {tool_input.get('question', 'Input needed')}",
@@ -794,3 +797,8 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
                     data=CompletedEventData(output=final_output),
                     run_context=run_context,
                 )
+        finally:
+            try:
+                current_trace.__exit__(None, None, None)
+            except (ValueError, RuntimeError):
+                pass
