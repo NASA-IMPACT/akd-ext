@@ -3,13 +3,14 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncIterator
-from typing import Any
+from typing import Any, Literal, cast
 
 from agents import (
     Agent,
     ModelSettings,
     RunConfig,
     Runner,
+    ToolsToFinalOutputResult,
     function_tool,
     trace,
 )
@@ -23,13 +24,10 @@ from loguru import logger
 from pydantic import Field, field_validator
 
 from akd._base.streaming import StreamEvent, StreamingMixin
+from akd._base.structures import RunUsage
 from akd._base import (
     InputSchema,
     OutputSchema,
-    StreamEventType,
-    StartingEvent,
-    StartingEventData,
-    RunningEvent,
     StreamingTokenEvent,
     StreamingEventData,
     ThinkingEvent,
@@ -42,8 +40,6 @@ from akd._base import (
     ToolResult,
     CompletedEvent,
     CompletedEventData,
-    FailedEvent,
-    FailedEventData,
     HumanResponseEvent,
     HumanResponseEventData,
     HumanInputRequiredEvent,
@@ -51,13 +47,13 @@ from akd._base import (
     RunContext,
     PartialOutputEvent,
     PartialEventData,
-    Memory,
     TextOutput,
 )
-from akd.agents._base import BaseAgent, BaseAgentConfig
+from akd.agents._base import BaseAgent, BaseAgentConfig, OutputRoutingMixin
 from akd.tools.human import HumanToolInput
 
 from akd._base.errors import (
+    HumanInputRequired,
     UnexpectedModelBehavior,
 )
 
@@ -77,6 +73,11 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     Defaults to `stateless=False` (stateful) for multi-turn conversations.
     """
 
+    output_mode: Literal["multi_tool", "unified_schema"] = Field(
+        default="unified_schema",
+        description="Output mode for union schemas. unified_schema (default) uses response_format envelope; "
+        "multi_tool uses one final tool per schema branch.",
+    )
     model_name: str = Field(
         default="gpt-5-nano",
         description="Model name for the agent.",
@@ -149,17 +150,18 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
         return RunConfig(trace_metadata=self.tracing_params or {})
 
 
-class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent, StreamingMixin):
+class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRoutingMixin, BaseAgent, StreamingMixin):
     """Base class for OpenAI Agents SDK based agents.
 
-    Provides:
-    - Agent created in __init__ via `_create_agent()`
-    - Memory via `memory` property (list[dict] - consistent with akd-core)
-    - Stateful by default, clears memory each run if stateless=True
+    Follows the akd-core BaseAgent template pattern:
+    - `arun()` / `astream()` / `_astream()` are templates in BaseAgent
+    - `_run_engine_stream()` is the provider-specific streaming engine (OpenAI SDK)
+    - `_arun()` routes: no-tools → `get_response_async()`, tools → `_run_engine_stream()`
+    - `OutputRoutingMixin` provides union output schema support
 
     Subclasses must define:
     - `input_schema`: Input schema class
-    - `output_schema`: Output schema class
+    - `output_schema`: Output schema class (supports unions: `SchemaA | SchemaB`)
 
     Subclasses can override:
     - `_create_agent()`: For custom agent creation logic
@@ -174,27 +176,78 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     def __init__(
         self,
         config: OpenAIBaseAgentConfig | None = None,
-        memory: Memory | None = None,
         debug: bool = False,
         **kwargs,
     ) -> None:
-        super().__init__(config=config, memory=memory, debug=debug)
+        super().__init__(config=config, debug=debug)
         self._agent = self._create_agent()
 
-    def _create_agent(self) -> Agent:
-        """Create the OpenAI Agent object.
+    # ── Agent creation ───────────────────────────────────────────────
 
-        Uses tools and model settings from config.
-        Override for custom agent creation logic.
+    def _create_agent(self) -> Agent:
+        """Create the OpenAI Agent object, handling union output schemas.
+
+        - Single schema: output_type=schema (or None for TextOutput)
+        - Union + unified_schema: output_type=envelope model, unwrap after
+        - Union + multi_tool: output_type=None, output tools converted to FunctionTools, StopAtTools
         """
+        schemas = self.output_schema_resolved
+        is_union = len(schemas) > 1
+        is_text = not is_union and issubclass(schemas[0], TextOutput)
+
+        if not is_union:
+            return Agent(
+                name=self.__class__.__name__,
+                instructions=self.config.system_prompt,
+                model=self.config.model_name or "gpt-5-nano",
+                tools=self.config.tools,
+                output_type=None if is_text else self.output_schema,
+                model_settings=self.config.model_settings,
+            )
+
+        if self.output_mode == "unified_schema":
+            envelope = self.effective_output_schema
+            return Agent(
+                name=self.__class__.__name__,
+                instructions=self.config.system_prompt,
+                model=self.config.model_name or "gpt-5-nano",
+                tools=self.config.tools,
+                output_type=envelope,
+                model_settings=self.config.model_settings,
+            )
+
+        # multi_tool mode: use mode="json" so the SDK gets a valid JSON string
+        # (not str(dict) which produces Python repr with single quotes)
+        sdk_output_tools = [function_tool(t.as_function(mode="json")) for t in self.output_tools]
+        all_tools = list(self.config.tools) + sdk_output_tools
         return Agent(
             name=self.__class__.__name__,
             instructions=self.config.system_prompt,
             model=self.config.model_name or "gpt-5-nano",
-            tools=self.config.tools,
-            output_type=None if issubclass(self.output_schema, TextOutput) else self.output_schema,
+            tools=all_tools,
+            output_type=None,
             model_settings=self.config.model_settings,
+            tool_use_behavior=self._output_tool_behavior,
         )
+
+    async def _output_tool_behavior(self, _ctx, results) -> ToolsToFinalOutputResult:
+        """SDK tool_use_behavior callback: validate output tools via check_output.
+
+        Adapts SDK's FunctionToolResult to akd-core ToolResult, then reuses
+        the mixin's _resolve_output_tool_result + check_output.
+        """
+        output_names = {t.name for t in self.output_tools}
+        for r in results:
+            if r.tool.name not in output_names:
+                continue
+            adapted = ToolResult(tool_call_id="", tool_name=r.tool.name, content=r.output)
+            parsed = self._resolve_output_tool_result(adapted)
+            if parsed is not None and self.check_output(parsed) is None:
+                return ToolsToFinalOutputResult(is_final_output=True, final_output=r.output)
+            return ToolsToFinalOutputResult(is_final_output=False)
+        return ToolsToFinalOutputResult(is_final_output=False)
+
+    # ── Message format converters ────────────────────────────────────
 
     def _try_parse_json(self, content: str) -> dict[str, Any] | None:
         """Try to parse content as JSON."""
@@ -202,6 +255,27 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
             return json.loads(content)
         except json.JSONDecodeError:
             return None
+
+    @staticmethod
+    def _extract_usage(raw_responses: list[Any]) -> RunUsage:
+        """Aggregate token usage from OpenAI SDK ModelResponse list into RunUsage."""
+        run_usage = RunUsage()
+        for response in raw_responses:
+            usage = response.usage
+            details: dict[str, int] = {}
+            cached = usage.input_tokens_details.cached_tokens or 0
+            if cached > 0:
+                details["input_tokens_details.cached_tokens"] = cached
+            reasoning = usage.output_tokens_details.reasoning_tokens or 0
+            if reasoning > 0:
+                details["output_tokens_details.reasoning_tokens"] = reasoning
+            run_usage += RunUsage(
+                input_tokens=usage.input_tokens,
+                output_tokens=usage.output_tokens,
+                requests=1,
+                details=details,
+            )
+        return run_usage
 
     @staticmethod
     def _to_runner_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -242,17 +316,16 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
     @staticmethod
     def _from_runner_output(items: list[dict[str, Any]]) -> list[dict[str, Any]]:
         """Convert Responses_API_format back to Chat_Completions_API messages format.
+
         The inverse of _to_runner_input(). Converts Runner output items
         (Responses API format) back to Chat Completions format (akd-core standard).
         This is done to enable reusability across AKD core. AKD core uses Chat_Completions_API(old) via litellm.
         TODO: later, make the akd-core accept both the API message format.
         """
         messages: list[dict[str, Any]] = []
-        # Buffer to merge consecutive function_call items into one assistant message
         pending_tool_calls: list[dict[str, Any]] = []
 
         def _flush_tool_calls() -> None:
-            """Flush buffered tool calls into a single assistant message."""
             if pending_tool_calls:
                 messages.append(
                     {
@@ -273,7 +346,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 _flush_tool_calls()
                 messages.append({"role": "assistant", "content": item.get("content", "")})
             elif item_type == "message" and item.get("role") == "assistant":
-                # Responses API message output item
                 _flush_tool_calls()
                 content_parts = item.get("content", [])
                 text = ""
@@ -288,7 +360,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 messages.append({"role": "assistant", "content": text})
             elif item_type in ("function_call", "mcp_call"):
                 arguments = item.get("arguments", "{}")
-                # Parse JSON string back to dict if possible
                 if isinstance(arguments, str):
                     try:
                         arguments = json.loads(arguments)
@@ -304,7 +375,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                         },
                     }
                 )
-                # MCP calls may carry output directly on the item (server-side execution)
                 if item_type == "mcp_call" and "output" in item:
                     _flush_tool_calls()
                     mcp_output = item["output"]
@@ -327,42 +397,43 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
         _flush_tool_calls()
         return messages
 
+    # ── HITL helpers ─────────────────────────────────────────────────
+
+    def _inject_human_response(self, messages: list[dict[str, Any]], run_context: RunContext) -> None:
+        """Inject human response into messages for HITL resume.
+
+        BaseAgent._append_user_turn() skips appending the user message on resume,
+        but the actual tool response + developer guidance must be injected by the provider.
+        """
+        human_response = run_context.human_response
+        if not human_response:
+            return
+        messages.append(
+            {"role": "tool", "tool_call_id": human_response.tool_call_id, "content": json.dumps(human_response.content)}
+        )
+        messages.append(
+            {
+                "role": "developer",
+                "content": (
+                    "The human has responded. Continue your workflow based on their input. "
+                    "If you still need clarification or more details, ask the human again."
+                ),
+            }
+        )
+
+    # ── Non-streaming path ───────────────────────────────────────────
+
     async def get_response_async(
         self,
-        messages: list[dict[str, Any]],
+        *,
         run_context: RunContext,
         **kwargs,
     ) -> Any:
-        """Run the agent and return the RunResult.
-
-        Args:
-            messages: Conversation messages. If None, uses internal memory.
-
-        Returns:
-            RunResult from the agent execution.
-        """
+        """Run the agent via Runner.run() and return the RunResult."""
         class_name = self.__class__.__name__
-        run_context.messages = messages
+        messages = run_context.messages
 
-        # check for human response
-        human_response = run_context.human_response
-        if human_response:
-            tool_call_id = human_response.tool_call_id
-            content = human_response.content
-
-            # Inject human response into messages. # update messages by reference
-            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(content)})
-
-            # Guide the model to continue and ask the human again if needed
-            messages.append(
-                {
-                    "role": "developer",
-                    "content": (
-                        "The human has responded. Continue your workflow based on their input. "
-                        "If you still need clarification or more details, ask the human again."
-                    ),
-                }
-            )
+        self._inject_human_response(messages, run_context)
 
         with trace(class_name):
             result = await Runner.run(
@@ -370,113 +441,120 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                 input=self._to_runner_input(messages),
                 run_config=self.config.run_config,
             )
-            # replacing the messages via memory reference with entire runner messages.
             messages[:] = self._from_runner_output(result.to_input_list())
+            run_context.usage += self._extract_usage(result.raw_responses)
             return result
 
-    async def _arun(self, params: InSchema, run_context: RunContext | None = None, **kwargs) -> OutSchema:
+    # ── _arun: routes between direct call and streaming engine ───────
+
+    async def _arun(self, params: InSchema, run_context: RunContext, **kwargs) -> OutSchema:
         """Run the agent workflow.
 
-        Override for custom orchestration (e.g., multi-agent pipelines).
+        Routes between:
+        - Direct mode (no tools, no union multi_tool): Runner.run() via get_response_async
+        - Tool/union mode: consumes _run_engine_stream() watching for CompletedEvent
         """
-        run_context: RunContext = (run_context or RunContext()).model_copy()
-        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
+        has_union = len(self.output_schema_resolved) > 1
+        use_tool_loop = bool(self.config.tools) or (has_union and self.output_mode == "multi_tool")
 
-        async with self.memory.asession(
-            stateless=self.stateless,
-            run_context=run_context,
-            enable_trimming=self.enable_trimming,
-            model_name=self.model_name,
-            max_tokens=self.max_tokens,
-            trim_ratio=self.trim_ratio,
-        ) as messages:
-            if not messages:
-                messages.append(self._default_system_message())
+        if not use_tool_loop:
+            result = await self.get_response_async(run_context=run_context)
+            return self._resolve_final_output(result.final_output)
 
-            # because human response run context messages handled by _stream_llm_response
-            if params and not (run_context and run_context.human_response):
-                messages.append({"role": "user", "content": params.model_dump_json()})
+        async for event in self._run_engine_stream(run_context=run_context):
+            if isinstance(event, CompletedEvent):
+                return cast(OutSchema, event.data.output)
+            if isinstance(event, HumanInputRequiredEvent):
+                raise HumanInputRequired(str(event.data.human_input))
 
-            # Run pipeline via get_response_async
-            result = await self.get_response_async(messages=messages, run_context=run_context)
+        raise UnexpectedModelBehavior("Tool loop completed without producing output")
 
-            # Return typed output
-            final_output = result.final_output
+    # ── Output resolution ────────────────────────────────────────────
 
-            # add final assistant response message
-            messages.append(
-                {
-                    "role": "assistant",
-                    "content": final_output
-                    if isinstance(final_output, str)
-                    else final_output.model_dump_json(exclude={"type"}),
-                }
-            )
+    def _resolve_final_output(self, final_output: Any) -> OutSchema:
+        """Resolve raw SDK output to the correct output schema type.
 
-            if issubclass(self.output_schema, TextOutput):
-                return self.output_schema(content=final_output)
-            elif isinstance(final_output, self.output_schema):
-                return final_output
-            elif hasattr(final_output, "model_dump"):
-                return self.output_schema(**final_output.model_dump())
-            else:
-                return self.output_schema.model_validate_json(str(final_output))
+        Handles single schemas, union unified_schema (envelope unwrapping),
+        and union multi_tool (already resolved by FunctionTool callback).
+        """
+        schemas = self.output_schema_resolved
 
-    async def _stream_llm_response(
+        # Check if it's already a valid output
+        for schema in schemas:
+            if isinstance(final_output, schema):
+                return cast(OutSchema, final_output)
+
+        # TextOutput handling (single schema only)
+        if len(schemas) == 1 and issubclass(schemas[0], TextOutput):
+            return cast(OutSchema, schemas[0](content=final_output))
+
+        # Unified schema envelope unwrapping
+        if len(schemas) > 1 and self.output_mode == "unified_schema":
+            unwrapped = self._unwrap_unified_output(final_output)
+            if unwrapped is not None:
+                return cast(OutSchema, unwrapped)
+
+        # Try model_dump conversion
+        if hasattr(final_output, "model_dump"):
+            data = final_output.model_dump()
+            for schema in schemas:
+                try:
+                    return cast(OutSchema, schema.model_validate(data))
+                except Exception:
+                    continue
+
+        # Raw string fallback: try JSON parsing first, then TextOutput for plain text
+        if isinstance(final_output, str):
+            for schema in schemas:
+                try:
+                    return cast(OutSchema, schema.model_validate_json(final_output))
+                except Exception:
+                    continue
+            text_schemas = [s for s in schemas if issubclass(s, TextOutput)]
+            if text_schemas:
+                return cast(OutSchema, text_schemas[0](content=final_output))
+
+        raise UnexpectedModelBehavior(f"Could not resolve output to any of: {[s.__name__ for s in schemas]}")
+
+    # ── _run_engine_stream: OpenAI SDK streaming engine ──────────────
+
+    async def _run_engine_stream(
         self,
-        messages: list[dict[str, Any]],
         run_context: RunContext,
-        token_batch_size: int = 10,
+        **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
-        """Stream using Runner.run_streamed()."""
+        """OpenAI SDK streaming engine using Runner.run_streamed().
 
+        Provider-specific implementation of the akd-core _run_engine_stream() contract.
+        Yields StreamEvents for tool calls, reasoning, tokens, and final output.
+        """
         class_name = self.__class__.__name__
-        run_context.messages = messages
+        messages = run_context.messages
 
-        # check for human response
+        # HITL resume
         human_response = run_context.human_response
         if human_response:
-            tool_call_id = human_response.tool_call_id
-            content = human_response.content
-
-            # Inject human response into messages. # update messages by reference
-            messages.append({"role": "tool", "tool_call_id": tool_call_id, "content": json.dumps(content)})
-
-            # Guide the model to continue and ask the human again if needed
-            messages.append(
-                {
-                    "role": "developer",
-                    "content": (
-                        "The human has responded. Continue your workflow based on their input. "
-                        "If you still need clarification or more details, ask the human again."
-                    ),
-                }
-            )
-
-            # Emit event to notify that human response has been injected
+            self._inject_human_response(messages, run_context)
             yield HumanResponseEvent(
                 source=class_name,
                 message="Resumed with human input",
-                data=HumanResponseEventData(tool_call_id=tool_call_id, response=content),
+                data=HumanResponseEventData(tool_call_id=human_response.tool_call_id, response=human_response.content),
                 run_context=run_context,
             )
 
-        # For partial output validation (only for final answer)
-        PartialResponseModel = PartialModel[self.output_schema]
+        # Partial output model — for unified_schema use envelope, skip for multi_tool
+        partial_model = None
+        if len(self.output_schema_resolved) > 1:
+            if self.output_mode == "unified_schema":
+                partial_model = PartialModel[self.effective_output_schema]
+        else:
+            partial_model = PartialModel[self.output_schema]
 
         # LLM Call
         accumulated = ""
-        token_buffer = ""
         last_partial_dict = None
-        current_turn_tool_calls: list[dict[str, Any]] = []  # tool calls for current assistant turn
-        current_turn_has_outputs: bool = False  # whether any tool_output seen for current turn
-        """
-            Note:
-            with trace(class_name): creates a bug. So, need to manually enter the trace and exit it.
-            This happens because we need to cancel the stream after human tool interruption.
-            The stream closure followed by human interruption causes the context of trace() be change
-            from its original context where it was created. The __exit__ of with trace(): breaks when this happens.
-        """
+        current_turn_tool_calls: list[dict[str, Any]] = []
+        current_turn_has_outputs: bool = False
         current_trace = trace(class_name)
         current_trace.__enter__()
         try:
@@ -498,46 +576,34 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
 
                     if event_type == "response.output_text.delta":
                         delta = getattr(event.data, "delta", "") or ""
-                        token_buffer += delta
                         accumulated += delta
-                        if len(token_buffer) >= token_batch_size:
-                            # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
+                        if delta:
                             yield StreamingTokenEvent(
                                 source=class_name,
                                 message=f"Streaming {class_name}",
-                                data=StreamingEventData(token=token_buffer),
+                                data=StreamingEventData(token=delta),
                                 run_context=run_context,
                             )
 
-                            token_buffer = ""
-
-                        parsed = self._try_parse_json(accumulated)
-                        if parsed and parsed != last_partial_dict:
-                            last_partial_dict = parsed
-                            try:
-                                partial = PartialResponseModel.model_validate(parsed)
-                                yield PartialOutputEvent(
-                                    source=class_name,
-                                    message="Partial...",
-                                    data=PartialEventData(partial_output=partial),
-                                    run_context=run_context,
-                                )
-                            except Exception:
-                                pass
+                        if partial_model is not None:
+                            parsed = self._try_parse_json(accumulated)
+                            if parsed and parsed != last_partial_dict:
+                                last_partial_dict = parsed
+                                try:
+                                    partial = partial_model.model_validate(parsed)
+                                    yield PartialOutputEvent(
+                                        source=class_name,
+                                        message="Partial...",
+                                        data=PartialEventData(partial_output=partial),
+                                        run_context=run_context,
+                                    )
+                                except Exception:
+                                    pass
 
                     elif event_type == "response.output_text.done":
-                        # ResponseTextDoneEvent.text has the complete text for this output part
                         done_text = getattr(event.data, "text", "") or ""
                         if done_text and not accumulated:
                             accumulated = done_text
-                        if token_buffer:
-                            yield StreamingTokenEvent(
-                                source=class_name,
-                                message=f"Streaming {class_name}",
-                                data=StreamingEventData(token=token_buffer),
-                                run_context=run_context,
-                            )
-                            token_buffer = ""
 
                     elif "reasoning" in event_type:
                         content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
@@ -548,7 +614,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 data=ThinkingEventData(thinking_content=content),
                                 run_context=run_context,
                             )
-                            # yield {"type": StreamEventType.THINKING, "content": content}
 
                 elif isinstance(event, RunItemStreamEvent):
                     if event.name == "tool_called":
@@ -625,7 +690,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 except Exception:
                                     human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
 
-                                # Flush current turn's assistant message for resumption
                                 messages.append(
                                     {
                                         "role": "assistant",
@@ -634,9 +698,8 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                     }
                                 )
                                 run_context.messages = list(messages)
-                                # Cancel the Runner to prevent background tool execution and retry loop
+                                run_context.usage += self._extract_usage(stream.raw_responses)
                                 stream.cancel()
-                                # finish the trace
                                 current_trace.finish(reset_current=True)
                                 yield HumanInputRequiredEvent(
                                     source=class_name,
@@ -659,7 +722,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                             else getattr(raw_item, "call_id", "")
                         ) or uuid.uuid4().hex[:8]
                         if tool_output_content is not None:
-                            # Flush assistant message on first tool_output (correct ordering)
                             if not current_turn_has_outputs and current_turn_tool_calls:
                                 messages.append(
                                     {
@@ -670,7 +732,6 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 )
                                 current_turn_has_outputs = True
 
-                            # Append tool result message
                             serialized = (
                                 tool_output_content
                                 if isinstance(tool_output_content, str)
@@ -697,16 +758,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                                 run_context=run_context,
                             )
 
-                    elif event.name == "message_output_created":
-                        if token_buffer:
-                            yield StreamingTokenEvent(
-                                source=class_name,
-                                message=f"Streaming {class_name}",
-                                data=StreamingEventData(token=token_buffer),
-                                run_context=run_context,
-                            )
-                            # yield {"type": StreamEventType.STREAMING, "token": token_buffer}
-                            token_buffer = ""
+            run_context.usage += self._extract_usage(stream.raw_responses)
 
             if self.debug:
                 logger.debug(
@@ -714,146 +766,18 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](BaseAgent,
                     f"stream.final_output={type(stream.final_output).__name__}"
                 )
 
-            if issubclass(self.output_schema, TextOutput):
-                content = accumulated
-                if not content and isinstance(stream.final_output, str):
-                    content = stream.final_output
-                final_output = self.output_schema(content=content)
-            else:
-                final_output = stream.final_output_as(self.output_schema, raise_if_incorrect_type=False)
+            # Resolve final output
+            final_output = self._resolve_final_output(stream.final_output)
 
             if final_output:
-                messages.append(
-                    {
-                        "role": "assistant",
-                        "content": accumulated or None,
-                    }
-                )
                 yield CompletedEvent(
                     source=class_name,
                     message=f"Completed {class_name}",
-                    data=CompletedEventData[self.output_schema](output=final_output),
+                    data=CompletedEventData(output=final_output),
                     run_context=run_context,
                 )
-                # yield {"type": StreamEventType.COMPLETED, "output": final_output}
-
-            # TODO: Check how to add reflection_prompt to the Runner after the output is generated.
         finally:
-            # try to exit the current trace.
             try:
                 current_trace.__exit__(None, None, None)
-            except (ValueError, RuntimeError) as err:
-                logger.warning(str(err))
+            except (ValueError, RuntimeError):
                 pass
-
-    async def _astream(
-        self,
-        params: InSchema,
-        run_context: RunContext | None = None,
-        token_batch_size: int = 10,
-        **kwargs: Any,
-    ) -> AsyncIterator[StreamEvent]:
-        """Stream execution with akd StreamEvent format."""
-
-        class_name = self.__class__.__name__
-        run_context: RunContext = (run_context or RunContext()).model_copy()
-        run_context.run_id = run_context.run_id or uuid.uuid4().hex[:8]
-
-        yield StartingEvent(
-            source=class_name,
-            message=f"Starting {class_name}",
-            data=StartingEventData[self.input_schema](params=params),
-            run_context=run_context,
-        )
-
-        try:
-            async with self.memory.asession(
-                stateless=self.stateless,
-                run_context=run_context,
-                enable_trimming=self.enable_trimming,
-                model_name=self.model_name,
-                max_tokens=self.max_tokens,
-                trim_ratio=self.trim_ratio,
-            ) as messages:
-                # Add system message if empty
-                if not messages:
-                    messages.append(self._default_system_message())
-
-                # because human response run context messages handled by _stream_llm_response
-                if params and not (run_context and run_context.human_response):
-                    messages.append(
-                        {
-                            "role": "user",
-                            "content": params.model_dump_json(exclude={"type"}),
-                        },
-                    )
-
-                yield RunningEvent(
-                    source=class_name,
-                    message=f"Running {class_name}",
-                    run_context=run_context,
-                )
-
-                final_output = None
-                # interact with the LLM and yield events
-                async for event in self._stream_llm_response(
-                    messages=messages, run_context=run_context, token_batch_size=token_batch_size
-                ):
-                    if isinstance(event, CompletedEvent):
-                        final_output = event.data.output
-                    yield event
-                    if isinstance(event, HumanInputRequiredEvent):
-                        # ask the human for input and interrupt the stream
-                        return
-
-                if final_output is None:
-                    raise UnexpectedModelBehavior("No output received from LLM")
-
-        except Exception as e:
-            yield FailedEvent(
-                source=class_name,
-                message=f"Failed: {e!s}",
-                data=FailedEventData(error=str(e), error_type=type(e).__name__),
-                run_context=run_context,
-            )
-            raise
-
-    # TODO: check if this is need at all
-    async def astream(
-        self,
-        params: Any,
-        run_context: RunContext | None = None,
-        **kwargs: Any,
-    ) -> AsyncIterator[StreamEvent]:
-        """
-        Overriding the BaseAgent astream to include possible return formats from OpenAI SDK
-        """
-        # Input validation (before any events are yielded)
-        params = self._validate_input(params)
-
-        # Stream from internal implementation
-        async for event in self._astream(params, run_context, **kwargs):
-            if event.event_type == StreamEventType.COMPLETED:
-                # Validate output before yielding COMPLETED
-                event_output = event.output
-                response_model = self.output_schema
-                output: response_model | None = None
-
-                # possible return formats from OpenAI SDK result
-                if isinstance(event_output, response_model):
-                    output = event_output
-                elif isinstance(event_output, str):
-                    output = response_model.model_validate_json(event_output)
-                else:
-                    output = response_model.model_validate(event_output)
-
-                if output is not None:
-                    output = self._validate_output(output)
-                    yield CompletedEvent(
-                        source=event.source,
-                        message=event.message,
-                        data=CompletedEventData(output=output),
-                        run_context=event.run_context,
-                    )
-                    continue
-            yield event

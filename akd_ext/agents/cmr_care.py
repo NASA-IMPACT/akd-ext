@@ -20,6 +20,7 @@ from akd_ext._types import OpenAITool
 from akd._base import (
     InputSchema,
     OutputSchema,
+    TextOutput,
 )
 from akd_ext.agents._base import (
     OpenAIBaseAgent,
@@ -453,11 +454,15 @@ class CMRCareAgentInputSchema(InputSchema):
 
 
 class CMRCareAgentOutputSchema(OutputSchema):
-    """Output schema for CMR CARE Agent."""
+    """Use this schema whenever you have dataset concept IDs to report.
+    Put ALL your text output (interpreted scope, dataset list, reproducibility log, tables, JSON audit block) in the report field.
+    Use TextOutput for clarification questions or when no datasets were found."""
 
     __response_field__ = "report"
-    dataset_concept_ids: list[str] = Field(..., description="List of dataset concept IDs")
-    report: str = Field(default="", description="Detailed report with reasoning")
+    dataset_concept_ids: list[str] = Field(..., description="List of CMR dataset concept IDs found")
+    report: str = Field(
+        default="", description="Full structured report including all sections, tables, and JSON audit block"
+    )
 
 
 # -----------------------------------------------------------------------------
@@ -473,8 +478,13 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
     """
 
     input_schema = CMRCareAgentInputSchema
-    output_schema = CMRCareAgentOutputSchema
+    output_schema = CMRCareAgentOutputSchema | TextOutput
     config_schema = CMRCareConfig
+
+    def check_output(self, output) -> str | None:
+        if isinstance(output, CMRCareAgentOutputSchema) and not output.report.strip():
+            return "Report is empty. Provide search reasoning and details."
+        return super().check_output(output)
 
 
 if __name__ == "__main__":
