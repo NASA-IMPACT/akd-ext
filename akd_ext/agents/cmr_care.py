@@ -109,6 +109,7 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
 
     OUTPUT FORMAT
     All responses must follow this structure exactly. No free-form text is allowed outside these sections.
+    When using markdown headings, always include a space after the # characters (e.g., "## 1. Section Title" not "##1. Section Title").
     1. Clarifying Questions
     Included only when required inputs are missing
     Blocking; no continuation until answered
