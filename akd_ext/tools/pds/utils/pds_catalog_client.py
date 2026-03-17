@@ -240,15 +240,12 @@ class CatalogIndex:
         Returns:
             Tuple of (matching datasets, total count)
         """
-        # Start with all datasets or filtered subset
+        # Start with all datasets or filtered subset using indexes for speed
         if node:
             results = self._by_node.get(node.lower(), [])
         elif target:
-            # Target can use direct index lookup since target metadata is reliable
             results = self._by_target.get(target.lower(), [])
         else:
-            # For mission filter or no filter, start with all datasets
-            # Mission filter needs full scan due to ID/title fallback matching
             results = self.datasets
 
         # Apply mission filter with fallback to ID/title matching
@@ -259,11 +256,9 @@ class CatalogIndex:
         if instrument:
             results = [d for d in results if _matches_term(d, instrument, d.instruments, INSTRUMENT_ABBREVIATIONS)]
 
-        # Apply node filter if combined with mission or target
-        if node and (mission or target):
-            results = [d for d in results if d.node.value == node.lower()]
-
-        if target and not node:
+        # Apply target filter — always apply when target is specified,
+        # even if node was also used to narrow the initial set
+        if target:
             target_lower = target.lower()
             results = [d for d in results if any(target_lower in t.lower() for t in d.targets)]
 
@@ -322,8 +317,20 @@ class CatalogIndex:
 
         return paginated, total
 
+    @staticmethod
+    def _normalize_id(raw_id: str) -> str:
+        """Normalize a dataset ID by stripping set/tuple notation artifacts."""
+        import re
+        cleaned = raw_id.strip()
+        cleaned = re.sub(r'^[\(\{\["\s]+', '', cleaned)
+        cleaned = re.sub(r'[,\)\}\]"\s]+$', '', cleaned)
+        return cleaned
+
     def get_dataset_by_id(self, dataset_id: str) -> PDSDataset | None:
         """Get a dataset by its ID.
+
+        Performs exact match first, then falls back to normalized comparison
+        to handle malformed IDs from catalog scraping.
 
         Args:
             dataset_id: The dataset ID (LIDVID for PDS4, VOLUME_ID for PDS3)
@@ -334,7 +341,35 @@ class CatalogIndex:
         for dataset in self.datasets:
             if dataset.id == dataset_id:
                 return dataset
+
+        normalized_query = self._normalize_id(dataset_id)
+        for dataset in self.datasets:
+            if self._normalize_id(dataset.id) == normalized_query:
+                return dataset
+
         return None
+
+    def find_similar_dataset_ids(self, dataset_id: str, max_suggestions: int = 5) -> list[tuple[str, int]]:
+        """Find dataset IDs similar to the given ID using fuzzy matching.
+
+        Args:
+            dataset_id: The dataset ID to find similar matches for
+            max_suggestions: Maximum number of suggestions to return
+
+        Returns:
+            List of (dataset_id, similarity_score) tuples, sorted by score descending
+        """
+        scored = []
+        dataset_id_lower = dataset_id.lower()
+        for dataset in self.datasets:
+            score = max(
+                fuzz.ratio(dataset_id_lower, dataset.id.lower()),
+                fuzz.partial_ratio(dataset_id_lower, dataset.id.lower()),
+            )
+            if score >= 50:
+                scored.append((dataset.id, score))
+        scored.sort(key=lambda x: x[1], reverse=True)
+        return scored[:max_suggestions]
 
     def get_stats(self) -> dict[str, Any]:
         """Get catalog statistics."""

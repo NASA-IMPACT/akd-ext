@@ -107,9 +107,12 @@ class ODEProduct(BaseModel):
             for file_data in file_list:
                 product_files.append(ODEProductFile(**file_data))
 
+        raw_ode_id = data.get("ode_id")
+        ode_id = str(raw_ode_id) if raw_ode_id is not None else None
+
         return cls(
             pdsid=data.get("pdsid"),
-            ode_id=data.get("ode_id"),
+            ode_id=ode_id,
             data_set_id=data.get("Data_Set_Id"),
             ihid=data.get("ihid"),
             iid=data.get("iid"),

@@ -12,6 +12,37 @@ from pydantic import Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
 
+_RELEVANT_KEYS = {
+    "id", "type", "title", "description", "lid", "lidvid",
+    "investigations", "observing_system_components", "targets",
+    "pds:Time_Coordinates.pds:start_date_time",
+    "pds:Time_Coordinates.pds:stop_date_time",
+    "pds:Primary_Result_Summary.pds:processing_level",
+    "ref_lid_instrument", "ref_lid_target",
+    "ref_lid_instrument_host", "ref_lid_investigation",
+    "metadata",
+}
+
+
+def _filter_product_response(raw: dict[str, Any]) -> dict[str, Any]:
+    """Filter a raw product response to keep only relevant keys."""
+    filtered: dict[str, Any] = {}
+    for key, value in raw.items():
+        if key in _RELEVANT_KEYS:
+            filtered[key] = value
+        elif key == "properties" and isinstance(value, dict):
+            useful_props = {}
+            for prop_key, prop_val in value.items():
+                if any(term in prop_key.lower() for term in [
+                    "title", "description", "processing_level",
+                    "time_coordinates", "target", "instrument",
+                    "investigation", "purpose", "collection_type",
+                ]):
+                    useful_props[prop_key] = prop_val
+            if useful_props:
+                filtered["properties"] = useful_props
+    return filtered
+
 
 class PDS4GetProductInputSchema(InputSchema):
     """Input schema for PDS4GetProductTool."""
@@ -22,7 +53,7 @@ class PDS4GetProductInputSchema(InputSchema):
 class PDS4GetProductOutputSchema(OutputSchema):
     """Output schema for PDS4GetProductTool."""
 
-    product: dict[str, Any] = Field(..., description="Raw product data from PDS4 API")
+    product: dict[str, Any] = Field(..., description="Filtered product data from PDS4 API")
 
 
 class PDS4GetProductToolConfig(BaseToolConfig):
@@ -48,8 +79,8 @@ class PDS4GetProductTool(BaseTool[PDS4GetProductInputSchema, PDS4GetProductOutpu
     - urn:nasa:pds:context:target:planet.mars
     - urn:nasa:pds:cassini_iss
 
-    The returned product data includes all available metadata fields for the product,
-    including identification, investigation areas, time coordinates, and more.
+    Returns filtered product data including identification, related context products,
+    time coordinates, and processing level.
 
     """
 
@@ -67,7 +98,8 @@ class PDS4GetProductTool(BaseTool[PDS4GetProductInputSchema, PDS4GetProductOutpu
             ) as client:
                 result = await client.get_product(params.urn)
 
-            return PDS4GetProductOutputSchema(product=result)
+            filtered = _filter_product_response(result)
+            return PDS4GetProductOutputSchema(product=filtered)
 
         except PDS4ClientError as e:
             logger.error(f"PDS4 client error in get_product: {e}")

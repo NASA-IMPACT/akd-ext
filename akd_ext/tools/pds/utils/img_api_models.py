@@ -41,11 +41,14 @@ def _parse_int(value: Any) -> int | None:
 
 
 def _parse_str(value: Any) -> str | None:
-    """Parse a value to string, handling arrays."""
+    """Parse a value to string, handling arrays and null-like values."""
     value = _unwrap_value(value)
     if value is None:
         return None
-    return str(value)
+    s = str(value)
+    if s in ("null", "None", ""):
+        return None
+    return s
 
 
 class IMGProduct(BaseModel):

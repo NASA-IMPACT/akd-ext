@@ -31,12 +31,20 @@ class PDS4SearchBundlesInputSchema(InputSchema):
     """Input schema for PDS4SearchBundlesTool."""
 
     title_query: str | None = Field(None, description="Search query for bundle titles (e.g., 'Lunar', 'Mars')")
+    lid_query: str | None = Field(
+        None,
+        description=(
+            "Search by LID substring (e.g., 'hirise', 'mars2020_meda'). "
+            "Matches against the bundle's logical identifier (URN). "
+            "Use this when you know part of the bundle LID but not the full title."
+        ),
+    )
     start_time: str | None = Field(
         None, description="Start of time range (ISO 8601 format, e.g., '2020-01-01T00:00:00Z')"
     )
     end_time: str | None = Field(None, description="End of time range (ISO 8601 format)")
     processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by processing level")
-    limit: int = Field(0, ge=0, le=100, description="Number of actual products to return (set to 0 for facets only)")
+    limit: int = Field(10, ge=0, le=100, description="Number of bundle results to return (default 10, set to 0 for facets only)")
     facet_fields: str | None = Field(
         None,
         description="Comma-separated list of fields to facet on (e.g., 'pds:Identification_Area.pds:title,lidvid')",
@@ -116,6 +124,7 @@ class PDS4SearchBundlesTool(BaseTool[PDS4SearchBundlesInputSchema, PDS4SearchBun
             ) as client:
                 response = await client.search_bundles(
                     title_query=params.title_query,
+                    lid_query=params.lid_query,
                     start_time=params.start_time,
                     end_time=params.end_time,
                     processing_level=params.processing_level,

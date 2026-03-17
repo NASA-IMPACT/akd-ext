@@ -40,7 +40,8 @@ def validate_urn(urn: str) -> str:
         ValueError: If the URN format is invalid
     """
     # Basic URN pattern - starts with urn:nasa:pds: and contains valid characters
-    pattern = r"^urn:nasa:pds:[a-z_]+:[a-z_\.\-\w:]+$"
+    # Bundle segment allows letters, digits, underscores, and hyphens (e.g. mars2020_meda)
+    pattern = r"^urn:nasa:pds:[a-z0-9_\-]+:[a-z_\.\-\w:]+$"
     if not re.match(pattern, urn, re.IGNORECASE):
         raise ValueError(f"Invalid URN format: {urn}")
     return urn
@@ -225,6 +226,7 @@ class PDS4Client:
     async def search_bundles(
         self,
         title_query: str | None = None,
+        lid_query: str | None = None,
         start_time: str | None = None,
         end_time: str | None = None,
         processing_level: str | None = None,
@@ -236,6 +238,7 @@ class PDS4Client:
 
         Args:
             title_query: Search query for bundle titles (e.g., "Lunar")
+            lid_query: Search by LID substring (e.g., "hirise", "mars2020_meda")
             start_time: Start of time range (ISO 8601 format, e.g., "2020-01-01T00:00:00Z")
             end_time: End of time range (ISO 8601 format)
             processing_level: Filter by processing level ("Raw", "Calibrated", "Derived")
@@ -254,6 +257,9 @@ class PDS4Client:
 
         if title_query:
             filters.append(f'(title like "{title_query}")')
+
+        if lid_query:
+            filters.append(f'(lid like "*{lid_query.lower()}*")')
 
         # Temporal filters
         if start_time:

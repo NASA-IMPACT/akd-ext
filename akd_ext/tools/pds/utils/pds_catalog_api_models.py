@@ -84,8 +84,9 @@ class PDSDataset(BaseModel):
     total_size_bytes: int | None = Field(default=None, description="Total size in bytes")
 
     def to_search_text(self) -> str:
-        """Generate searchable text from all fields."""
+        """Generate searchable text from all fields including the dataset ID."""
         parts = [
+            self.id,
             self.title,
             self.description or "",
             " ".join(self.missions),
