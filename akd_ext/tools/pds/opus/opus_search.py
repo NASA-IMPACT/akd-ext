@@ -65,10 +65,10 @@ class OPUSSearchInputSchema(InputSchema):
         description="End of time range (ISO 8601 format)",
     )
     limit: int = Field(
-        100,
+        10,
         ge=1,
-        le=1000,
-        description="Maximum observations to return",
+        le=25,
+        description="Maximum observations to return (default 10, max 25)",
     )
     startobs: int = Field(
         1,

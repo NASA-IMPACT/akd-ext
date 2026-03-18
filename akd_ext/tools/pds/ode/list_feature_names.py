@@ -13,7 +13,7 @@ from akd_ext.tools.pds.ode.types import TargetType
 from akd_ext.tools.pds.utils.ode_client import ODEClient, ODEClientError
 
 
-MAX_FEATURE_NAMES_LIMIT = 50  # Max feature names
+MAX_FEATURE_NAMES_LIMIT = 25  # Max feature names
 
 
 class ODEListFeatureNamesInputSchema(InputSchema):
@@ -21,7 +21,7 @@ class ODEListFeatureNamesInputSchema(InputSchema):
 
     target: TargetType = Field(..., description="Planetary body to query")
     feature_class: str = Field(..., description="Feature type (e.g., 'crater', 'chasma', 'mons', 'vallis', 'mare')")
-    limit: int = Field(50, ge=1, le=50, description="Maximum names to return (default 50, max 50)")
+    limit: int = Field(25, ge=1, le=25, description="Maximum names to return (default 25, max 25)")
 
 
 class ODEListFeatureNamesOutputSchema(OutputSchema):

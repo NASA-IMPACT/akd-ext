@@ -13,13 +13,22 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
 
 _RELEVANT_KEYS = {
-    "id", "type", "title", "description", "lid", "lidvid",
-    "investigations", "observing_system_components", "targets",
+    "id",
+    "type",
+    "title",
+    "description",
+    "lid",
+    "lidvid",
+    "investigations",
+    "observing_system_components",
+    "targets",
     "pds:Time_Coordinates.pds:start_date_time",
     "pds:Time_Coordinates.pds:stop_date_time",
     "pds:Primary_Result_Summary.pds:processing_level",
-    "ref_lid_instrument", "ref_lid_target",
-    "ref_lid_instrument_host", "ref_lid_investigation",
+    "ref_lid_instrument",
+    "ref_lid_target",
+    "ref_lid_instrument_host",
+    "ref_lid_investigation",
     "metadata",
 }
 
@@ -33,11 +42,20 @@ def _filter_product_response(raw: dict[str, Any]) -> dict[str, Any]:
         elif key == "properties" and isinstance(value, dict):
             useful_props = {}
             for prop_key, prop_val in value.items():
-                if any(term in prop_key.lower() for term in [
-                    "title", "description", "processing_level",
-                    "time_coordinates", "target", "instrument",
-                    "investigation", "purpose", "collection_type",
-                ]):
+                if any(
+                    term in prop_key.lower()
+                    for term in [
+                        "title",
+                        "description",
+                        "processing_level",
+                        "time_coordinates",
+                        "target",
+                        "instrument",
+                        "investigation",
+                        "purpose",
+                        "collection_type",
+                    ]
+                ):
                     useful_props[prop_key] = prop_val
             if useful_props:
                 filtered["properties"] = useful_props

@@ -30,7 +30,7 @@ class PDS4SearchInstrumentHostsInputSchema(InputSchema):
         None, description="Space-delimited search terms (e.g. 'mars rover', 'voyager spacecraft')"
     )
     instrument_host_type: INSTRUMENT_HOST_TYPE | None = Field(None, description="Filter by instrument host type")
-    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
+    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
 
 
 class PDS4SearchInstrumentHostsOutputSchema(OutputSchema):

@@ -30,7 +30,7 @@ class PDS4SearchInstrumentsInputSchema(InputSchema):
         None, description="Space-delimited search terms (e.g. 'camera mars', 'spectrometer cassini')"
     )
     instrument_type: INSTRUMENT_TYPE | None = Field(None, description="Filter by instrument type")
-    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
+    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
 
 
 class PDS4SearchInstrumentsOutputSchema(OutputSchema):

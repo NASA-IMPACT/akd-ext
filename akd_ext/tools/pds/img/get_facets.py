@@ -36,7 +36,7 @@ class IMGGetFacetsInputSchema(InputSchema):
             "- 'pds_standard': PDS version (PDS3, PDS4)"
         ),
     )
-    limit: int = Field(100, ge=1, le=1000, description="Maximum number of values to return")
+    limit: int = Field(10, ge=1, le=25, description="Maximum number of values to return (default 10, max 25)")
     target: IMGTarget | None = Field(None, description="Optional target filter to narrow results")
     mission: IMGMission | None = Field(None, description="Optional mission filter to narrow results")
     instrument: IMGInstrument | None = Field(None, description="Optional instrument filter to narrow results")

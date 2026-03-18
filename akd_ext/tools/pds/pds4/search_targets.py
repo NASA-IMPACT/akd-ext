@@ -31,7 +31,7 @@ class PDS4SearchTargetsInputSchema(InputSchema):
         None, description="Space-delimited search terms (e.g. 'jupiter moon', 'asteroid belt')"
     )
     target_type: TARGET_TYPE | None = Field(None, description="Filter by target type")
-    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
+    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
 
 
 class PDS4SearchTargetsOutputSchema(OutputSchema):

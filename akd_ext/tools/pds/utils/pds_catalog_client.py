@@ -321,9 +321,10 @@ class CatalogIndex:
     def _normalize_id(raw_id: str) -> str:
         """Normalize a dataset ID by stripping set/tuple notation artifacts."""
         import re
+
         cleaned = raw_id.strip()
-        cleaned = re.sub(r'^[\(\{\["\s]+', '', cleaned)
-        cleaned = re.sub(r'[,\)\}\]"\s]+$', '', cleaned)
+        cleaned = re.sub(r'^[\(\{\["\s]+', "", cleaned)
+        cleaned = re.sub(r'[,\)\}\]"\s]+$', "", cleaned)
         return cleaned
 
     def get_dataset_by_id(self, dataset_id: str) -> PDSDataset | None:

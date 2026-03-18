@@ -9,8 +9,13 @@ PDS_ROOT = Path(__file__).resolve().parent.parent
 
 # ── Step 1: stub the framework packages the source files import from ──
 for name in [
-    "akd", "akd._base", "akd.tools",
-    "akd_ext", "akd_ext.tools", "akd_ext.mcp", "akd_ext.mcp.decorators",
+    "akd",
+    "akd._base",
+    "akd.tools",
+    "akd_ext",
+    "akd_ext.tools",
+    "akd_ext.mcp",
+    "akd_ext.mcp.decorators",
 ]:
     if name not in sys.modules:
         m = types.ModuleType(name)
@@ -20,9 +25,7 @@ for name in [
 
 sys.modules["akd._base"].InputSchema = type("InputSchema", (), {})
 sys.modules["akd._base"].OutputSchema = type("OutputSchema", (), {})
-sys.modules["akd.tools"].BaseTool = type(
-    "BaseTool", (), {"__class_getitem__": classmethod(lambda cls, *a: cls)}
-)
+sys.modules["akd.tools"].BaseTool = type("BaseTool", (), {"__class_getitem__": classmethod(lambda cls, *a: cls)})
 sys.modules["akd.tools"].BaseToolConfig = type("BaseToolConfig", (), {})
 sys.modules["akd_ext.mcp.decorators"].mcp_tool = lambda cls: cls
 

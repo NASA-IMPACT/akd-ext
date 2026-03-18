@@ -48,7 +48,7 @@ class PDS4SearchProductsInputSchema(InputSchema):
     ref_lid_target: str | None = Field(
         None, description="URN identifier for target (e.g., 'urn:nasa:pds:context:target:planet.mars')"
     )
-    limit: int = Field(100, ge=0, le=100, description="Maximum results to return (default 100)")
+    limit: int = Field(10, ge=0, le=25, description="Maximum results to return (default 10, max 25)")
 
 
 class PDS4SearchProductsOutputSchema(OutputSchema):

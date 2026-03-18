@@ -148,7 +148,7 @@ class OPUSClient:
         planet: str | None = None,
         time_min: str | None = None,
         time_max: str | None = None,
-        limit: int = 100,
+        limit: int = 25,
         startobs: int = 1,
         order: str = "time1,opusid",
     ) -> dict[str, Any]:
@@ -187,7 +187,7 @@ class OPUSClient:
         planet: str | None = None,
         time_min: str | None = None,
         time_max: str | None = None,
-        limit: int = 100,
+        limit: int = 25,
         startobs: int = 1,
         order: str = "time1,opusid",
     ) -> OPUSSearchResponse:

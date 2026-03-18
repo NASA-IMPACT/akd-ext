@@ -44,12 +44,14 @@ class PDS4SearchBundlesInputSchema(InputSchema):
     )
     end_time: str | None = Field(None, description="End of time range (ISO 8601 format)")
     processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by processing level")
-    limit: int = Field(10, ge=0, le=100, description="Number of bundle results to return (default 10, set to 0 for facets only)")
+    limit: int = Field(
+        10, ge=0, le=25, description="Number of bundle results to return (default 10, set to 0 for facets only)"
+    )
     facet_fields: str | None = Field(
         None,
         description="Comma-separated list of fields to facet on (e.g., 'pds:Identification_Area.pds:title,lidvid')",
     )
-    facet_limit: int = Field(25, ge=1, le=100, description="Maximum number of facet values to return (default: 25)")
+    facet_limit: int = Field(25, ge=1, le=25, description="Maximum number of facet values to return (default: 25)")
 
 
 class PDS4SearchBundlesOutputSchema(OutputSchema):

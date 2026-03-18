@@ -50,7 +50,7 @@ class PDS4SearchCollectionsInputSchema(InputSchema):
         None, description="End of time range in ISO 8601 format (e.g., '2021-01-01T00:00:00Z')"
     )
     processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by calibration level")
-    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
+    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
 
 
 class PDS4SearchCollectionsOutputSchema(OutputSchema):

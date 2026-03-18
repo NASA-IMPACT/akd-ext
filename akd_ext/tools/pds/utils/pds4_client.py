@@ -97,7 +97,7 @@ class PDS4Client:
     BASE_URL = "https://pds.mcp.nasa.gov/api/search/1/"
     DEFAULT_TIMEOUT = 30.0
     DEFAULT_PAGE_SIZE = 25
-    MAX_PAGE_SIZE = 1000
+    MAX_PAGE_SIZE = 100
 
     def __init__(
         self,

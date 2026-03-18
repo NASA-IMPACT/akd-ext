@@ -10,44 +10,71 @@ import httpx
 from unittest.mock import AsyncMock, MagicMock
 
 from akd_ext.tools.pds.utils.opus_api_models import (
-    OPUSObservation, OPUSSearchResponse, OPUSCountResponse,
-    OPUSMetadata, OPUSMetadataResponse, OPUSFiles, OPUSFilesResponse,
-    _parse_float as opus_parse_float, _parse_int as opus_parse_int,
+    OPUSObservation,
+    OPUSSearchResponse,
+    OPUSCountResponse,
+    OPUSMetadata,
+    OPUSMetadataResponse,
+    OPUSFiles,
+    OPUSFilesResponse,
+    _parse_float as opus_parse_float,
+    _parse_int as opus_parse_int,
 )
 from akd_ext.tools.pds.utils.opus_client import (
-    OPUSClient, OPUSClientError, OPUSRateLimitError,
+    OPUSClient,
+    OPUSClientError,
+    OPUSRateLimitError,
 )
 from akd_ext.tools.pds.utils.ode_api_models import (
-    ODEProduct, ODEProductFile, ODEProductSearchResponse,
-    ODEProductCountResponse, ODEInstrumentInfo, ODEIIPTResponse,
-    ODEFeatureDataResponse, ODEFeatureClassesResponse,
+    ODEProduct,
+    ODEProductSearchResponse,
+    ODEProductCountResponse,
+    ODEInstrumentInfo,
+    ODEIIPTResponse,
+    ODEFeatureDataResponse,
+    ODEFeatureClassesResponse,
     ODEFeatureNamesResponse,
-    _parse_float as ode_parse_float, _parse_int as ode_parse_int,
+    _parse_float as ode_parse_float,
+    _parse_int as ode_parse_int,
 )
 from akd_ext.tools.pds.utils.ode_client import (
-    ODEClient, ODEClientError, ODERateLimitError,
+    ODEClient,
 )
 from akd_ext.tools.pds.utils.img_api_models import (
-    IMGSearchResponse, IMGCountResponse, IMGFacetResponse, IMGProduct,
+    IMGSearchResponse,
+    IMGCountResponse,
+    IMGFacetResponse,
+    IMGProduct,
 )
 from akd_ext.tools.pds.utils.img_client import (
-    IMGAtlasClient, IMGAtlasClientError,
+    IMGAtlasClient,
+    IMGAtlasClientError,
 )
 from akd_ext.tools.pds.utils.pds4_client import (
-    PDS4Client, PDS4ClientError, PDS4RateLimitError,
-    validate_urn, validate_coordinates,
+    PDS4Client,
+    PDS4RateLimitError,
+    validate_urn,
+    validate_coordinates,
 )
 from akd_ext.tools.pds.utils.sbn_api_models import (
-    CatchSourcesResponse, CatchJobResponse,
-    CatchResultsResponse, CatchStatusResponse, CatchFixedResponse,
+    CatchSourcesResponse,
+    CatchJobResponse,
+    CatchResultsResponse,
+    CatchStatusResponse,
 )
 from akd_ext.tools.pds.utils.sbn_client import (
-    SBNCatchClient, SBNCatchClientError, SBNCatchRateLimitError, SBNCatchJobError,
+    SBNCatchClient,
+    SBNCatchRateLimitError,
+    SBNCatchJobError,
 )
 from akd_ext.tools.pds.utils.pds_catalog_client import (
-    CatalogIndex, PDSCatalogClient, _matches_term, filter_dataset,
-    MISSION_ABBREVIATIONS, INSTRUMENT_ABBREVIATIONS,
-    ESSENTIAL_FIELDS, SUMMARY_FIELDS, FULL_FIELDS,
+    CatalogIndex,
+    PDSCatalogClient,
+    _matches_term,
+    filter_dataset,
+    MISSION_ABBREVIATIONS,
+    ESSENTIAL_FIELDS,
+    FULL_FIELDS,
 )
 
 from datetime import date
@@ -57,10 +84,20 @@ from datetime import date
 # ║                    HELPER: mock datasets                     ║
 # ╚══════════════════════════════════════════════════════════════╝
 
+
 def _make_ds(
-    id="DS-1", title="Title", node="atm", missions=None, instruments=None,
-    targets=None, description="desc", pds_version="PDS3", dataset_type="volume",
-    start_date=None, stop_date=None, keywords=None,
+    id="DS-1",
+    title="Title",
+    node="atm",
+    missions=None,
+    instruments=None,
+    targets=None,
+    description="desc",
+    pds_version="PDS3",
+    dataset_type="volume",
+    start_date=None,
+    stop_date=None,
+    keywords=None,
 ):
     ds = MagicMock()
     ds.id = id
@@ -91,6 +128,7 @@ def _make_ds(
 # ║                       OPUS  TESTS                            ║
 # ╚══════════════════════════════════════════════════════════════╝
 
+
 class TestOPUSParsers:
     def test_parse_float_valid(self):
         assert opus_parse_float(3.14) == 3.14
@@ -114,12 +152,19 @@ class TestOPUSParsers:
 
 class TestOPUSObservation:
     def test_from_raw_data_complete(self):
-        obs = OPUSObservation.from_raw_data({
-            "opusid": "co-iss-test", "instrument": "Cassini ISS",
-            "planet": "Saturn", "target": "Titan", "mission": "Cassini",
-            "time1": "2004-01-01", "time2": "2004-01-02",
-            "observationduration": "60.0", "ringobsid": "RING_1",
-        })
+        obs = OPUSObservation.from_raw_data(
+            {
+                "opusid": "co-iss-test",
+                "instrument": "Cassini ISS",
+                "planet": "Saturn",
+                "target": "Titan",
+                "mission": "Cassini",
+                "time1": "2004-01-01",
+                "time2": "2004-01-02",
+                "observationduration": "60.0",
+                "ringobsid": "RING_1",
+            }
+        )
         assert obs.opusid == "co-iss-test"
         assert obs.observation_duration == 60.0
         assert obs.ring_obs_id == "RING_1"
@@ -134,8 +179,14 @@ class TestOPUSObservation:
         assert obs.observation_duration is None
 
     def test_from_row_data(self):
-        cols = ["OPUS ID", "Instrument Name", "Planet", "Intended Target Name(s)",
-                "Observation Start Time (YMDhms)", "Observation Duration (secs)"]
+        cols = [
+            "OPUS ID",
+            "Instrument Name",
+            "Planet",
+            "Intended Target Name(s)",
+            "Observation Start Time (YMDhms)",
+            "Observation Duration (secs)",
+        ]
         row = ["id-1", "ISS", "Saturn", "Titan", "2004-01-01", "120"]
         obs = OPUSObservation.from_row_data(cols, row)
         assert obs.opusid == "id-1"
@@ -148,22 +199,36 @@ class TestOPUSObservation:
 
 class TestOPUSSearchResponse:
     def test_array_format(self):
-        resp = OPUSSearchResponse.from_raw_data({
-            "page": [["id1", "ISS", "Saturn", "Titan", "2004", "60"]],
-            "columns": ["OPUS ID", "Instrument Name", "Planet",
-                        "Intended Target Name(s)", "Observation Start Time (YMDhms)",
-                        "Observation Duration (secs)"],
-            "count": 1, "available": 500, "start_obs": 1, "limit": 100,
-        })
+        resp = OPUSSearchResponse.from_raw_data(
+            {
+                "page": [["id1", "ISS", "Saturn", "Titan", "2004", "60"]],
+                "columns": [
+                    "OPUS ID",
+                    "Instrument Name",
+                    "Planet",
+                    "Intended Target Name(s)",
+                    "Observation Start Time (YMDhms)",
+                    "Observation Duration (secs)",
+                ],
+                "count": 1,
+                "available": 500,
+                "start_obs": 1,
+                "limit": 100,
+            }
+        )
         assert resp.status == "success"
         assert len(resp.observations) == 1
         assert resp.available == 500
 
     def test_dict_format(self):
-        resp = OPUSSearchResponse.from_raw_data({
-            "page": [{"opusid": "t1", "target": "Io"}], "columns": [],
-            "count": 1, "available": 1,
-        })
+        resp = OPUSSearchResponse.from_raw_data(
+            {
+                "page": [{"opusid": "t1", "target": "Io"}],
+                "columns": [],
+                "count": 1,
+                "available": 1,
+            }
+        )
         assert resp.observations[0].opusid == "t1"
 
     def test_error(self):
@@ -203,10 +268,13 @@ class TestOPUSCountResponse:
 
 class TestOPUSMetadata:
     def test_instrument_constraint_extraction(self):
-        meta = OPUSMetadata.from_raw_data("id1", {
-            "General Constraints": {"planet": "Saturn"},
-            "Cassini ISS Constraints": {"filter1": "CL1"},
-        })
+        meta = OPUSMetadata.from_raw_data(
+            "id1",
+            {
+                "General Constraints": {"planet": "Saturn"},
+                "Cassini ISS Constraints": {"filter1": "CL1"},
+            },
+        )
         assert meta.instrument_constraints == {"filter1": "CL1"}
 
     def test_no_instrument_constraints(self):
@@ -220,11 +288,19 @@ class TestOPUSMetadata:
 
 class TestOPUSFiles:
     def test_full_files(self):
-        f = OPUSFiles.from_raw_data("oid", {"data": {"oid": {
-            "browse_thumb": ["http://t.jpg"], "browse_full": ["http://f.jpg"],
-            "raw_image": ["http://r1.img", "http://r2.img"],
-            "calibrated_image": ["http://c.img"],
-        }}})
+        f = OPUSFiles.from_raw_data(
+            "oid",
+            {
+                "data": {
+                    "oid": {
+                        "browse_thumb": ["http://t.jpg"],
+                        "browse_full": ["http://f.jpg"],
+                        "raw_image": ["http://r1.img", "http://r2.img"],
+                        "calibrated_image": ["http://c.img"],
+                    }
+                }
+            },
+        )
         assert f.browse_thumb == "http://t.jpg"
         assert len(f.raw_files) == 2
         assert len(f.calibrated_files) == 1
@@ -238,9 +314,16 @@ class TestOPUSFiles:
         assert f.raw_files == []
 
     def test_browse_as_string(self):
-        f = OPUSFiles.from_raw_data("oid", {"data": {"oid": {
-            "browse_thumb": "http://s.jpg",
-        }}})
+        f = OPUSFiles.from_raw_data(
+            "oid",
+            {
+                "data": {
+                    "oid": {
+                        "browse_thumb": "http://s.jpg",
+                    }
+                }
+            },
+        )
         assert f.browse_thumb == "http://s.jpg"
 
     def test_extract_first_url_edge_cases(self):
@@ -265,8 +348,7 @@ class TestOPUSClient:
         assert "target" not in p
 
     def test_build_search_params_full(self):
-        p = OPUSClient()._build_search_params(
-            target="Titan", planet="saturn", time_min="2004-01-01", limit=50)
+        p = OPUSClient()._build_search_params(target="Titan", planet="saturn", time_min="2004-01-01", limit=50)
         assert p["target"] == "Titan"
         assert p["time1"] == "2004-01-01"
         assert p["limit"] == "50"
@@ -286,7 +368,8 @@ class TestOPUSClient:
     async def test_rate_limit_raises(self):
         c = OPUSClient(max_retries=0, retry_delay=0.01)
         mock_resp = MagicMock(status_code=429, headers={"retry-after": "0"})
-        c._client = AsyncMock(); c._client.get = AsyncMock(return_value=mock_resp)
+        c._client = AsyncMock()
+        c._client.get = AsyncMock(return_value=mock_resp)
         with pytest.raises(OPUSRateLimitError):
             await c._request("test")
 
@@ -303,6 +386,7 @@ class TestOPUSClient:
 # ║                        ODE  TESTS                            ║
 # ╚══════════════════════════════════════════════════════════════╝
 
+
 class TestODEParsers:
     def test_parse_float(self):
         assert ode_parse_float("3.14") == 3.14
@@ -317,13 +401,19 @@ class TestODEParsers:
 
 class TestODEProduct:
     def test_full_product(self):
-        p = ODEProduct.from_raw_data({
-            "pdsid": "ESP_012600", "ode_id": 12345,
-            "Center_latitude": "45.5", "Emission_angle": "5.2",
-            "Product_files": {"Product_file": [
-                {"FileName": "f.img", "URL": "http://x"},
-            ]},
-        })
+        p = ODEProduct.from_raw_data(
+            {
+                "pdsid": "ESP_012600",
+                "ode_id": 12345,
+                "Center_latitude": "45.5",
+                "Emission_angle": "5.2",
+                "Product_files": {
+                    "Product_file": [
+                        {"FileName": "f.img", "URL": "http://x"},
+                    ]
+                },
+            }
+        )
         assert p.pdsid == "ESP_012600"
         assert p.ode_id == "12345"  # int coerced to str
         assert p.center_latitude == 45.5
@@ -333,49 +423,63 @@ class TestODEProduct:
         assert ODEProduct.from_raw_data({"ode_id": None}).ode_id is None
 
     def test_single_file_dict(self):
-        p = ODEProduct.from_raw_data({"Product_files": {
-            "Product_file": {"FileName": "one.img"}
-        }})
+        p = ODEProduct.from_raw_data({"Product_files": {"Product_file": {"FileName": "one.img"}}})
         assert len(p.product_files) == 1
 
     def test_no_files(self):
         assert ODEProduct.from_raw_data({}).product_files == []
 
     def test_bad_float_values(self):
-        p = ODEProduct.from_raw_data({
-            "Center_latitude": "N/A", "Emission_angle": "", "Map_scale": "?",
-        })
+        p = ODEProduct.from_raw_data(
+            {
+                "Center_latitude": "N/A",
+                "Emission_angle": "",
+                "Map_scale": "?",
+            }
+        )
         assert p.center_latitude is None
         assert p.emission_angle is None
 
 
 class TestODESearchResponse:
     def test_success(self):
-        r = ODEProductSearchResponse.from_raw_data({"ODEResults": {
-            "Status": "Success", "Count": "2",
-            "Products": {"Product": [
-                {"pdsid": "A", "ode_id": "1"}, {"pdsid": "B", "ode_id": "2"},
-            ]},
-        }})
+        r = ODEProductSearchResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "Count": "2",
+                    "Products": {
+                        "Product": [
+                            {"pdsid": "A", "ode_id": "1"},
+                            {"pdsid": "B", "ode_id": "2"},
+                        ]
+                    },
+                }
+            }
+        )
         assert r.count == 2
         assert len(r.products) == 2
 
     def test_single_product_as_dict(self):
-        r = ODEProductSearchResponse.from_raw_data({"ODEResults": {
-            "Status": "Success", "Count": "1",
-            "Products": {"Product": {"pdsid": "ONLY"}},
-        }})
+        r = ODEProductSearchResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "Count": "1",
+                    "Products": {"Product": {"pdsid": "ONLY"}},
+                }
+            }
+        )
         assert len(r.products) == 1
 
     def test_error(self):
-        r = ODEProductSearchResponse.from_raw_data(
-            {"ODEResults": {"Status": "ERROR", "Error": "bad target"}})
+        r = ODEProductSearchResponse.from_raw_data({"ODEResults": {"Status": "ERROR", "Error": "bad target"}})
         assert r.status == "ERROR"
 
     def test_no_products_string(self):
-        r = ODEProductSearchResponse.from_raw_data({"ODEResults": {
-            "Status": "Success", "Count": "0", "Products": "No Products Found"
-        }})
+        r = ODEProductSearchResponse.from_raw_data(
+            {"ODEResults": {"Status": "Success", "Count": "0", "Products": "No Products Found"}}
+        )
         assert r.products == []
 
     def test_non_dict_top_level(self):
@@ -383,72 +487,116 @@ class TestODESearchResponse:
         assert r.status == "ERROR"
 
     def test_non_dict_items_filtered(self):
-        r = ODEProductSearchResponse.from_raw_data({"ODEResults": {
-            "Status": "Success",
-            "Products": {"Product": [{"pdsid": "OK"}, "bad", 42]},
-        }})
+        r = ODEProductSearchResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "Products": {"Product": [{"pdsid": "OK"}, "bad", 42]},
+                }
+            }
+        )
         assert len(r.products) == 1
 
 
 class TestODECountResponse:
     def test_success(self):
-        r = ODEProductCountResponse.from_raw_data(
-            {"ODEResults": {"Status": "Success", "Count": "150"}})
+        r = ODEProductCountResponse.from_raw_data({"ODEResults": {"Status": "Success", "Count": "150"}})
         assert r.count == 150
 
     def test_error(self):
-        r = ODEProductCountResponse.from_raw_data(
-            {"ODEResults": {"Status": "ERROR", "Error": "missing"}})
+        r = ODEProductCountResponse.from_raw_data({"ODEResults": {"Status": "ERROR", "Error": "missing"}})
         assert r.error == "missing"
 
 
 class TestODEIIPT:
     def test_success(self):
-        r = ODEIIPTResponse.from_raw_data({"ODEResults": {
-            "Status": "Success", "IIPT": {"IIPTSet": [
-                {"IHID": "MRO", "IHName": "MRO", "IID": "HIRISE",
-                 "IName": "HiRISE", "PT": "EDR", "PTName": "EDR",
-                 "NumberProducts": "5000", "IHN": "", "IIN": ""},
-            ]},
-        }})
+        r = ODEIIPTResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "IIPT": {
+                        "IIPTSet": [
+                            {
+                                "IHID": "MRO",
+                                "IHName": "MRO",
+                                "IID": "HIRISE",
+                                "IName": "HiRISE",
+                                "PT": "EDR",
+                                "PTName": "EDR",
+                                "NumberProducts": "5000",
+                                "IHN": "",
+                                "IIN": "",
+                            },
+                        ]
+                    },
+                }
+            }
+        )
         assert len(r.instruments) == 1
         assert r.instruments[0].number_products == 5000
         assert r.instruments[0].instrument_host_name == "MRO"
 
     def test_single_dict(self):
-        r = ODEIIPTResponse.from_raw_data({"ODEResults": {
-            "Status": "Success", "IIPT": {"IIPTSet":
-                {"IHID": "LRO", "IID": "LROC", "PT": "E", "PTName": "E"}},
-        }})
+        r = ODEIIPTResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "IIPT": {"IIPTSet": {"IHID": "LRO", "IID": "LROC", "PT": "E", "PTName": "E"}},
+                }
+            }
+        )
         assert len(r.instruments) == 1
 
     def test_fallback_property(self):
         info = ODEInstrumentInfo(
-            IHID="X", IHN="Old Host", IHName="", IID="Y",
-            IIN="Old Inst", IName="", PT="Z", PTName="Z")
+            IHID="X", IHN="Old Host", IHName="", IID="Y", IIN="Old Inst", IName="", PT="Z", PTName="Z"
+        )
         assert info.instrument_host_name == "Old Host"
         assert info.instrument_name == "Old Inst"
 
 
 class TestODEFeatures:
     def test_json_success(self):
-        r = ODEFeatureDataResponse.from_raw_data({"ODEResults": {
-            "Status": "Success", "Count": "1",
-            "Features": {"Feature": [{
-                "FeatureClass": "Crater", "FeatureName": "Gale",
-                "MinLat": "-6", "MaxLat": "-4", "WestLon": "136", "EastLon": "138",
-            }]},
-        }})
+        r = ODEFeatureDataResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "Count": "1",
+                    "Features": {
+                        "Feature": [
+                            {
+                                "FeatureClass": "Crater",
+                                "FeatureName": "Gale",
+                                "MinLat": "-6",
+                                "MaxLat": "-4",
+                                "WestLon": "136",
+                                "EastLon": "138",
+                            }
+                        ]
+                    },
+                }
+            }
+        )
         assert r.features[0].feature_name == "Gale"
 
     def test_single_feature_dict(self):
-        r = ODEFeatureDataResponse.from_raw_data({"ODEResults": {
-            "Status": "Success",
-            "Features": {"Feature": {
-                "FeatureClass": "Mons", "FeatureName": "Olympus",
-                "MinLat": "15", "MaxLat": "25", "WestLon": "220", "EastLon": "230",
-            }},
-        }})
+        r = ODEFeatureDataResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "Features": {
+                        "Feature": {
+                            "FeatureClass": "Mons",
+                            "FeatureName": "Olympus",
+                            "MinLat": "15",
+                            "MaxLat": "25",
+                            "WestLon": "220",
+                            "EastLon": "230",
+                        }
+                    },
+                }
+            }
+        )
         assert len(r.features) == 1
 
     def test_xml_success(self):
@@ -457,12 +605,12 @@ class TestODEFeatures:
             "<Features><Feature><FeatureClass>Crater</FeatureClass>"
             "<FeatureName>Jezero</FeatureName><MinLat>18</MinLat>"
             "<MaxLat>19</MaxLat><WestLon>77</WestLon><EastLon>78</EastLon>"
-            "</Feature></Features></ODEResults>")
+            "</Feature></Features></ODEResults>"
+        )
         assert r.features[0].feature_name == "Jezero"
 
     def test_xml_error(self):
-        r = ODEFeatureDataResponse.from_xml(
-            "<ODEResults><Status>ERROR</Status><Error>bad</Error></ODEResults>")
+        r = ODEFeatureDataResponse.from_xml("<ODEResults><Status>ERROR</Status><Error>bad</Error></ODEResults>")
         assert r.error == "bad"
 
     def test_xml_parse_error(self):
@@ -470,24 +618,36 @@ class TestODEFeatures:
         assert "XML parse error" in r.error
 
     def test_feature_classes(self):
-        r = ODEFeatureClassesResponse.from_raw_data({"ODEResults": {
-            "Status": "Success",
-            "FeatureTypes": {"FeatureType": ["Crater", "Mons"]},
-        }})
+        r = ODEFeatureClassesResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "FeatureTypes": {"FeatureType": ["Crater", "Mons"]},
+                }
+            }
+        )
         assert len(r.feature_classes) == 2
 
     def test_feature_classes_string(self):
-        r = ODEFeatureClassesResponse.from_raw_data({"ODEResults": {
-            "Status": "Success",
-            "FeatureTypes": {"FeatureType": "Crater"},
-        }})
+        r = ODEFeatureClassesResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "FeatureTypes": {"FeatureType": "Crater"},
+                }
+            }
+        )
         assert r.feature_classes == ["Crater"]
 
     def test_feature_names(self):
-        r = ODEFeatureNamesResponse.from_raw_data({"ODEResults": {
-            "Status": "Success",
-            "FeatureNames": {"FeatureName": ["Gale", "Jezero"]},
-        }})
+        r = ODEFeatureNamesResponse.from_raw_data(
+            {
+                "ODEResults": {
+                    "Status": "Success",
+                    "FeatureNames": {"FeatureName": ["Gale", "Jezero"]},
+                }
+            }
+        )
         assert "Gale" in r.feature_names
 
 
@@ -520,6 +680,7 @@ class TestODEClient:
 # ╔══════════════════════════════════════════════════════════════╗
 # ║                        IMG  TESTS                            ║
 # ╚══════════════════════════════════════════════════════════════╝
+
 
 class TestIMGFilters:
     def setup_method(self):
@@ -554,12 +715,18 @@ class TestIMGFilters:
 
 class TestIMGResponses:
     def test_search_success(self):
-        r = IMGSearchResponse.from_raw_data({
-            "responseHeader": {"status": 0, "QTime": 5},
-            "response": {"numFound": 100, "start": 0, "docs": [
-                {"uuid": "abc", "PRODUCT_ID": "IMG_001", "TARGET": "MARS"},
-            ]},
-        })
+        r = IMGSearchResponse.from_raw_data(
+            {
+                "responseHeader": {"status": 0, "QTime": 5},
+                "response": {
+                    "numFound": 100,
+                    "start": 0,
+                    "docs": [
+                        {"uuid": "abc", "PRODUCT_ID": "IMG_001", "TARGET": "MARS"},
+                    ],
+                },
+            }
+        )
         assert r.status == "success"
         assert r.num_found == 100
         assert len(r.products) == 1
@@ -569,40 +736,52 @@ class TestIMGResponses:
         assert r.status == "error"
 
     def test_search_solr_error_status(self):
-        r = IMGSearchResponse.from_raw_data(
-            {"responseHeader": {"status": 400}, "response": {}})
+        r = IMGSearchResponse.from_raw_data({"responseHeader": {"status": 400}, "response": {}})
         assert r.status == "error"
 
     def test_count_success(self):
-        r = IMGCountResponse.from_raw_data({
-            "responseHeader": {"status": 0},
-            "response": {"numFound": 5000},
-        })
+        r = IMGCountResponse.from_raw_data(
+            {
+                "responseHeader": {"status": 0},
+                "response": {"numFound": 5000},
+            }
+        )
         assert r.count == 5000
 
     def test_facet_success(self):
-        r = IMGFacetResponse.from_raw_data({
-            "responseHeader": {"status": 0},
-            "facet_counts": {"facet_fields": {
-                "TARGET": ["MARS", 50000, "SATURN", 30000],
-            }},
-        }, "TARGET")
+        r = IMGFacetResponse.from_raw_data(
+            {
+                "responseHeader": {"status": 0},
+                "facet_counts": {
+                    "facet_fields": {
+                        "TARGET": ["MARS", 50000, "SATURN", 30000],
+                    }
+                },
+            },
+            "TARGET",
+        )
         assert len(r.values) == 2
         assert r.values[0].value == "MARS"
         assert r.values[0].count == 50000
 
     def test_facet_zero_filtered(self):
-        r = IMGFacetResponse.from_raw_data({
-            "responseHeader": {"status": 0},
-            "facet_counts": {"facet_fields": {"TARGET": ["MARS", 100, "EMPTY", 0]}},
-        }, "TARGET")
+        r = IMGFacetResponse.from_raw_data(
+            {
+                "responseHeader": {"status": 0},
+                "facet_counts": {"facet_fields": {"TARGET": ["MARS", 100, "EMPTY", 0]}},
+            },
+            "TARGET",
+        )
         assert len(r.values) == 1
 
     def test_facet_empty(self):
-        r = IMGFacetResponse.from_raw_data({
-            "responseHeader": {"status": 0},
-            "facet_counts": {"facet_fields": {"TARGET": []}},
-        }, "TARGET")
+        r = IMGFacetResponse.from_raw_data(
+            {
+                "responseHeader": {"status": 0},
+                "facet_counts": {"facet_fields": {"TARGET": []}},
+            },
+            "TARGET",
+        )
         assert r.values == []
 
     @pytest.mark.asyncio
@@ -621,18 +800,26 @@ class TestIMGResponses:
 class TestIMGProduct:
     def test_solr_array_unwrapping(self):
         """Solr returns some fields as single-element arrays."""
-        p = IMGProduct.from_raw_data({
-            "uuid": "abc", "TARGET": ["MARS"],
-            "PLANET_DAY_NUMBER": [100], "EXPOSURE_DURATION": [0.5],
-        })
+        p = IMGProduct.from_raw_data(
+            {
+                "uuid": "abc",
+                "TARGET": ["MARS"],
+                "PLANET_DAY_NUMBER": [100],
+                "EXPOSURE_DURATION": [0.5],
+            }
+        )
         assert p.target == "MARS"
         assert p.planet_day_number == 100
         assert p.exposure_duration == 0.5
 
     def test_null_string_handling(self):
-        p = IMGProduct.from_raw_data({
-            "uuid": "abc", "TARGET": "null", "PRODUCT_TYPE": "None",
-        })
+        p = IMGProduct.from_raw_data(
+            {
+                "uuid": "abc",
+                "TARGET": "null",
+                "PRODUCT_TYPE": "None",
+            }
+        )
         assert p.target is None
         assert p.product_type is None
 
@@ -641,10 +828,13 @@ class TestIMGProduct:
 # ║                       PDS4  TESTS                            ║
 # ╚══════════════════════════════════════════════════════════════╝
 
+
 class TestPDS4URNValidation:
     def test_valid(self):
-        assert validate_urn("urn:nasa:pds:context:investigation:mission.juno") \
+        assert (
+            validate_urn("urn:nasa:pds:context:investigation:mission.juno")
             == "urn:nasa:pds:context:investigation:mission.juno"
+        )
 
     def test_valid_with_version(self):
         urn = "urn:nasa:pds:context:target:planet.mars::1.0"
@@ -705,8 +895,7 @@ class TestPDS4CoordinateValidation:
 class TestPDS4Client:
     def test_clean_urn_with_version(self):
         c = PDS4Client()
-        assert c._clean_urn("urn:nasa:pds:context:mission.juno::1.0") \
-            == "urn:nasa:pds:context:mission.juno"
+        assert c._clean_urn("urn:nasa:pds:context:mission.juno::1.0") == "urn:nasa:pds:context:mission.juno"
 
     def test_clean_urn_no_version(self):
         urn = "urn:nasa:pds:context:target"
@@ -742,11 +931,14 @@ class TestPDS4Client:
 # ║                        SBN  TESTS                            ║
 # ╚══════════════════════════════════════════════════════════════╝
 
+
 class TestSBNSources:
     def test_list_format(self):
-        r = CatchSourcesResponse.from_raw_data([
-            {"source": "neat_palomar", "source_name": "NEAT"},
-        ])
+        r = CatchSourcesResponse.from_raw_data(
+            [
+                {"source": "neat_palomar", "source_name": "NEAT"},
+            ]
+        )
         assert r.status == "success"
         assert len(r.sources) == 1
 
@@ -773,9 +965,12 @@ class TestSBNJob:
 
 class TestSBNResults:
     def test_with_data(self):
-        r = CatchResultsResponse.from_raw_data({
-            "count": 1, "data": [{"product_id": "obs1", "source": "neat"}],
-        })
+        r = CatchResultsResponse.from_raw_data(
+            {
+                "count": 1,
+                "data": [{"product_id": "obs1", "source": "neat"}],
+            }
+        )
         assert r.count == 1
         assert len(r.observations) == 1
 
@@ -790,9 +985,11 @@ class TestSBNResults:
 
 class TestSBNStatus:
     def test_running(self):
-        r = CatchStatusResponse.from_raw_data({
-            "status": [{"source": "neat_palomar", "status": "running"}],
-        })
+        r = CatchStatusResponse.from_raw_data(
+            {
+                "status": [{"source": "neat_palomar", "status": "running"}],
+            }
+        )
         assert len(r.source_status) == 1
 
 
@@ -824,6 +1021,7 @@ class TestSBNClient:
 # ╔══════════════════════════════════════════════════════════════╗
 # ║                    PDS CATALOG TESTS                         ║
 # ╚══════════════════════════════════════════════════════════════╝
+
 
 class TestMatchesTerm:
     def test_match_in_list(self):
@@ -876,14 +1074,28 @@ class TestNormalizeId:
 class TestCatalogIndex:
     def setup_method(self):
         self.ds1 = _make_ds(
-            id="CASS-1", title="Cassini ISS", node="rings",
-            missions=["Cassini"], targets=["Saturn"], instruments=["ISS"],
-            pds_version="PDS3", start_date=date(2004, 1, 1), stop_date=date(2017, 9, 15))
+            id="CASS-1",
+            title="Cassini ISS",
+            node="rings",
+            missions=["Cassini"],
+            targets=["Saturn"],
+            instruments=["ISS"],
+            pds_version="PDS3",
+            start_date=date(2004, 1, 1),
+            stop_date=date(2017, 9, 15),
+        )
         self.ds2 = _make_ds(
-            id="JUNO-1", title="Juno JADE", node="ppi",
-            missions=["Juno"], targets=["Jupiter"], instruments=["JADE"],
-            pds_version="PDS4", dataset_type="bundle",
-            start_date=date(2016, 7, 1), stop_date=date(2025, 1, 1))
+            id="JUNO-1",
+            title="Juno JADE",
+            node="ppi",
+            missions=["Juno"],
+            targets=["Jupiter"],
+            instruments=["JADE"],
+            pds_version="PDS4",
+            dataset_type="bundle",
+            start_date=date(2016, 7, 1),
+            stop_date=date(2025, 1, 1),
+        )
         self.idx = CatalogIndex([self.ds1, self.ds2])
 
     def test_search_all(self):

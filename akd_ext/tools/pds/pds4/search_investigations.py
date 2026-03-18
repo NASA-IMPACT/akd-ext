@@ -29,7 +29,7 @@ class PDS4SearchInvestigationsInputSchema(InputSchema):
     keywords: str | None = Field(
         None, description="Space-delimited search terms (e.g. 'mars rover', 'jupiter cassini')"
     )
-    limit: int = Field(10, ge=0, le=100, description="Max results (default 10)")
+    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
 
 
 class PDS4SearchInvestigationsOutputSchema(OutputSchema):
