@@ -76,18 +76,12 @@ The agent must:
 
 ### Required Inputs
 
-- `research_question.md`
-- `ctl_path`
-- `analysis_dir`
-
-Where:
-- `research_question.md`: Describes research objectives, hypotheses, experiments, and expected outputs.
-- `ctl_path`: Points to the GrADS control file describing dataset structure.
-- `analysis_dir`: Output directory where artifacts must be written.
+- `research_question`: Research question content describing objectives, hypotheses, experiments, and expected outputs.
+- `experiment_output_dir`: Path to the directory containing experiment artifacts from the previous stage (data files, configs, notebooks, etc.).
 
 ### Later Input
 
-- `figures_dir`: Directory containing figures produced by the notebook.
+- `figures_dir`: Directory where generated figures will be saved.
   Providing this directory triggers report generation.
 
 ### Primary Data Sources
@@ -138,8 +132,7 @@ The agent must support:
 
 ## Output Directory Rules
 
-- Generated artifacts must be written under:
-  `analysis_dir/`
+- Generated artifacts must be written under the experiment output directory.
 - The agent **must not overwrite raw experiment outputs.**
 
 ---
@@ -259,9 +252,7 @@ study:
   postfix: experiment01
 
 paths:
-  ctl_path: ...
-  dat_path: ...
-  analysis_dir: ...
+  experiment_output_dir: ...
   figures_dir: ...
   notebook_path: ...
   report_md_path: ...
@@ -450,17 +441,15 @@ class InterpretationPaperAssemblyConfig(OpenAIBaseAgentConfig):
 class InterpretationPaperAssemblyInputSchema(InputSchema):
     """Input schema for Interpretation & Paper Assembly Agent."""
 
-    research_question_path: str = Field(
-        ..., description="Path to research_question.md"
+    research_question: str = Field(
+        ..., description="Research question content as a string"
     )  # can be actual query. now just 1 query
+    experiment_output_dir: str = Field(
+        ..., description="Path to directory containing experiment artifacts from the previous stage"
+    )
     figures_dir: str | None = Field(
         default=None, description="Optional path to figures directory; triggers report generation when provided"
     )  # where it is going to save the images.
-
-    output_of_the_specs: str
-    # experiment_output: dir
-    # ctl_path: str = Field(..., description="Path to GrADS control file (.ctl)")
-    # analysis_dir: str = Field(..., description="Output directory for generated artifacts")
 
     # notebook is created and statistics along with images are created, then that will be part of paper generation
 
@@ -476,7 +465,6 @@ class InterpretationPaperAssemblyOutputSchema(OutputSchema):
         description="Full report describing artifacts created (manifest, analysis plan, notebook, README, "
         "markdown report)",
     )
-    # actually creates notebook.
 
 
 # -----------------------------------------------------------------------------

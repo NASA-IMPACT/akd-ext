@@ -14,9 +14,8 @@ from akd_ext.agents.research_partner import (
 def _make_input(**overrides) -> InterpretationPaperAssemblyInputSchema:
     """Helper to create input schema with default placeholder values."""
     defaults = {
-        "research_question_path": "/path/to/research_question.md",
-        "ctl_path": "/path/to/experiment/cm1out.ctl",
-        "analysis_dir": "/path/to/analysis",
+        "research_question": "RQ-001: Does increasing surface roughness length affect boundary layer depth?",
+        "experiment_output_dir": "/path/to/experiment_output",
     }
     defaults.update(overrides)
     return InterpretationPaperAssemblyInputSchema(**defaults)
@@ -24,33 +23,37 @@ def _make_input(**overrides) -> InterpretationPaperAssemblyInputSchema:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "research_question_path,ctl_path",
+    "research_question,experiment_output_dir",
     [
         (
-            "/path/to/tropical_cyclone_rq.md",
-            "/path/to/tc_experiment/cm1out.ctl",
+            "RQ-001: Does increasing surface roughness length affect boundary layer depth in tropical cyclones?",
+            "/path/to/tc_experiment_output",
         ),
         (
-            "/path/to/boundary_layer_rq.md",
-            "/path/to/bl_experiment/cm1out.ctl",
+            "RQ-001: What is the sensitivity of boundary layer structure to PBL scheme choice?",
+            "/path/to/bl_experiment_output",
         ),
         (
-            "/path/to/convective_initiation_rq.md",
-            "/path/to/ci_experiment/cm1out.ctl",
+            "RQ-001: How does convective initiation timing depend on SST perturbation?",
+            "/path/to/ci_experiment_output",
         ),
     ],
 )
-async def test_interpretation_paper_assembly_agent(research_question_path: str, ctl_path: str, reasoning_effort: str):
+async def test_interpretation_paper_assembly_agent(
+    research_question: str, experiment_output_dir: str, reasoning_effort: str
+):
     """Test Interpretation & Paper Assembly Agent.
 
     Args:
-        research_question_path: Path to research question file
-        ctl_path: Path to GrADS control file
+        research_question: Research question content
+        experiment_output_dir: Path to experiment artifacts directory
         reasoning_effort: CLI param --reasoning-effort (low/medium/high)
     """
     config = InterpretationPaperAssemblyConfig(reasoning_effort=reasoning_effort)
     agent = InterpretationPaperAssemblyAgent(config=config, debug=True)
-    result = await agent.arun(_make_input(research_question_path=research_question_path, ctl_path=ctl_path))
+    result = await agent.arun(
+        _make_input(research_question=research_question, experiment_output_dir=experiment_output_dir)
+    )
 
     assert isinstance(result, (InterpretationPaperAssemblyOutputSchema, TextOutput))
     if isinstance(result, InterpretationPaperAssemblyOutputSchema):

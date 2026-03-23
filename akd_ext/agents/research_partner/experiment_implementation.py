@@ -462,10 +462,13 @@ class ExperimentImplementationInputSchema(InputSchema):
         ..., description="Previous-stage experiment design output (Stage-3 workflow spec)"
     )  # needed
     # the specs will have the experiments code, files, etc along with it. There will be subfolders for multiple experiemnts.
-    # target_folder: str = Field(..., description="Target folder for the implementation package") # not necessary
 
-    model_info_readme_context: str  # this is needed
-    research_question: str  # might be as a main context
+    cm1_readme_context: str = Field(
+        ..., description="Extracted CM1 README content for model configuration reference"
+    )  # this is needed
+    research_question: str = Field(
+        ..., description="Research question content as context for the implementation"
+    )  # might be as a main context
 
 
 class ExperimentImplementationOutputSchema(OutputSchema):

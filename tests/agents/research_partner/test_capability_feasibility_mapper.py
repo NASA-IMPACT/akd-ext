@@ -12,20 +12,11 @@ from akd_ext.agents.research_partner import (
 
 
 def _make_input(**overrides) -> CapabilityFeasibilityMapperInputSchema:
-    """Helper to create input schema with default placeholder paths."""
+    """Helper to create input schema with default placeholder values."""
     defaults = {
-        "research_questions_path": "/path/to/research_questions.md",
-        "slurm_template_path": "/path/to/slurm_template.sh",
-        "cluster_it_pdf_path": "/path/to/cluster_it.pdf",
-        "output_dir": "/path/to/output",
-        "cm1_code_path": "/path/to/cm1/src",
-        "cm1_readme_path": "/path/to/cm1/README.md",
-        "cm1_notes_path": "/path/to/cm1/notes.md",
-        "cm1_sample_case_path": "/path/to/cm1/sample_case",
-        "cm1_namelist_dir": "/path/to/cm1/namelists",
-        "cm1_namelist_filenames": ["namelist.input"],
-        "cm1_run_script_path": "/path/to/cm1/run.sh",
-        "cm1_logs_dir": "/path/to/cm1/logs",
+        "research_question": "RQ-001: Does increasing surface roughness length affect boundary layer depth?",
+        "cluster_it_context": "Cluster IT documentation: 128 nodes, 64 cores each, SLURM scheduler, 48h max walltime.",
+        "cm1_readme_context": "CM1 README: Cloud Model 1, supports namelist.input configuration, key parameters include z0.",
     }
     defaults.update(overrides)
     return CapabilityFeasibilityMapperInputSchema(**defaults)
@@ -33,23 +24,23 @@ def _make_input(**overrides) -> CapabilityFeasibilityMapperInputSchema:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "research_questions_path",
+    "research_question",
     [
-        "/path/to/tropical_cyclone_rqs.md",
-        "/path/to/convective_initiation_rqs.md",
-        "/path/to/boundary_layer_rqs.md",
+        "RQ-001: Does increasing surface roughness length affect boundary layer depth in tropical cyclones?",
+        "RQ-001: How does convective initiation timing depend on SST perturbation?",
+        "RQ-001: What is the sensitivity of boundary layer structure to PBL scheme choice?",
     ],
 )
-async def test_capability_feasibility_mapper_agent(research_questions_path: str, reasoning_effort: str):
+async def test_capability_feasibility_mapper_agent(research_question: str, reasoning_effort: str):
     """Test CARE Capability & Feasibility Mapper Agent.
 
     Args:
-        research_questions_path: Path to research questions file
+        research_question: Research question content
         reasoning_effort: CLI param --reasoning-effort (low/medium/high)
     """
     config = CapabilityFeasibilityMapperConfig(reasoning_effort=reasoning_effort)
     agent = CapabilityFeasibilityMapperAgent(config=config, debug=True)
-    result = await agent.arun(_make_input(research_questions_path=research_questions_path))
+    result = await agent.arun(_make_input(research_question=research_question))
 
     assert isinstance(result, (CapabilityFeasibilityMapperOutputSchema, TextOutput))
     if isinstance(result, CapabilityFeasibilityMapperOutputSchema):

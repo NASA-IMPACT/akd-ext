@@ -20,7 +20,8 @@ def _make_input(**overrides) -> ExperimentImplementationInputSchema:
             "| exp_id | EXP_TC_baseline | EXP_TC_001 |\n"
             "| namelist_deltas | -- | cecd=1; sfcmodel=1 |"
         ),
-        "target_folder": "/path/to/project",
+        "cm1_readme_context": "CM1 README: Cloud Model 1, supports namelist.input configuration.",
+        "research_question": "RQ-001: Does increasing surface roughness length affect boundary layer depth?",
     }
     defaults.update(overrides)
     return ExperimentImplementationInputSchema(**defaults)

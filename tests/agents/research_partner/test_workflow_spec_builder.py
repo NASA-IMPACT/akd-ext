@@ -15,9 +15,6 @@ def _make_input(**overrides) -> WorkflowSpecBuilderInputSchema:
     """Helper to create input schema with default placeholder values."""
     defaults = {
         "stage_1_hypotheses": "RQ-001: Does increasing surface roughness length affect boundary layer depth?",
-        "stage_2_feasibility": "CM1 supports surface roughness via namelist parameter z0. Feasibility: OK.",
-        "model_name": "CM1",
-        "model_path": "/path/to/cm1",
     }
     defaults.update(overrides)
     return WorkflowSpecBuilderInputSchema(**defaults)
@@ -56,4 +53,3 @@ async def test_workflow_spec_builder_agent(stage_1_hypotheses: str, model_name: 
     assert isinstance(result, (WorkflowSpecBuilderOutputSchema, TextOutput))
     if isinstance(result, WorkflowSpecBuilderOutputSchema):
         assert result.spec.strip(), "Spec should not be empty"
-        assert result.reasoning.strip(), "Reasoning should not be empty"

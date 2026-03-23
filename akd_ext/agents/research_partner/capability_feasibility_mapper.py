@@ -14,7 +14,7 @@ Public API:
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Literal
 
 from pydantic import Field
 
@@ -103,52 +103,11 @@ If required values are missing:
 
 ## Required Inputs
 
-Global:
-
-* `research_questions_path`
-* `slurm_template_path`
-* `cluster_it_pdf_path`
-* `output_dir`
-
-CM1 model inputs:
-
-* `cm1.code_path`
-* `cm1.readme_path`
-* `cm1.notes_path`
-* `cm1.sample_case_path`
-* `cm1.namelist_dir`
-* `cm1.namelist_filenames`
-* `cm1.run_script_path`
-* `cm1.logs_dir`
+* `research_question` — the research question content as a markdown string
+* `cluster_it_context` — extracted cluster IT documentation content
+* `cm1_readme_context` — extracted CM1 README content (namelist and model documentation)
 
 Missing any of the above => **hard stop**.
-
----
-
-## Optional Models
-
-Optional blocks may exist:
-
-* `wrf`
-* `hwrf`
-* `olam`
-
-If absent:
-
-Write
-
-```
-Model skipped: no configuration provided
-```
-
----
-
-## Model Priority Order
-
-1. **CM1 (primary)**
-2. WRF
-3. HWRF
-4. OLAM
 
 ---
 
@@ -198,19 +157,7 @@ The report must include the disclaimer:
 
 ## Output Format Rules
 
-The agent must produce **exactly one Markdown report file**.
-
-Filename pattern:
-
-```
-{output_dir}/output_YYYYMMDDHHSS.md
-```
-
-Timestamp token must match:
-
-```
-YYYYMMDDHHSS
-```
+The agent must produce **exactly one Markdown report** returned via the output schema's `report` field.
 
 ---
 
@@ -454,11 +401,9 @@ notes (optional)
 Fields:
 
 ```
-input_config_yaml_path
-research_questions_path
-slurm_template_path
-cluster_it_pdf_path
-output_dir
+research_question
+cluster_it_context
+cm1_readme_context
 ```
 
 Include statement:
@@ -540,37 +485,15 @@ class CapabilityFeasibilityMapperConfig(OpenAIBaseAgentConfig):
 class CapabilityFeasibilityMapperInputSchema(InputSchema):
     """Input schema for CARE Capability & Feasibility Mapper Agent."""
 
-    # Global required inputs
-    research_questions_path: str = Field(
-        ..., description="Path to research questions file"
+    research_question: str = Field(
+        ..., description="Research question content as a markdown string"
     )  # it is a md string containing 1 research question
-    slurm_template_path: str = Field(..., description="Path to SLURM template")  # not needed
-    cluster_it_pdf_path: str = Field(
-        ..., description="Path to cluster IT documentation PDF"
+    cluster_it_context: str = Field(
+        ..., description="Extracted cluster IT documentation content"
     )  # a constant thing. there is one pdf.
-    output_dir: str = Field(
-        ..., description="Output directory for the report"
-    )  # it is also a markdown with one report to the one research question
-    # just for sme to see and gate to next step
-
-    # CM1 model required inputs (flat)
-    cm1_code_path: str = Field(..., description="Path to CM1 source code")  # not necessary for now.
-    cm1_readme_path: str = Field(
-        ..., description="Path to CM1 README"
+    cm1_readme_context: str = Field(
+        ..., description="Extracted CM1 README content"
     )  # yes, needed. multiple files, namelist (important) and model
-
-    # none of these are needed
-    cm1_notes_path: str = Field(..., description="Path to CM1 notes")
-    cm1_sample_case_path: str = Field(..., description="Path to CM1 sample case")
-    cm1_namelist_dir: str = Field(..., description="Path to CM1 namelist directory")
-    cm1_namelist_filenames: list[str] = Field(..., description="CM1 namelist filenames")
-    cm1_run_script_path: str = Field(..., description="Path to CM1 run script")
-    cm1_logs_dir: str = Field(..., description="Path to CM1 logs directory")
-
-    # none for now. Optional model blocks
-    wrf: dict[str, Any] | None = Field(default=None, description="Optional WRF model configuration")
-    hwrf: dict[str, Any] | None = Field(default=None, description="Optional HWRF model configuration")
-    olam: dict[str, Any] | None = Field(default=None, description="Optional OLAM model configuration")
 
 
 class CapabilityFeasibilityMapperOutputSchema(OutputSchema):
