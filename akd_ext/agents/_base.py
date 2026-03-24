@@ -59,6 +59,8 @@ from akd._base.errors import (
 
 from akd.utils import PartialModel
 
+from akd_ext.agents._mixins import FileAttachmentMixin
+
 from akd_ext._types import AKDTool, OPENAI_TOOL_TYPES
 from akd_ext.mcp.converter import tool_converter
 
@@ -150,7 +152,9 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
         return RunConfig(trace_metadata=self.tracing_params or {})
 
 
-class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRoutingMixin, BaseAgent, StreamingMixin):
+class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
+    FileAttachmentMixin, OutputRoutingMixin, BaseAgent, StreamingMixin
+):
     """Base class for OpenAI Agents SDK based agents.
 
     Follows the akd-core BaseAgent template pattern:
@@ -454,6 +458,9 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](OutputRout
         - Direct mode (no tools, no union multi_tool): Runner.run() via get_response_async
         - Tool/union mode: consumes _run_engine_stream() watching for CompletedEvent
         """
+        # Resolve and inject file attachments before LLM call
+        await self._resolve_and_inject_files(run_context.messages, run_context)
+
         has_union = len(self.output_schema_resolved) > 1
         use_tool_loop = bool(self.config.tools) or (has_union and self.output_mode == "multi_tool")
 
