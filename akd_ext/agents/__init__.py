@@ -8,6 +8,13 @@ from akd_ext.agents.cmr_care import (
     CMRCareConfig,
 )
 
+from akd_ext.agents.gap import (
+    GapAgent,
+    GapAgentConfig,
+    GapAgentInputSchema,
+    GapAgentOutputSchema,
+)
+
 from akd_ext.agents.research_partner import (
     CapabilityFeasibilityMapperAgent,
     CapabilityFeasibilityMapperConfig,
@@ -34,6 +41,10 @@ __all__ = [
     "CMRCareAgentInputSchema",
     "CMRCareAgentOutputSchema",
     "CMRCareConfig",
+    "GapAgent",
+    "GapAgentConfig",
+    "GapAgentInputSchema",
+    "GapAgentOutputSchema",
     "CapabilityFeasibilityMapperAgent",
     "CapabilityFeasibilityMapperConfig",
     "CapabilityFeasibilityMapperInputSchema",
