@@ -459,7 +459,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         - Tool/union mode: consumes _run_engine_stream() watching for CompletedEvent
         """
         # Resolve and inject file attachments before LLM call
-        await self._resolve_and_inject_files(run_context.messages, run_context)
+        await self._resolve_and_inject_files(run_context)
 
         has_union = len(self.output_schema_resolved) > 1
         use_tool_loop = bool(self.config.tools) or (has_union and self.output_mode == "multi_tool")
@@ -484,7 +484,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
         # Resolve and inject file attachments before LLM call
-        await self._resolve_and_inject_files(run_context.messages, run_context)
+        await self._resolve_and_inject_files(run_context)
         async for event in super().astream(params=params, run_context=run_context, **kwargs):
             yield event
 

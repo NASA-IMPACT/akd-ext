@@ -27,16 +27,14 @@ class FileAttachmentMixin:
 
     async def _resolve_and_inject_files(
         self,
-        messages: list[dict[str, Any]],
         run_context: RunContext,
     ) -> None:
         """Resolve file attachments and inject content into the last user message."""
         attachments: list[FileAttachment] = getattr(run_context, "file_attachments", [])
-        if not attachments:
+        if not attachments or not run_context:
             return
 
-        run_context.messages = messages or [{"role": "user", "content": []}]
-        messages = run_context.messages
+        messages: list[dict[str, Any]] = run_context.messages or [{"role": "user", "content": []}]
 
         # Find last user message and convert to multipart content array
         for msg in reversed(messages):
@@ -50,3 +48,5 @@ class FileAttachmentMixin:
                     parts.extend(await resolver.resolve(att))
                 msg["content"] = parts
                 break
+
+        run_context.messages = messages
