@@ -476,6 +476,18 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
 
         raise UnexpectedModelBehavior("Tool loop completed without producing output")
 
+    async def astream(
+        self,
+        params: Any,
+        run_context: RunContext | None = None,
+        **kwargs: Any,
+    ) -> AsyncIterator[StreamEvent]:
+        # Resolve and inject file attachments before LLM call
+        if run_context is not None:
+            await self._resolve_and_inject_files(run_context.messages, run_context)
+        async for event in super().astream(params=params, run_context=run_context, **kwargs):
+            yield event
+
     # ── Output resolution ────────────────────────────────────────────
 
     def _resolve_final_output(self, final_output: Any) -> OutSchema:

@@ -31,7 +31,10 @@ class FileAttachmentMixin:
         run_context: RunContext,
     ) -> None:
         """Resolve file attachments and inject content into the last user message."""
+
         attachments: list[FileAttachment] = getattr(run_context, "file_attachments", [])
+        print("??????", attachments)
+
         if not attachments:
             return
 
@@ -47,3 +50,7 @@ class FileAttachmentMixin:
                     parts.extend(await resolver.resolve(att))
                 msg["content"] = parts
                 break
+
+        print("2*******")
+        print(messages)
+        print("*******")
