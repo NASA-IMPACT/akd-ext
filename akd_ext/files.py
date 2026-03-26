@@ -46,7 +46,7 @@ class OpenAIFileResolver:
     """Passes file_id natively to OpenAI — no fetching needed."""
 
     async def resolve(self, attachment: OpenAIFileAttachment) -> list[dict[str, Any]]:
-        return [{"type": "file", "file": {"file_id": attachment.openai_file_id}}]
+        return [{"type": "input_file", "file_id": attachment.openai_file_id}]
 
 
 class URLFileResolver:

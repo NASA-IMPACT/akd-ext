@@ -35,6 +35,9 @@ class FileAttachmentMixin:
         if not attachments:
             return
 
+        run_context.messages = messages or [{"role": "user", "content": []}]
+        messages = run_context.messages
+
         # Find last user message and convert to multipart content array
         for msg in reversed(messages):
             if msg.get("role") == "user":
