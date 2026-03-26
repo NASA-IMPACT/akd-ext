@@ -74,8 +74,8 @@ class URLFileResolver:
             encoded = base64.b64encode(raw).decode("utf-8")
             return [
                 {
-                    "type": "image_url",
-                    "image_url": {"url": f"data:{attachment.mime_type};base64,{encoded}"},
+                    "type": "input_image",
+                    "image_url": f"data:{attachment.mime_type};base64,{encoded}",
                 }
             ]
 
