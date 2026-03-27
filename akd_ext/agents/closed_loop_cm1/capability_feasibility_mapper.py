@@ -14,8 +14,10 @@ Public API:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
+from agents import Agent
 from pydantic import Field
 
 from akd._base import (
@@ -27,6 +29,14 @@ from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
 )
+
+# -----------------------------------------------------------------------------
+# Static context loaded from data files
+# -----------------------------------------------------------------------------
+
+_DATA_DIR = Path(__file__).parent / "data"
+CLUSTER_IT_CONTEXT = (_DATA_DIR / "cluster_it.md").read_text()
+CM1_README_CONTEXT = (_DATA_DIR / "cm1_readme.md").read_text()
 
 
 # -----------------------------------------------------------------------------
@@ -347,7 +357,6 @@ from Step 10.
 """
 
 
-
 # -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
@@ -357,6 +366,14 @@ class CapabilityFeasibilityMapperConfig(OpenAIBaseAgentConfig):
     """Configuration for CARE Capability & Feasibility Mapper Agent."""
 
     system_prompt: str = Field(default=CAPABILITY_FEASIBILITY_MAPPER_SYSTEM_PROMPT)
+    cluster_it_context: str = Field(
+        default=CLUSTER_IT_CONTEXT,
+        description="Extracted text content from the Cluster IT infrastructure PDF describing available compute resources.",
+    )
+    cm1_readme_context: str = Field(
+        default=CM1_README_CONTEXT,
+        description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
+    )
     model_name: str = Field(default="gpt-5.4")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
@@ -372,14 +389,6 @@ class CapabilityFeasibilityMapperInputSchema(InputSchema):
     research_questions_md: str = Field(
         ...,
         description="Markdown string from the Gap Agent containing research question(s), hypotheses, variables, and causality guardrails.",
-    )
-    cm1_readme: str = Field(
-        default="",
-        description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
-    )
-    cluster_it_pdf_content: str = Field(
-        default="",
-        description="Extracted text content from the Cluster IT infrastructure PDF describing available compute resources.",
     )
 
 
@@ -413,6 +422,17 @@ class CapabilityFeasibilityMapperAgent(
     input_schema = CapabilityFeasibilityMapperInputSchema
     output_schema = CapabilityFeasibilityMapperOutputSchema | TextOutput
     config_schema = CapabilityFeasibilityMapperConfig
+
+    def _create_agent(self) -> Agent:
+        agent = super()._create_agent()
+        extra = ""
+        if self.config.cluster_it_context:
+            extra += f"\n\n---\n\n## Cluster IT Context\n\n{self.config.cluster_it_context}"
+        if self.config.cm1_readme_context:
+            extra += f"\n\n---\n\n## CM1 README Context\n\n{self.config.cm1_readme_context}"
+        if extra:
+            agent.instructions += extra
+        return agent
 
     def check_output(self, output) -> str | None:
         if isinstance(output, CapabilityFeasibilityMapperOutputSchema) and not output.report.strip():

@@ -16,8 +16,10 @@ Public API:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
+from agents import Agent
 from pydantic import BaseModel, Field
 
 from akd._base import (
@@ -29,6 +31,13 @@ from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
 )
+
+# -----------------------------------------------------------------------------
+# Static context loaded from data files
+# -----------------------------------------------------------------------------
+
+_DATA_DIR = Path(__file__).parent / "data"
+CM1_README_CONTEXT = (_DATA_DIR / "cm1_readme.md").read_text()
 
 
 # -----------------------------------------------------------------------------
@@ -196,6 +205,10 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
     """Configuration for Experiment Implementation Planner Agent (Stage 4A)."""
 
     system_prompt: str = Field(default=EXPERIMENT_IMPLEMENTER_SYSTEM_PROMPT)
+    cm1_readme_context: str = Field(
+        default=CM1_README_CONTEXT,
+        description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
+    )
     model_name: str = Field(default="gpt-5.4")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
@@ -210,9 +223,6 @@ class ExperimentImplementationInputSchema(InputSchema):
 
     stage_3_spec: str = Field(
         ..., description="Stage-3 workflow specification markdown with experiment matrix and control definition."
-    )
-    cm1_readme: str = Field(
-        default="", description="CM1 model documentation including namelist reference and model capabilities."
     )
 
 
@@ -251,6 +261,12 @@ class ExperimentImplementationAgent(
     input_schema = ExperimentImplementationInputSchema
     output_schema = ExperimentImplementationOutputSchema | TextOutput
     config_schema = ExperimentImplementationConfig
+
+    def _create_agent(self) -> Agent:
+        agent = super()._create_agent()
+        if self.config.cm1_readme_context:
+            agent.instructions += f"\n\n---\n\n## CM1 README Context\n\n{self.config.cm1_readme_context}"
+        return agent
 
     def check_output(self, output) -> str | None:
         if isinstance(output, ExperimentImplementationOutputSchema):

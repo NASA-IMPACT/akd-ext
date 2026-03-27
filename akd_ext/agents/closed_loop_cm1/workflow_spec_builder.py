@@ -14,8 +14,10 @@ Public API:
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Literal
 
+from agents import Agent
 from pydantic import Field
 
 from akd._base import (
@@ -27,6 +29,13 @@ from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
 )
+
+# -----------------------------------------------------------------------------
+# Static context loaded from data files
+# -----------------------------------------------------------------------------
+
+_DATA_DIR = Path(__file__).parent / "data"
+CM1_README_CONTEXT = (_DATA_DIR / "cm1_readme.md").read_text()
 
 
 # -----------------------------------------------------------------------------
@@ -174,6 +183,10 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
     """Configuration for Workflow Spec Builder Agent."""
 
     system_prompt: str = Field(default=WORKFLOW_SPEC_BUILDER_SYSTEM_PROMPT)
+    cm1_readme_context: str = Field(
+        default=CM1_README_CONTEXT,
+        description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
+    )
     model_name: str = Field(default="gpt-5.4")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
@@ -187,13 +200,12 @@ class WorkflowSpecBuilderInputSchema(InputSchema):
     """Input schema for Workflow Spec Builder Agent."""
 
     stage_1_hypotheses: str = Field(
-        ..., description="Gap Agent output — research hypotheses markdown with RQ IDs, variables, and causality guardrails."
+        ...,
+        description="Gap Agent output — research hypotheses markdown with RQ IDs, variables, and causality guardrails.",
     )
     stage_2_feasibility: str = Field(
-        ..., description="Stage-2 feasibility report from CapabilityFeasibilityMapperAgent with capability analysis and scoring."
-    )
-    cm1_readme: str = Field(
-        default="", description="CM1 model documentation including namelist reference and model capabilities."
+        ...,
+        description="Stage-2 feasibility report from CapabilityFeasibilityMapperAgent with capability analysis and scoring.",
     )
 
 
@@ -203,9 +215,7 @@ class WorkflowSpecBuilderOutputSchema(OutputSchema):
     Use TextOutput for clarification questions or when inputs are insufficient."""
 
     __response_field__ = "spec"
-    spec: str = Field(
-        default="", description="Full markdown workflow specification document."
-    )
+    spec: str = Field(default="", description="Full markdown workflow specification document.")
     reasoning: str = Field(
         default="", description="Structured reasoning behind design choices, assumptions, and feasibility handling."
     )
@@ -227,6 +237,12 @@ class WorkflowSpecBuilderAgent(OpenAIBaseAgent[WorkflowSpecBuilderInputSchema, W
     input_schema = WorkflowSpecBuilderInputSchema
     output_schema = WorkflowSpecBuilderOutputSchema | TextOutput
     config_schema = WorkflowSpecBuilderConfig
+
+    def _create_agent(self) -> Agent:
+        agent = super()._create_agent()
+        if self.config.cm1_readme_context:
+            agent.instructions += f"\n\n---\n\n## CM1 README Context\n\n{self.config.cm1_readme_context}"
+        return agent
 
     def check_output(self, output) -> str | None:
         if isinstance(output, WorkflowSpecBuilderOutputSchema) and not output.spec.strip():
