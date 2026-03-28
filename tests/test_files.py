@@ -61,7 +61,7 @@ class TestOpenAIFileResolver:
         parts = await resolver.resolve(att)
 
         assert len(parts) == 1
-        assert parts[0] == {"type": "file", "file": {"file_id": "file-abc123"}}
+        assert parts[0] == {"type": "input_file", "file_id": "file-abc123"}
 
 
 # ── URLFileResolver Tests ───────────────────────────────────────────
@@ -98,9 +98,9 @@ class TestURLFileResolver:
         parts = await resolver.resolve(att)
 
         assert len(parts) == 1
-        assert parts[0]["type"] == "image_url"
+        assert parts[0]["type"] == "input_image"
         expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
-        assert parts[0]["image_url"]["url"] == f"data:image/png;base64,{expected_b64}"
+        assert parts[0]["image_url"] == f"data:image/png;base64,{expected_b64}"
 
     @pytest.mark.asyncio
     async def test_resolve_with_custom_client(self):
