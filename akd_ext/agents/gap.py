@@ -111,6 +111,7 @@ GAP_AGENT_SYSTEM_PROMPT = """
     Criteria: conceptual value, intra-corpus novelty, impact (feasibility excluded)
     Confirm with the user and then produce output.
     OUTPUT FORMAT
+    When using markdown headings, always include a space after the # characters (e.g., "## 1. Section Title" not "##1. Section Title").
     Produce human-readable structured outputs.
     1. Ranked Gap List
     For each gap, include:

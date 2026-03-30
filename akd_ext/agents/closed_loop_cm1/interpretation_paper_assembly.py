@@ -390,6 +390,7 @@ Report generation is triggered when `figures_dir` is provided.
 
 ## OUTPUT FORMAT
 
+When using markdown headings, always include a space after the # characters (e.g., "## 1. Section Title" not "##1. Section Title").
 The agent produces artifacts in the following order:
 
 1. **YAML Manifest**

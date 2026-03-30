@@ -137,6 +137,7 @@ CODE_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """
   If confidence is below threshold, return zero repositories with explanation.
 
   OUTPUT FORMAT
+  When using markdown headings, always include a space after the # characters (e.g., "## 1. Section Title" not "##1. Section Title").
   Authoritative Output (Mandatory)
   A single deterministic JSON object conforming to the fixed schema, containing:
   Zero to six repositories.

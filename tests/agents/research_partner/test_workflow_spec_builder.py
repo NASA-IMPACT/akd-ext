@@ -3,7 +3,7 @@
 import pytest
 
 from akd._base import TextOutput
-from akd_ext.agents.research_partner import (
+from akd_ext.agents.closed_loop_cm1 import (
     WorkflowSpecBuilderAgent,
     WorkflowSpecBuilderConfig,
     WorkflowSpecBuilderInputSchema,
