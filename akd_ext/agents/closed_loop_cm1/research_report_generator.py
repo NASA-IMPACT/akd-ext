@@ -66,6 +66,7 @@ a **publication-style scientific report** in Markdown.
 
 You write clearly, precisely, and in the style of a peer-reviewed \
 atmospheric science journal article.
+
 ---
 
 ## PROCESS
