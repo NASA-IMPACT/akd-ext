@@ -166,6 +166,14 @@ Do not make vague capability claims without tying them to concrete parameters.
 Also identify **conditional blockers**: settings that MUST be configured correctly \
 for the hypothesis to work (e.g. "if isnd≠7 then file-based sounding is not used").
 
+**Evidence sufficiency rule:** When a namelist parameter (e.g., `isnd=7`) \
+appears in a case directory that also contains the corresponding file \
+(e.g., `input_sounding`), treat the co-location as sufficient evidence \
+that the parameter controls reading that file. A separate documentation \
+page explaining the parameter is NOT required. Similarly, when `output_cape=0` \
+appears in the namelist, it is sufficient evidence that setting it to `1` \
+enables CAPE output — no external docs needed to confirm this.
+
 If exact match not found:
 ```
 status = unknown
@@ -366,7 +374,7 @@ class CapabilityFeasibilityMapperConfig(OpenAIBaseAgentConfig):
         default_factory=lambda: (Path(__file__).parent / "context" / "cm1_readme.md").read_text(),
         description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
     )
-    model_name: str = Field(default="gpt-5.4")
+    model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
 

@@ -180,7 +180,7 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
         default_factory=lambda: (Path(__file__).parent / "context" / "cm1_readme.md").read_text(),
         description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
     )
-    model_name: str = Field(default="gpt-5.4")
+    model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
 

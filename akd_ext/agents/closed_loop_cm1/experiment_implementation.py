@@ -148,7 +148,8 @@ Return structured output with:
 1. **experiments**: List of ``ExperimentSpec`` objects, one per experiment, each containing a list of ``FileEdit`` objects.
 2. **workspace_name**: Suggested workspace directory name.
 3. **base_template**: CM1 case template directory name (single value, same for all experiments).
-4. **report**: Markdown implementation summary.
+4. **experiment_ids**: Comma-separated string of all experiment IDs (e.g. ``"EXP_RQ-001_baseline,EXP_RQ-001_001,EXP_RQ-001_002"``). Must match the ``experiment_id`` values in the experiments list exactly.
+5. **report**: Markdown implementation summary.
 """
 
 
@@ -202,7 +203,7 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
         default_factory=lambda: (Path(__file__).parent / "context" / "cm1_readme.md").read_text(),
         description="CM1 model documentation including namelist reference and model capabilities. Content from static .txt file.",
     )
-    model_name: str = Field(default="gpt-5.4")
+    model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
 
@@ -232,6 +233,12 @@ class ExperimentImplementationOutputSchema(OutputSchema):
         ...,
         description="CM1 case template directory name from Stage 3 spec (e.g. 'hurricane_axisymmetric', 'supercell'). "
         "Same for all experiments. The Python engine uses this to fetch the correct template files.",
+    )
+    experiment_ids: str = Field(
+        ...,
+        description="Comma-separated experiment IDs matching the experiments list "
+        "(e.g. 'EXP_RQ-001_baseline,EXP_RQ-001_001,EXP_RQ-001_002'). "
+        "Used by downstream stages to check status and fetch figures.",
     )
     report: str = Field(default="", description="Markdown implementation summary report")
 
