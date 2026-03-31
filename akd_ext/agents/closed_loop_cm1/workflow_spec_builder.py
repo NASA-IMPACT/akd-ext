@@ -182,6 +182,12 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
     )
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
+    description: str = Field(
+        default="Stage-3 experiment design agent that converts research questions into scientifically "
+        "traceable, feasibility-aware simulation workflow specifications for CM1 or WRF. Proposes "
+        "baseline plus perturbation experiments, parameter sweeps, and namelist changes as execution-ready "
+        "Markdown documents."
+    )
 
 
 # -----------------------------------------------------------------------------

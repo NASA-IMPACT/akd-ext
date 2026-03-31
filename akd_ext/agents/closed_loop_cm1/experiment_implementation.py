@@ -226,6 +226,12 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     tools: list[Any] = Field(default_factory=get_default_impl_tools)
+    description: str = Field(
+        default="Stage-4A implementation planner that translates Stage-3 workflow specs into structured "
+        "FileEdit JSON and submits experiment batches as jobs via MCP tool calls. Produces deterministic "
+        "edit definitions (namelist_param, sounding_profile, file_replace) without directly creating files "
+        "or executing commands."
+    )
 
 
 # -----------------------------------------------------------------------------

@@ -424,6 +424,11 @@ class InterpretationPaperAssemblyConfig(OpenAIBaseAgentConfig):
     system_prompt: str = Field(default=INTERPRETATION_PAPER_ASSEMBLY_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
+    description: str = Field(
+        default="Stage-5 interpretation and paper assembly agent that transforms CM1 atmospheric model "
+        "experiment outputs into structured scientific analysis artifacts including YAML manifests, "
+        "executable Jupyter analysis notebooks, and publication-style Markdown reports with matplotlib figures."
+    )
 
 
 # -----------------------------------------------------------------------------

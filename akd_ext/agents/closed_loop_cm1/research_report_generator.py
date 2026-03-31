@@ -11,6 +11,7 @@ Public API:
     ResearchReportGeneratorOutputSchema,
     ResearchReportGeneratorConfig
 """
+
 from __future__ import annotations
 
 import os
@@ -236,6 +237,11 @@ class ResearchReportGeneratorConfig(OpenAIBaseAgentConfig):
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     tools: list[Any] = Field(default_factory=get_default_report_tools)
+    description: str = Field(
+        default="Stage-5 report generator that produces publication-style scientific reports interpreting "
+        "CM1 experiment results. Checks job status via MCP tools, fetches figure URLs, and generates "
+        "Markdown reports with Abstract, Methodology, Results, Discussion, and Conclusion sections."
+    )
 
 
 # -----------------------------------------------------------------------------
