@@ -1,11 +1,8 @@
 """Experiment Implementation Planner Agent (Stage 4A) for CM1 workflows.
 
 This module implements the Stage-4A Experiment Implementation Planner, which
-translates Stage-3 workflow specs into structured FileEdit JSON that a
-deterministic Python engine can execute to build experiment workspaces.
-
-The LLM produces structured output only — it does NOT create files, run
-commands, or execute simulations.
+translates Stage-3 workflow specs into structured FileEdit JSON and submits
+the experiment batch as a job via MCP tool call.
 
 Public API:
     ExperimentImplementationAgent,
@@ -16,10 +13,11 @@ Public API:
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
-from agents import Agent
+from agents import Agent, HostedMCPTool
 from pydantic import BaseModel, Field
 
 from akd._base import (
@@ -27,6 +25,7 @@ from akd._base import (
     OutputSchema,
     TextOutput,
 )
+from akd_ext._types import OpenAITool
 from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
@@ -136,7 +135,9 @@ Produce a markdown implementation report summarising:
    b. Express each change as a ``FileEdit``.
    c. For sounding changes, translate the Stage 3 delta instructions into ``sounding_profile`` edits with precise numerical values.
 3. **Ensure inheritance**: Perturbation experiments must include all baseline edits plus their own.
-4. **Produce the report**.
+4. **Submit the job**: Call the ``job_submit`` tool with a payload containing \
+``experiments``, ``workspace_name``, and ``base_template``. The tool returns a ``job_id``.
+5. **Return output**: Include the ``job_id`` from the tool response and a markdown report.
 
 ---
 
@@ -145,11 +146,10 @@ Produce a markdown implementation report summarising:
 When using markdown headings, always include a space after the # characters (e.g., "## 1. Section Title" not "##1. Section Title").
 Return structured output with:
 
-1. **experiments**: List of ``ExperimentSpec`` objects, one per experiment, each containing a list of ``FileEdit`` objects.
-2. **workspace_name**: Suggested workspace directory name.
-3. **base_template**: CM1 case template directory name (single value, same for all experiments).
-4. **experiment_ids**: Comma-separated string of all experiment IDs (e.g. ``"EXP_RQ-001_baseline,EXP_RQ-001_001,EXP_RQ-001_002"``). Must match the ``experiment_id`` values in the experiments list exactly.
-5. **report**: Markdown implementation summary.
+1. **job_id**: The job ID returned by the ``job_submit`` tool. This is critical — \
+downstream Stage 5 uses it to check status and fetch figures.
+2. **report**: Markdown implementation summary including total experiments, \
+per-experiment change summary, warnings, and the job_id for reference.
 """
 
 
@@ -195,6 +195,26 @@ class ExperimentSpec(BaseModel):
 # -----------------------------------------------------------------------------
 
 
+def get_default_impl_tools() -> list[OpenAITool]:
+    """Default MCP tools for Stage 4A. Uses job_submit to submit experiments."""
+    url = os.environ.get("EXPERIMENT_STATUS_MCP_URL", "")
+    if not url:
+        return []  # No MCP server configured — Phase 2 will be skipped
+    return [
+        HostedMCPTool(
+            tool_config={
+                "type": "mcp",
+                "server_label": "Job_Management_Server",
+                "allowed_tools": ["job_submit"],
+                "require_approval": "never",
+                "server_description": "MCP server for submitting CM1 experiment jobs to Temporal",
+                "server_url": url,
+                "authorization": os.environ.get("EXPERIMENT_STATUS_MCP_KEY"),
+            }
+        ),
+    ]
+
+
 class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
     """Configuration for Experiment Implementation Planner Agent (Stage 4A)."""
 
@@ -205,6 +225,7 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
     )
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
+    tools: list[Any] = Field(default_factory=get_default_impl_tools)
 
 
 # -----------------------------------------------------------------------------
@@ -221,25 +242,12 @@ class ExperimentImplementationInputSchema(InputSchema):
 
 
 class ExperimentImplementationOutputSchema(OutputSchema):
-    """Structured output from the Experiment Implementation Planner.
-    Contains the list of experiments with their FileEdit objects, a workspace name,
-    and an implementation summary report.
+    """Output from the Experiment Implementation Planner.
+    Contains the job_id from the MCP job_submit call and an implementation report.
     Use TextOutput for clarification questions or when inputs are insufficient."""
 
     __response_field__ = "report"
-    experiments: list[ExperimentSpec] = Field(..., description="List of experiment specifications with file edits")
-    workspace_name: str = Field(..., description="Suggested workspace directory name")
-    base_template: str = Field(
-        ...,
-        description="CM1 case template directory name from Stage 3 spec (e.g. 'hurricane_axisymmetric', 'supercell'). "
-        "Same for all experiments. The Python engine uses this to fetch the correct template files.",
-    )
-    experiment_ids: str = Field(
-        ...,
-        description="Comma-separated experiment IDs matching the experiments list "
-        "(e.g. 'EXP_RQ-001_baseline,EXP_RQ-001_001,EXP_RQ-001_002'). "
-        "Used by downstream stages to check status and fetch figures.",
-    )
+    job_id: str = Field(..., description="Job ID returned by the job_submit MCP tool after submitting experiments.")
     report: str = Field(default="", description="Markdown implementation summary report")
 
 
@@ -270,8 +278,8 @@ class ExperimentImplementationAgent(
 
     def check_output(self, output) -> str | None:
         if isinstance(output, ExperimentImplementationOutputSchema):
-            if not output.experiments:
-                return "No experiments produced. Parse the Stage 3 spec and produce ExperimentSpec objects."
+            if not output.job_id.strip():
+                return "job_id is empty. You must call job_submit and include the returned job_id."
             if not output.report.strip():
                 return "Report is empty. Provide an implementation summary."
         return super().check_output(output)

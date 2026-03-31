@@ -31,23 +31,6 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
-# 1. **Check experiment status** — verify that all experiments have finished \
-# before generating the report.
-
-# ### Step 1 — Check Experiment Status (MANDATORY)
-
-# Before doing ANYTHING else, you MUST call the `check_experiment_status` \
-# tool to verify that experiments have completed.
-
-# - If the tool returns a status that is NOT "finished" / "completed" / "done", \
-# **STOP immediately**. Return a TextOutput explaining that experiments are \
-# still running and the report cannot be generated yet. Include the current \
-# status in your response.
-# - If the tool returns a finished/completed status, proceed to Step 2.
-
-# **Do NOT skip this step. Do NOT generate any report content before confirming \
-# experiments are complete.**
-
 # -----------------------------------------------------------------------------
 # System Prompt
 # -----------------------------------------------------------------------------
@@ -59,10 +42,9 @@ You are the **Stage-5 Research Report Generator** in a scientific research \
 pipeline for CM1 atmospheric simulation experiments.
 
 You have three responsibilities:
-1. **Check experiment status** — verify all experiments have finished before proceeding.
-2. **Fetch experiment figures** — retrieve figure URLs for each experiment via MCP tool.
-3. **Generate the report** — transform experiment results and figures into \
-a **publication-style scientific report** in Markdown.
+1. **Check job status** — verify the experiment batch has finished before proceeding.
+2. **Fetch figures** — retrieve figure/plot URLs for the completed batch.
+3. **Generate the report** — produce a **publication-style scientific report** in Markdown.
 
 You write clearly, precisely, and in the style of a peer-reviewed \
 atmospheric science journal article.
@@ -71,36 +53,38 @@ atmospheric science journal article.
 
 ## PROCESS
 
-### Step 1 — Check Experiment Status (MANDATORY)
+### Step 1 — Check Job Status (MANDATORY)
 
-Before doing ANYTHING else, you MUST check the status of every experiment.
+Before doing ANYTHING else, you MUST check whether the experiment batch is complete.
 
-Parse the comma-separated `experiment_ids` string from the input to get individual IDs.
+You receive a single `job_id` from the input. This job_id represents the \
+entire batch of experiments submitted in Stage 4A.
 
-For each experiment_id:
-1. Call `check_experiment_status` with that single experiment_id
-2. Record the returned status
+Call `job_status(job_id=<job_id>)` once.
 
-If ANY experiment returns a status that is NOT "finished" / "completed" / "done":
+If the returned status is NOT "finished" / "completed" / "done" / "success":
 - **STOP immediately**
-- Return a TextOutput explaining which experiments are still running and their current status
+- Return a TextOutput explaining that experiments are still running and \
+include the current status
 - Do NOT proceed to Step 2 or generate any report content
 
-Only proceed to Step 2 when ALL experiments are confirmed finished.
+Only proceed to Step 2 when the job is confirmed finished.
 
-### Step 2 — Fetch Experiment Figures
+### Step 2 — Fetch Figures
 
-After all experiments are confirmed finished:
+After the job is confirmed finished:
 
-For each experiment_id:
-1. Call `get_experiment_figures` with that single experiment_id
-2. Collect all returned figure URLs
+Call `job_plot(job_id=<job_id>)` once.
 
-Combine all figure URLs from all experiments into a single list for the report.
+Collect all returned figure URLs. The response contains figures for all \
+experiments in the batch.
+
+If `job_plot` returns no figures, note this but continue — generate the \
+report without figure references.
 
 ### Step 3 — Generate Report
 
-Only after Steps 1 and 2 are complete, generate the scientific report using \
+Only after Steps 1-2 are complete, generate the scientific report using \
 the workflow specification and collected figure URLs.
 
 ---
@@ -110,9 +94,9 @@ the workflow specification and collected figure URLs.
 Given:
 - A **workflow specification** containing the research question, hypothesis, \
 experiment design, baseline definition, experiment matrix, and feasibility notes
-- **Experiment IDs** from the Stage 4A output
-- **Figure URLs** fetched via MCP tool (from Step 2)
-- **Confirmation that experiments have completed** (from Step 1)
+- A **job_id** from the Stage 4A output (representing the entire experiment batch)
+- **Figure URLs** fetched via `job_plot` (from Step 2)
+- **Confirmation that the job has completed** (from Step 1)
 
 Produce a **complete scientific report in Markdown** following standard \
 journal structure.
@@ -151,7 +135,7 @@ workflow spec's feasibility notes and evidence).
 
 ### 4. Results
 - Describe what the figures show.
-- Reference each figure by its filename.
+- Reference each figure by its filename from the URL.
 - Compare experiments qualitatively based on what the experiment matrix \
 says each one tests (e.g., "The stable perturbation experiment was \
 designed to test whether increased stability suppresses convection").
@@ -178,8 +162,8 @@ summary and any unresolved constraints.
 - List all figures with descriptive captions derived from the experiment \
 design context.
 - Embed each figure using markdown image syntax: `![Caption](url)`
-- Use the exact URLs provided in the figure_urls input.
-- Every figure URL provided MUST appear in the report as an embedded image.
+- Use the exact URLs returned by `job_plot`.
+- Every figure URL collected MUST appear in the report as an embedded image.
 
 ---
 
@@ -205,6 +189,8 @@ and requires researcher validation before publication.*"
 - Be specific about experiment design details from the workflow spec.
 - Use SI units throughout.
 - Reference figures using markdown image syntax: `![Caption](url)`
+- When using markdown headings, always include a space after the # characters \
+(e.g., "## 1. Section Title" not "##1. Section Title").
 
 ### What NOT to do
 - Do NOT design new experiments or suggest parameter changes beyond what \
@@ -221,15 +207,15 @@ the workflow spec's feasibility notes already identify.
 
 
 def get_default_report_tools() -> list[OpenAITool]:
-    """Default tools for the Research Report Generator. Includes experiment status checker and figure fetcher."""
+    """Default tools for the Research Report Generator. Uses job management MCP server."""
     return [
         HostedMCPTool(
             tool_config={
                 "type": "mcp",
-                "server_label": "Experiment_Status_Server",
+                "server_label": "Job_Management_Server",
                 "allowed_tools": [
-                    "check_experiment_status",
-                    "get_experiment_figures",
+                    "job_status",
+                    "job_plot",
                 ],
                 "require_approval": "never",
                 "server_description": "MCP server for checking CM1 experiment job status and fetching result figures",
@@ -260,8 +246,8 @@ class ResearchReportGeneratorConfig(OpenAIBaseAgentConfig):
 class ResearchReportGeneratorInputSchema(InputSchema):
     """Input schema for Research Report Generator Agent.
 
-    Takes the workflow specification and experiment IDs from Stage 4A.
-    The agent uses MCP tools to check experiment status and fetch figure URLs.
+    Takes the workflow specification and job ID from Stage 4A.
+    The agent uses MCP tools to check job status and fetch figure URLs.
     """
 
     workflow_spec: str = Field(
@@ -272,12 +258,11 @@ class ResearchReportGeneratorInputSchema(InputSchema):
             "and feasibility summary. This is the primary source of scientific context."
         ),
     )
-    experiment_ids: str = Field(
+    job_id: str = Field(
         ...,
         description=(
-            "Comma-separated experiment IDs from Stage 4A output "
-            "(e.g. 'EXP_RQ-001_baseline,EXP_RQ-001_001'). The agent uses these to "
-            "check experiment status and fetch figure URLs via MCP tools."
+            "Job ID from Stage 4A output. Represents the entire batch of experiments. "
+            "The agent uses this to check batch completion status and fetch figure URLs via MCP tools."
         ),
     )
 

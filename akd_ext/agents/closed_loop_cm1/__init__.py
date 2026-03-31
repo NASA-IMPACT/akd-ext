@@ -19,8 +19,6 @@ from akd_ext.agents.closed_loop_cm1.experiment_implementation import (
     ExperimentImplementationConfig,
     ExperimentImplementationInputSchema,
     ExperimentImplementationOutputSchema,
-    FileEdit,
-    ExperimentSpec,
 )
 
 from akd_ext.agents.closed_loop_cm1.research_report_generator import (
@@ -50,8 +48,6 @@ __all__ = [
     "ExperimentImplementationConfig",
     "ExperimentImplementationInputSchema",
     "ExperimentImplementationOutputSchema",
-    "FileEdit",
-    "ExperimentSpec",
     "ResearchReportGeneratorAgent",
     "ResearchReportGeneratorConfig",
     "ResearchReportGeneratorInputSchema",
