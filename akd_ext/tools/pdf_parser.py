@@ -59,23 +59,27 @@ def _normalize_url_or_path(url_or_path: str) -> str:
         return local_path
     return as_uri
 
-async def _run_akd_simple(url_or_path: str) -> ScraperToolOutputSchema:
-    scraper = SimplePDFScraper()
+async def _run_akd_simple(
+    url_or_path: str, config: dict[str, Any] | None = None
+) -> ScraperToolOutputSchema:
+    scraper = SimplePDFScraper(config=config)
     params = scraper.input_schema(url=_normalize_url_or_path(url_or_path))
-    return await scraper._arun(params)
+    return await scraper.arun(params)
 
 
-async def _run_akd_docling(url_or_path: str, mode: Mode) -> ScraperToolOutputSchema:
+async def _run_akd_docling(
+    url_or_path: str, mode: Mode, config: DoclingScraperConfig | None = None
+) -> ScraperToolOutputSchema:
     if mode == "fast":
-        cfg = DoclingScraperConfig(pdf_mode="fast", do_table_structure=False, use_ocr=False)
+        default_cfg = DoclingScraperConfig(pdf_mode="fast", do_table_structure=False, use_ocr=False)
     elif mode == "accurate":
-        cfg = DoclingScraperConfig(pdf_mode="accurate", do_table_structure=True, use_ocr=False)
+        default_cfg = DoclingScraperConfig(pdf_mode="accurate", do_table_structure=True, use_ocr=False)
     else:
-        cfg = DoclingScraperConfig(pdf_mode="accurate", do_table_structure=True, use_ocr=True)
+        default_cfg = DoclingScraperConfig(pdf_mode="accurate", do_table_structure=True, use_ocr=True)
 
-    scraper = DoclingScraper(cfg)
+    scraper = DoclingScraper(config=config or default_cfg)
     params = scraper.input_schema(url=_normalize_url_or_path(url_or_path))
-    return await scraper._arun(params)
+    return await scraper.arun(params)
 
 
 def _scraper_to_result(out: ScraperToolOutputSchema) -> dict[str, Any]:
