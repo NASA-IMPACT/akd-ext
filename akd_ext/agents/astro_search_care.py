@@ -4,7 +4,7 @@ This module implements the Astro Data Search Agent
 for discovering astronomical datasets via Astroquery and ADS.
 
 Public API:
-    AstroSearchAgent, AstroSearchAgentInputSchema, AstroSearchAgentOutputSchema, AstroSearchConfig
+    AstroDataSearchAgent, AstroDataSearchAgentInputSchema, AstroDataSearchAgentOutputSchema, AstroDataSearchAgentConfig
 """
 
 from __future__ import annotations
@@ -26,6 +26,8 @@ from akd_ext.agents._base import (
     OpenAIBaseAgent,
     OpenAIBaseAgentConfig,
 )
+
+from loguru import logger
 
 
 # -----------------------------------------------------------------------------
@@ -380,9 +382,14 @@ def get_default_astro_tools() -> list[OpenAITool]:
     ]
 
 
-class AstroSearchConfig(OpenAIBaseAgentConfig):
+class AstroDataSearchAgentConfig(OpenAIBaseAgentConfig):
     """Configuration for Astro Data Search Agent."""
 
+    description: str = Field(
+        default="Astrophysics dataset discovery agent for finding astronomical data across NASA archives "
+        "(MAST, HEASARC, IRSA) via Astroquery and ADS. Supports object-based, coordinate-based, "
+        "literature-driven, and event-driven search patterns for researchers at all experience levels."
+    )
     system_prompt: str = Field(default=ASTRO_SEARCH_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
@@ -394,13 +401,13 @@ class AstroSearchConfig(OpenAIBaseAgentConfig):
 # -----------------------------------------------------------------------------
 
 
-class AstroSearchAgentInputSchema(InputSchema):
+class AstroDataSearchAgentInputSchema(InputSchema):
     """Input schema for Astro Data Search Agent."""
 
     query: str = Field(..., description="Astronomical query for dataset discovery")
 
 
-class AstroSearchAgentOutputSchema(OutputSchema):
+class AstroDataSearchAgentOutputSchema(OutputSchema):
     """Output schema for Astro Data Search Agent."""
 
     __response_field__ = "result"
@@ -412,15 +419,20 @@ class AstroSearchAgentOutputSchema(OutputSchema):
 # -----------------------------------------------------------------------------
 
 
-class AstroSearchAgent(OpenAIBaseAgent[AstroSearchAgentInputSchema, AstroSearchAgentOutputSchema]):
-    """Astro Data Search Agent for discovering astronomical datasets via Astroquery and ADS."""
+class AstroDataSearchAgent(OpenAIBaseAgent[AstroDataSearchAgentInputSchema, AstroDataSearchAgentOutputSchema]):
+    """Astro Data Search Agent for discovering astronomical datasets via Astroquery and ADS.
 
-    input_schema = AstroSearchAgentInputSchema
-    output_schema = AstroSearchAgentOutputSchema | TextOutput
-    config_schema = AstroSearchConfig
+
+
+    The agent's artifact is produced by CARE process: https://ntrs.nasa.gov/citations/20260000926
+    """
+
+    input_schema = AstroDataSearchAgentInputSchema
+    output_schema = AstroDataSearchAgentOutputSchema | TextOutput
+    config_schema = AstroDataSearchAgentConfig
 
     def check_output(self, output) -> str | None:
-        if isinstance(output, AstroSearchAgentOutputSchema) and not output.result.strip():
+        if isinstance(output, AstroDataSearchAgentOutputSchema) and not output.result.strip():
             return "Result is empty. Provide search reasoning and details."
         return super().check_output(output)
 
@@ -429,10 +441,11 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        agent = AstroSearchAgent(AstroSearchConfig(debug=True))
+        agent = AstroDataSearchAgent(AstroDataSearchAgentConfig(debug=True))
+        logger.info(f"Agent description: {agent.description}")
         question = "Find X-ray observations of Crab Nebula"
 
-        async for event in agent.astream(AstroSearchAgentInputSchema(query=question)):
-            print(event)
+        async for event in agent.astream(AstroDataSearchAgentInputSchema(query=question)):
+            logger.info(event)
 
     asyncio.run(main())

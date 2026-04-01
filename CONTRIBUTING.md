@@ -130,10 +130,10 @@ Agents accept both **AKD tools** (`BaseTool` subclasses — auto-converted to Op
 
 ```python
 from akd.tools.human import HumanTool
-from akd_ext.agents import CMRCareAgent, CMRCareConfig
+from akd_ext.agents import CMRDataSearchAgent, CMRDataSearchAgentConfig
 from akd_ext.agents.cmr_care import get_default_cmr_tools
 
-agent = CMRCareAgent(config=CMRCareConfig(
+agent = CMRDataSearchAgent(config=CMRDataSearchAgentConfig(
     system_prompt="...(include guidance to ask for clarification when needed)...",
     tools=get_default_cmr_tools() + [HumanTool()],
 ))
@@ -141,7 +141,7 @@ agent = CMRCareAgent(config=CMRCareConfig(
 
 `HumanTool()` enables human-in-the-loop — when the LLM calls `ask_human`, the stream pauses with a `HUMAN_INPUT_REQUIRED` event and resumes when the caller provides a response via `RunContext`. See [docs/specs/HUMAN-IN-THE-LOOP.md](docs/specs/HUMAN-IN-THE-LOOP.md) for the full protocol.
 
-Reference implementation: `akd_ext/agents/cmr_care.py` (`CMRCareAgent`).
+Reference implementation: `akd_ext/agents/cmr_care.py` (`CMRDataSearchAgent`).
 
 ## Pull Requests
 

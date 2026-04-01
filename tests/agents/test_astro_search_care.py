@@ -4,10 +4,10 @@ import pytest
 
 from akd._base import TextOutput
 from akd_ext.agents.astro_search_care import (
-    AstroSearchAgent,
-    AstroSearchAgentInputSchema,
-    AstroSearchAgentOutputSchema,
-    AstroSearchConfig,
+    AstroDataSearchAgent,
+    AstroDataSearchAgentInputSchema,
+    AstroDataSearchAgentOutputSchema,
+    AstroDataSearchAgentConfig,
 )
 
 
@@ -27,10 +27,10 @@ async def test_astro_search_agent(query: str, reasoning_effort: str):
         query: Astronomical query to test
         reasoning_effort: CLI param --reasoning-effort (low/medium/high)
     """
-    config = AstroSearchConfig(reasoning_effort=reasoning_effort)
-    agent = AstroSearchAgent(config=config, debug=True)
-    result = await agent.arun(AstroSearchAgentInputSchema(query=query))
+    config = AstroDataSearchAgentConfig(reasoning_effort=reasoning_effort)
+    agent = AstroDataSearchAgent(config=config, debug=True)
+    result = await agent.arun(AstroDataSearchAgentInputSchema(query=query))
 
-    assert isinstance(result, (AstroSearchAgentOutputSchema, TextOutput))
-    if isinstance(result, AstroSearchAgentOutputSchema):
+    assert isinstance(result, (AstroDataSearchAgentOutputSchema, TextOutput))
+    if isinstance(result, AstroDataSearchAgentOutputSchema):
         assert result.result.strip()

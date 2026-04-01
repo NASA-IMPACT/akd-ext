@@ -4,7 +4,7 @@ This module implements the Planetary Data Search Agent
 for discovering datasets across NASA's Planetary Data System (PDS).
 
 Public API:
-    PDSSearchAgent, PDSSearchAgentInputSchema, PDSSearchAgentOutputSchema, PDSSearchConfig
+    PlanetaryDataSearchAgent, PlanetaryDataSearchAgentInputSchema, PlanetaryDataSearchAgentOutputSchema, PlanetaryDataSearchAgentConfig
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
+from loguru import logger
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -266,9 +267,14 @@ def get_default_pds_tools() -> list[OpenAITool]:
     ]
 
 
-class PDSSearchConfig(OpenAIBaseAgentConfig):
+class PlanetaryDataSearchAgentConfig(OpenAIBaseAgentConfig):
     """Configuration for Planetary Data Search Agent."""
 
+    description: str = Field(
+        default="Planetary science dataset discovery agent for NASA's Planetary Data System (PDS). "
+        "Searches across PDS node services (GEO, IMG, RMS, SBN, PPI, ATM) to find datasets and products "
+        "with stable identifiers and download locations for planetary science research."
+    )
     system_prompt: str = Field(default=PDS_SEARCH_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
@@ -280,13 +286,13 @@ class PDSSearchConfig(OpenAIBaseAgentConfig):
 # -----------------------------------------------------------------------------
 
 
-class PDSSearchAgentInputSchema(InputSchema):
+class PlanetaryDataSearchAgentInputSchema(InputSchema):
     """Input schema for Planetary Data Search Agent."""
 
     query: str = Field(..., description="Planetary science query for dataset discovery")
 
 
-class PDSSearchAgentOutputSchema(OutputSchema):
+class PlanetaryDataSearchAgentOutputSchema(OutputSchema):
     """Output schema for Planetary Data Search Agent."""
 
     __response_field__ = "result"
@@ -298,15 +304,22 @@ class PDSSearchAgentOutputSchema(OutputSchema):
 # -----------------------------------------------------------------------------
 
 
-class PDSSearchAgent(OpenAIBaseAgent[PDSSearchAgentInputSchema, PDSSearchAgentOutputSchema]):
-    """Planetary Data Search Agent for discovering datasets across NASA's Planetary Data System (PDS)."""
+class PlanetaryDataSearchAgent(
+    OpenAIBaseAgent[PlanetaryDataSearchAgentInputSchema, PlanetaryDataSearchAgentOutputSchema]
+):
+    """Planetary Data Search Agent for discovering datasets across NASA's Planetary Data System (PDS).
 
-    input_schema = PDSSearchAgentInputSchema
-    output_schema = PDSSearchAgentOutputSchema | TextOutput
-    config_schema = PDSSearchConfig
+
+
+    The agent's artifact is produced by CARE process: https://ntrs.nasa.gov/citations/20260000926
+    """
+
+    input_schema = PlanetaryDataSearchAgentInputSchema
+    output_schema = PlanetaryDataSearchAgentOutputSchema | TextOutput
+    config_schema = PlanetaryDataSearchAgentConfig
 
     def check_output(self, output) -> str | None:
-        if isinstance(output, PDSSearchAgentOutputSchema) and not output.result.strip():
+        if isinstance(output, PlanetaryDataSearchAgentOutputSchema) and not output.result.strip():
             return "Result is empty. Provide search reasoning and details."
         return super().check_output(output)
 
@@ -315,10 +328,11 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        agent = PDSSearchAgent(PDSSearchConfig(debug=True))
+        agent = PlanetaryDataSearchAgent(PlanetaryDataSearchAgentConfig(debug=True))
+        logger.info(f"Agent description: {agent.description}")
         question = "Find datasets about Mars surface mineralogy"
 
-        async for event in agent.astream(PDSSearchAgentInputSchema(query=question)):
-            print(event)
+        async for event in agent.astream(PlanetaryDataSearchAgentInputSchema(query=question)):
+            logger.info(event)
 
     asyncio.run(main())
