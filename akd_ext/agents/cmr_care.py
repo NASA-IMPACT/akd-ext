@@ -27,6 +27,7 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
+from loguru import logger
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -498,10 +499,10 @@ if __name__ == "__main__":
 
     async def main():
         agent = CMRCareAgent(CMRCareConfig(debug=True))
-        print(f"Agent description: {agent.description}")
+        logger.info(f"Agent description: {agent.description}")
         question = "Can you find me datasets about sea ice?"
 
         async for event in agent.astream(CMRCareAgentInputSchema(query=question)):
-            print(event)
+            logger.info(event)
 
     asyncio.run(main())

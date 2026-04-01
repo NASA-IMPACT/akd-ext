@@ -27,6 +27,7 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
+from loguru import logger
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -321,10 +322,10 @@ if __name__ == "__main__":
 
     async def main():
         agent = PDSSearchAgent(PDSSearchConfig(debug=True))
-        print(f"Agent description: {agent.description}")
+        logger.info(f"Agent description: {agent.description}")
         question = "Find datasets about Mars surface mineralogy"
 
         async for event in agent.astream(PDSSearchAgentInputSchema(query=question)):
-            print(event)
+            logger.info(event)
 
     asyncio.run(main())
