@@ -385,11 +385,6 @@ def get_default_astro_tools() -> list[OpenAITool]:
 class AstroDataSearchAgentConfig(OpenAIBaseAgentConfig):
     """Configuration for Astro Data Search Agent."""
 
-    description: str = Field(
-        default="Astrophysics dataset discovery agent for finding astronomical data across NASA archives "
-        "(MAST, HEASARC, IRSA) via Astroquery and ADS. Supports object-based, coordinate-based, "
-        "literature-driven, and event-driven search patterns for researchers at all experience levels."
-    )
     system_prompt: str = Field(default=ASTRO_SEARCH_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
@@ -442,7 +437,6 @@ if __name__ == "__main__":
 
     async def main():
         agent = AstroDataSearchAgent(AstroDataSearchAgentConfig(debug=True))
-        logger.info(f"Agent description: {agent.description}")
         question = "Find X-ray observations of Crab Nebula"
 
         async for event in agent.astream(AstroDataSearchAgentInputSchema(query=question)):

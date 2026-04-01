@@ -270,11 +270,6 @@ def get_default_pds_tools() -> list[OpenAITool]:
 class PlanetaryDataSearchAgentConfig(OpenAIBaseAgentConfig):
     """Configuration for Planetary Data Search Agent."""
 
-    description: str = Field(
-        default="Planetary science dataset discovery agent for NASA's Planetary Data System (PDS). "
-        "Searches across PDS node services (GEO, IMG, RMS, SBN, PPI, ATM) to find datasets and products "
-        "with stable identifiers and download locations for planetary science research."
-    )
     system_prompt: str = Field(default=PDS_SEARCH_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
@@ -329,7 +324,6 @@ if __name__ == "__main__":
 
     async def main():
         agent = PlanetaryDataSearchAgent(PlanetaryDataSearchAgentConfig(debug=True))
-        logger.info(f"Agent description: {agent.description}")
         question = "Find datasets about Mars surface mineralogy"
 
         async for event in agent.astream(PlanetaryDataSearchAgentInputSchema(query=question)):
