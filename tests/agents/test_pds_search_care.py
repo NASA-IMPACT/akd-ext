@@ -4,10 +4,10 @@ import pytest
 
 from akd._base import TextOutput
 from akd_ext.agents.pds_search_care import (
-    PDSSearchAgent,
-    PDSSearchAgentInputSchema,
-    PDSSearchAgentOutputSchema,
-    PDSSearchConfig,
+    PlanetaryDataSearchAgent,
+    PlanetaryDataSearchAgentInputSchema,
+    PlanetaryDataSearchAgentOutputSchema,
+    PlanetaryDataSearchAgentConfig,
 )
 
 
@@ -27,10 +27,10 @@ async def test_pds_search_agent(query: str, reasoning_effort: str):
         query: Planetary science query to test
         reasoning_effort: CLI param --reasoning-effort (low/medium/high)
     """
-    config = PDSSearchConfig(reasoning_effort=reasoning_effort)
-    agent = PDSSearchAgent(config=config, debug=True)
-    result = await agent.arun(PDSSearchAgentInputSchema(query=query))
+    config = PlanetaryDataSearchAgentConfig(reasoning_effort=reasoning_effort)
+    agent = PlanetaryDataSearchAgent(config=config, debug=True)
+    result = await agent.arun(PlanetaryDataSearchAgentInputSchema(query=query))
 
-    assert isinstance(result, (PDSSearchAgentOutputSchema, TextOutput))
-    if isinstance(result, PDSSearchAgentOutputSchema):
+    assert isinstance(result, (PlanetaryDataSearchAgentOutputSchema, TextOutput))
+    if isinstance(result, PlanetaryDataSearchAgentOutputSchema):
         assert result.result.strip()

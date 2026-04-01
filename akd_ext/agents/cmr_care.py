@@ -4,7 +4,7 @@ This module implements the CMR CARE (Clarify, Analyze, Rank, Explain) Agent
 for transparent, reproducible discovery of NASA Earthdata datasets.
 
 Public API:
-    CMRCareAgent, CMRCareAgentInputSchema, CMRCareAgentOutputSchema, CMRCareConfig
+    CMRDataSearchAgent, CMRDataSearchAgentInputSchema, CMRDataSearchAgentOutputSchema, CMRDataSearchAgentConfig
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
+from loguru import logger
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -429,7 +430,7 @@ def get_default_cmr_tools() -> list[OpenAITool]:
     ]
 
 
-class CMRCareConfig(OpenAIBaseAgentConfig):
+class CMRDataSearchAgentConfig(OpenAIBaseAgentConfig):
     """Configuration for CMR CARE Agent.
 
     Carries all settings for the orchestrator and its sub-agents.
@@ -448,13 +449,13 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
 # -----------------------------------------------------------------------------
 
 
-class CMRCareAgentInputSchema(InputSchema):
+class CMRDataSearchAgentInputSchema(InputSchema):
     """Input schema for CMR CARE Agent."""
 
     query: str = Field(..., description="Earth science query for dataset discovery")
 
 
-class CMRCareAgentOutputSchema(OutputSchema):
+class CMRDataSearchAgentOutputSchema(OutputSchema):
     """Use this schema whenever you have dataset concept IDs to report.
     Put ALL your text output (interpreted scope, dataset list, reproducibility log, tables, JSON audit block) in the report field.
     Use TextOutput for clarification questions or when no datasets were found."""
@@ -471,19 +472,20 @@ class CMRCareAgentOutputSchema(OutputSchema):
 # -----------------------------------------------------------------------------
 
 
-class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
+class CMRDataSearchAgent(OpenAIBaseAgent[CMRDataSearchAgentInputSchema, CMRDataSearchAgentOutputSchema]):
     """Earth Science Data Search Agent that uses NASA CMR.
-    Uses NASA in-house CARE-driven process (https://github.com/NASA-IMPACT/CARE-Code-Agent-ES)
-    CARE: Collaborative Agent Reasoning Engineering.
 
+
+
+    The agent's artifact is produced by CARE process: https://ntrs.nasa.gov/citations/20260000926
     """
 
-    input_schema = CMRCareAgentInputSchema
-    output_schema = CMRCareAgentOutputSchema | TextOutput
-    config_schema = CMRCareConfig
+    input_schema = CMRDataSearchAgentInputSchema
+    output_schema = CMRDataSearchAgentOutputSchema | TextOutput
+    config_schema = CMRDataSearchAgentConfig
 
     def check_output(self, output) -> str | None:
-        if isinstance(output, CMRCareAgentOutputSchema) and not output.report.strip():
+        if isinstance(output, CMRDataSearchAgentOutputSchema) and not output.report.strip():
             return "Report is empty. Provide search reasoning and details."
         return super().check_output(output)
 
@@ -492,10 +494,10 @@ if __name__ == "__main__":
     import asyncio
 
     async def main():
-        agent = CMRCareAgent(CMRCareConfig(debug=True))
+        agent = CMRDataSearchAgent(CMRDataSearchAgentConfig(debug=True))
         question = "Can you find me datasets about sea ice?"
 
-        async for event in agent.astream(CMRCareAgentInputSchema(query=question)):
-            print(event)
+        async for event in agent.astream(CMRDataSearchAgentInputSchema(query=question)):
+            logger.info(event)
 
     asyncio.run(main())

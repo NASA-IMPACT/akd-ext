@@ -52,15 +52,15 @@ Agent continues from where it left off
 ```python
 from akd._base import RunContext, HumanResponse, StreamEventType
 from akd.tools.human import HumanTool
-from akd_ext.agents import CMRCareAgent, CMRCareConfig
-from akd_ext.agents.cmr_care import get_default_cmr_tools, CMRCareAgentInputSchema
+from akd_ext.agents import CMRDataSearchAgent, CMRDataSearchAgentConfig
+from akd_ext.agents.cmr_care import get_default_cmr_tools, CMRDataSearchAgentInputSchema
 
 # 1. Create agent with HITL enabled
-agent = CMRCareAgent(config=CMRCareConfig(
+agent = CMRDataSearchAgent(config=CMRDataSearchAgentConfig(
     tools=get_default_cmr_tools() + [HumanTool()],
 ))
 
-input_params = CMRCareAgentInputSchema(query="Find sea ice datasets")
+input_params = CMRDataSearchAgentInputSchema(query="Find sea ice datasets")
 
 # 2. Stream until human input is needed
 saved_event = None
@@ -103,7 +103,7 @@ if saved_event:
 
 ## Reference Implementation
 
-- Agent with HITL support: `akd_ext/agents/cmr_care.py` (`CMRCareAgent`)
+- Agent with HITL support: `akd_ext/agents/cmr_care.py` (`CMRDataSearchAgent`)
 - HITL handling in base agent: `akd_ext/agents/_base.py` (`_stream_llm_response`, see `ask_human` branch)
 
 ## Further Reading
