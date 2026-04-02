@@ -27,6 +27,7 @@ from akd_ext.agents._base import (
     OpenAIBaseAgentConfig,
 )
 
+from loguru import logger
 
 # -----------------------------------------------------------------------------
 # System Prompts
@@ -437,6 +438,11 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
     formatter_system_prompt is for the output formatter (no tools).
     """
 
+    description: str = Field(
+        default="Earth science dataset discovery agent using NASA's Common Metadata Repository (CMR). "
+        "Helps users discover, organize, and understand NASA Earthdata datasets across atmosphere, ocean, "
+        "land, cryosphere, biosphere, and solid earth domains."
+    )
     system_prompt: str = Field(default=CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
@@ -493,9 +499,10 @@ if __name__ == "__main__":
 
     async def main():
         agent = CMRCareAgent(CMRCareConfig(debug=True))
+        logger.info(f"Agent description: {agent.description}")
         question = "Can you find me datasets about sea ice?"
 
         async for event in agent.astream(CMRCareAgentInputSchema(query=question)):
-            print(event)
+            logger.info(event)
 
     asyncio.run(main())

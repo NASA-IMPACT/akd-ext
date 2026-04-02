@@ -310,6 +310,11 @@ def get_default_code_search_tools() -> list[OpenAITool]:
 class CodeSearchCareConfig(OpenAIBaseAgentConfig):
     """Configuration for CODE SEARCH CARE Agent."""
 
+    description: str = Field(
+        default="Scientific code repository discovery agent that searches NASA-verified repositories, "
+        "Science Discovery Engine (SDE), and ADS to find publicly available code repositories relevant "
+        "to scientific and technical tasks."
+    )
     system_prompt: str = Field(default=CODE_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
@@ -369,6 +374,7 @@ if __name__ == "__main__":
 
     async def main():
         agent = CodeSearchCareAgent(CodeSearchCareConfig(debug=True))
+        print(f"Agent description: {agent.description}")
         question = "Provide an NPM module for accessing Firefly API to get and visualize astronomical archival data."
 
         logger.add("log.txt", rotation="1000 MB", level="INFO")
