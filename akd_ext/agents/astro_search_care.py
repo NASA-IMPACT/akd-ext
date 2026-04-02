@@ -386,9 +386,11 @@ class AstroSearchConfig(OpenAIBaseAgentConfig):
     """Configuration for Astro Data Search Agent."""
 
     description: str = Field(
-        default="Astrophysics dataset discovery agent for finding astronomical data across NASA archives "
-        "(MAST, HEASARC, IRSA) via Astroquery and ADS. Supports object-based, coordinate-based, "
-        "literature-driven, and event-driven search patterns for researchers at all experience levels."
+        default="""Astrophysics dataset discovery agent for finding astronomical data across NASA archives
+        (MAST, HEASARC, IRSA) via Astroquery and ADS. Supports object-based, coordinate-based,
+        literature-driven, and event-driven search patterns for researchers at all experience levels.
+        Outputs are delivered via a structured schema and interactive chat with the user for clarification,
+        guidance, approval gates, or status updates."""
     )
     system_prompt: str = Field(default=ASTRO_SEARCH_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")

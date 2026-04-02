@@ -439,9 +439,13 @@ class CMRCareConfig(OpenAIBaseAgentConfig):
     """
 
     description: str = Field(
-        default="Earth science dataset discovery agent using NASA's Common Metadata Repository (CMR). "
-        "Helps users discover, organize, and understand NASA Earthdata datasets across atmosphere, ocean, "
-        "land, cryosphere, biosphere, and solid earth domains."
+        default=(
+            """Earth science dataset discovery agent using NASA's Common Metadata Repository (CMR).
+            Helps users discover, organize, and understand NASA Earthdata datasets across atmosphere,
+            ocean, land, cryosphere, biosphere, and solid earth domains.
+            Outputs are delivered via a structured schema and interactive chat with the user
+            for clarification, guidance, approval gates, or status updates."""
+        )
     )
     system_prompt: str = Field(default=CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
@@ -481,7 +485,6 @@ class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSc
     """Earth Science Data Search Agent that uses NASA CMR.
     Uses NASA in-house CARE-driven process (https://github.com/NASA-IMPACT/CARE-Code-Agent-ES)
     CARE: Collaborative Agent Reasoning Engineering.
-
     """
 
     input_schema = CMRCareAgentInputSchema

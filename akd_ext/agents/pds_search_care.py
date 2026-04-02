@@ -271,9 +271,14 @@ class PDSSearchConfig(OpenAIBaseAgentConfig):
     """Configuration for Planetary Data Search Agent."""
 
     description: str = Field(
-        default="Planetary science dataset discovery agent for NASA's Planetary Data System (PDS)."
-        "Searches across PDS node services (GEO, IMG, RMS, SBN, PPI, ATM) to find datasets and products"
-        "with stable identifiers and download paths when available for planetary science research."
+        default=(
+            """Planetary science dataset discovery agent for NASA's Planetary Data System (PDS).
+            Searches across PDS node services (GEO, IMG, RMS, SBN, PPI, ATM) to find datasets
+            and products with stable identifiers and download paths when available for planetary
+            science research.
+            Outputs are delivered via a structured schema and interactive chat with the user
+            for clarification, guidance, approval gates, or status updates."""
+        )
     )
     system_prompt: str = Field(default=PDS_SEARCH_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
