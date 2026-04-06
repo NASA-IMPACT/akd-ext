@@ -101,6 +101,10 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     top_p: float | None = Field(default=None, description="Nucleus sampling parameter.")
     frequency_penalty: float | None = Field(default=None, description="Frequency penalty for token repetition.")
     presence_penalty: float | None = Field(default=None, description="Presence penalty for new topics.")
+    truncation: Literal["auto", "disabled"] | None = Field(
+        default="auto",
+        description="Truncation strategy for managing context window. 'auto' enables server-side truncation of older messages.",
+    )
 
     @field_validator("tools", mode="before")
     @classmethod
@@ -135,6 +139,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
                 store=True,
                 max_tokens=self.max_tokens,
                 reasoning=reasoning,
+                truncation=self.truncation,
             )
         # Non-reasoning models use standard sampling parameters
         return ModelSettings(
@@ -144,6 +149,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
             top_p=self.top_p,
             frequency_penalty=self.frequency_penalty,
             presence_penalty=self.presence_penalty,
+            truncation=self.truncation,
         )
 
     @property
