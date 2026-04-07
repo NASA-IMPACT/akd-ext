@@ -137,7 +137,6 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     Variable definitions, QA flags, caveats
     Documentation links only
     No interpretation
-    If this is a followup question, do not respond back with all these steps.
 
 
     CONDITIONAL SECTIONS
