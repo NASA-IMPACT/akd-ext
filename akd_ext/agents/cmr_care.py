@@ -469,11 +469,8 @@ class CMRCareAgentOutputSchema(OutputSchema):
     Put ALL your text output (interpreted scope, dataset list, reproducibility log, tables, JSON audit block) in the report field.
     Use TextOutput for clarification questions or when no datasets were found."""
 
-    __response_field__ = "report"
-    dataset_concept_ids: list[str] = Field(..., description="List of CMR dataset concept IDs found")
-    report: str = Field(
-        default="", description="Full structured report including all sections, tables, and JSON audit block"
-    )
+    __response_field__ = "result"
+    result: str = Field(..., description="Search result with discovered CMR datasets and details")
 
 
 # -----------------------------------------------------------------------------
