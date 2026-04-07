@@ -208,7 +208,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         if not is_union:
             return Agent(
                 name=self.__class__.__name__,
-                instructions=self.config.system_prompt,
+                instructions=self._system_prompt,
                 model=self.config.model_name or "gpt-5-nano",
                 tools=self.config.tools,
                 output_type=None if is_text else self.output_schema,
@@ -219,7 +219,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
             envelope = self.effective_output_schema
             return Agent(
                 name=self.__class__.__name__,
-                instructions=self.config.system_prompt,
+                instructions=self._system_prompt,
                 model=self.config.model_name or "gpt-5-nano",
                 tools=self.config.tools,
                 output_type=envelope,
@@ -232,7 +232,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         all_tools = list(self.config.tools) + sdk_output_tools
         return Agent(
             name=self.__class__.__name__,
-            instructions=self.config.system_prompt,
+            instructions=self._system_prompt,
             model=self.config.model_name or "gpt-5-nano",
             tools=all_tools,
             output_type=None,
