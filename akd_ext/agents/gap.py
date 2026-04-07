@@ -167,6 +167,14 @@ class GapAgentOutputSchema(OutputSchema):
 class GapAgentConfig(OpenAIBaseAgentConfig):
     """Configuration for the Gap Agent."""
 
+    description: str = Field(
+        default="""Research gap detection and synthesis agent for identifying defensible gaps,
+        contradictions, and candidate research questions from a user-provided corpus of academic papers.
+        Executes a structured six-stage process (scope inference, extraction, gap-matrix, gap identification,
+        research questions, and prioritization).
+        Outputs are delivered via structured markdown reports and interactive chat with the user for
+        clarification, guidance."""
+    )
     system_prompt: str = Field(default=GAP_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
