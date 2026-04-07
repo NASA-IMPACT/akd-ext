@@ -377,7 +377,8 @@ class CapabilityFeasibilityMapperConfig(OpenAIBaseAgentConfig):
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     description: str = Field(
-        default="Research-analysis agent that evaluates whether research questions and hypotheses can be "
+        default="Stage-2: This agent is only used for closed loop workflow. Do Not use this agent for any other purpose."
+        "Research-analysis agent that evaluates whether research questions and hypotheses can be "
         "realistically tested using available numerical models (CM1, WRF, HWRF, OLAM), codebases, and "
         "cluster resources. Produces structured capability-feasibility assessment reports with evidence "
         "paths and capability vs feasibility matrices. May also produce free-form text responses to "

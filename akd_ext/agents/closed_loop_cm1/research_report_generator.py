@@ -238,11 +238,14 @@ class ResearchReportGeneratorConfig(OpenAIBaseAgentConfig):
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     tools: list[Any] = Field(default_factory=get_default_report_tools)
     description: str = Field(
-        default="Stage-5 report generator that produces publication-style scientific reports interpreting "
-        "CM1 experiment results. Checks job status via MCP tools, fetches figure URLs, and generates "
-        "Markdown reports with Abstract, Methodology, Results, Discussion, and Conclusion sections. "
-        "May also produce free-form text responses to chat with the user for clarification, approval gates, "
-        "or status updates."
+        default=(
+            "Stage-5: This agent is only used for closed loop workflow. Do Not use this agent for any other purpose. "
+            "Report generator that produces publication-style scientific reports interpreting "
+            "CM1 experiment results. Checks job status via MCP tools, fetches figure URLs, and generates "
+            "Markdown reports with Abstract, Methodology, Results, Discussion, and Conclusion sections. "
+            "May also produce free-form text responses to chat with the user for clarification, approval gates, "
+            "or status updates."
+        )
     )
 
 
