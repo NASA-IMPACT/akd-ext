@@ -104,7 +104,7 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     Exclude variables that cannot map to GCMD
     Obtain explicit user approval
     Re-run the entire loop
-    If scope is non-Earth science → respond “I don’t know” and stop.
+    If scope is non-Earth science → respond "I'm sorry, this query falls outside my area of expertise in Earth science data discovery. I'm unable to assist with this request." and stop.
 
 
     OUTPUT FORMAT
