@@ -183,12 +183,12 @@ class WorkflowSpecBuilderConfig(OpenAIBaseAgentConfig):
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
     description: str = Field(
-        default= "Stage-3: This agent is only used for closed loop workflow. Do Not use this agent for any other purpose."
-        "experiment design agent that converts research questions into scientifically "
-        "traceable, feasibility-aware simulation workflow specifications for CM1 or WRF. Proposes "
-        "baseline plus perturbation experiments, parameter sweeps, and namelist changes as execution-ready "
-        "Markdown documents. May also produce free-form text responses to chat with the user for "
-        "clarification, approval gates, or status updates."
+        default= """Stage-3: INTERNAL ONLY — Do NOT select this agent in planner workflows. It is part of a specialized pipeline and cannot be used standalone.
+        experiment design agent that converts research questions into scientifically 
+        traceable, feasibility-aware simulation workflow specifications for CM1 or WRF. Proposes 
+        baseline plus perturbation experiments, parameter sweeps, and namelist changes as execution-ready 
+        Markdown documents. May also produce free-form text responses to chat with the user for 
+        clarification, approval gates, or status updates."""
     )
 
 

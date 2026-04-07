@@ -228,12 +228,12 @@ class ExperimentImplementationConfig(OpenAIBaseAgentConfig):
     tools: list[Any] = Field(default_factory=get_default_impl_tools)
     description: str = Field(
         default=(
-            "Stage-4: This agent is only used for closed loop workflow. Do Not use this agent for any other purpose. "
-            "Implementation planner that translates Stage-3 workflow specs into structured "
-            "FileEdit JSON and submits experiment batches as jobs via MCP tool calls. Produces deterministic "
-            "edit definitions (namelist_param, sounding_profile, file_replace) without directly creating files "
-            "or executing commands. May also produce free-form text responses to chat with the user for "
-            "clarification, approval gates, or status updates."
+            """Stage-4: INTERNAL ONLY — Do NOT select this agent in planner workflows. It is part of a specialized pipeline and cannot be used standalone.
+            Implementation planner that translates Stage-3 workflow specs into structured 
+            FileEdit JSON and submits experiment batches as jobs via MCP tool calls. Produces deterministic 
+            edit definitions (namelist_param, sounding_profile, file_replace) without directly creating files 
+            or executing commands. May also produce free-form text responses to chat with the user for 
+            clarification, approval gates, or status updates."""
         )
     )
 

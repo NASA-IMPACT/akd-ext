@@ -169,13 +169,13 @@ class GapAgentConfig(OpenAIBaseAgentConfig):
 
     description: str = Field(
         default=(
-            "Stage-1: This agent is only used for closed loop workflow. Do Not use this agent for any other purpose."
-            "Research gap detection and synthesis agent for identifying defensible gaps, "
-            "contradictions, and candidate research questions from a user-provided corpus of academic papers. "
-            "Executes a structured six-stage process (scope inference, extraction, gap-matrix, gap identification, "
-            "research questions, and prioritization). "
-            "Outputs are delivered via structured markdown reports and interactive chat with the user for "
-            "clarification, guidance."
+            """Stage-1: INTERNAL ONLY — Do NOT select this agent in planner workflows. It is part of a specialized pipeline and cannot be used standalone.
+            Research gap detection and synthesis agent for identifying defensible gaps, 
+            contradictions, and candidate research questions from a user-provided corpus of academic papers. 
+            Executes a structured six-stage process (scope inference, extraction, gap-matrix, gap identification, 
+            research questions, and prioritization). 
+            Outputs are delivered via structured markdown reports and interactive chat with the user for 
+            clarification, guidance."""
         )
     )
     system_prompt: str = Field(default=GAP_AGENT_SYSTEM_PROMPT)
