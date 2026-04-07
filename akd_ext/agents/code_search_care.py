@@ -352,9 +352,8 @@ class Repository(BaseModel):
 class CodeSearchCareAgentOutputSchema(OutputSchema):
     """Output schema for CODE SEARCH Agent."""
 
-    __response_field__ = "report"
-    repositories: list[Repository] = Field(..., description="List of relevant repositories")
-    report: str = Field(default="", description="Detailed report with reasoning")
+    __response_field__ = "result"
+    result: str = Field(..., description="Search result with discovered code repository and details")
 
 
 # -----------------------------------------------------------------------------
