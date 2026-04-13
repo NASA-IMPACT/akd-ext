@@ -24,8 +24,12 @@ class GetPlaceToolConfig(BaseToolConfig):
         description="Base URL for the Geodini geocoding service",
     )
     timeout: float = Field(
-        default=15.0,
+        default=30.0,
         description="HTTP request timeout in seconds",
+    )
+    verify_ssl: bool = Field(
+        default=True,
+        description="Verify SSL certificates (set False for self-signed certs)",
     )
 
 
@@ -96,11 +100,16 @@ class GetPlaceTool(BaseTool[GetPlaceInputSchema, GetPlaceOutputSchema]):
             )
 
         try:
+            place_query = params.query
+
             # Query the Geodini geocoding service
-            async with httpx.AsyncClient(timeout=self.config.timeout) as client:
+            async with httpx.AsyncClient(
+                timeout=self.config.timeout,
+                verify=self.config.verify_ssl,
+            ) as client:
                 response = await client.get(
                     f"{self.config.geodini_host.rstrip('/')}/search",
-                    params={"query": params.query},
+                    params={"query": place_query},
                 )
                 response.raise_for_status()
                 data = response.json()
