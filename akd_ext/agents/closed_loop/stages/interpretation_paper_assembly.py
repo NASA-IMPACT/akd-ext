@@ -49,9 +49,7 @@ class InterpretationPaperAssemblyConfig(ClosedLoopStageConfig):
 class InterpretationPaperAssemblyInputSchema(InputSchema):
     """Input schema for Interpretation & Paper Assembly Agent."""
 
-    research_question: str = Field(
-        ..., description="Research question content as a string"
-    )
+    research_question: str = Field(..., description="Research question content as a string")
     experiment_output_dir: str = Field(
         ..., description="Path to directory containing experiment artifacts from the previous stage"
     )

@@ -18,10 +18,6 @@ from typing import Any
 
 from pydantic import Field
 
-from akd_ext.agents.closed_loop.capability_feasibility_mapper import (
-    CapabilityFeasibilityMapperAgent,
-    CapabilityFeasibilityMapperConfig,
-)
 from akd_ext.agents.closed_loop.cm1.prompts import (
     CAPABILITY_FEASIBILITY_MAPPER_SYSTEM_PROMPT,
     EXPERIMENT_IMPLEMENTER_SYSTEM_PROMPT,
@@ -30,19 +26,23 @@ from akd_ext.agents.closed_loop.cm1.prompts import (
     WORKFLOW_SPEC_BUILDER_SYSTEM_PROMPT,
 )
 from akd_ext.agents.closed_loop.cm1.tools import get_default_impl_tools, get_default_report_tools
-from akd_ext.agents.closed_loop.experiment_implementation import (
+from akd_ext.agents.closed_loop.stages.capability_feasibility_mapper import (
+    CapabilityFeasibilityMapperAgent,
+    CapabilityFeasibilityMapperConfig,
+)
+from akd_ext.agents.closed_loop.stages.experiment_implementation import (
     ExperimentImplementationAgent,
     ExperimentImplementationConfig,
 )
-from akd_ext.agents.closed_loop.interpretation_paper_assembly import (
+from akd_ext.agents.closed_loop.stages.interpretation_paper_assembly import (
     InterpretationPaperAssemblyAgent,
     InterpretationPaperAssemblyConfig,
 )
-from akd_ext.agents.closed_loop.research_report_generator import (
+from akd_ext.agents.closed_loop.stages.research_report_generator import (
     ResearchReportGeneratorAgent,
     ResearchReportGeneratorConfig,
 )
-from akd_ext.agents.closed_loop.workflow_spec_builder import (
+from akd_ext.agents.closed_loop.stages.workflow_spec_builder import (
     WorkflowSpecBuilderAgent,
     WorkflowSpecBuilderConfig,
 )

@@ -76,9 +76,7 @@ class WorkflowSpecBuilderOutputSchema(OutputSchema):
 # -----------------------------------------------------------------------------
 
 
-class WorkflowSpecBuilderAgent(
-    OpenAIBaseAgent[WorkflowSpecBuilderInputSchema, WorkflowSpecBuilderOutputSchema]
-):
+class WorkflowSpecBuilderAgent(OpenAIBaseAgent[WorkflowSpecBuilderInputSchema, WorkflowSpecBuilderOutputSchema]):
     """Generic Workflow Spec Builder Agent.
 
     Designs scientifically traceable, feasibility-aware simulation experiments

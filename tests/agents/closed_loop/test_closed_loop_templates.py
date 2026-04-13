@@ -12,17 +12,17 @@ from unittest.mock import MagicMock
 import pytest
 from pydantic import ValidationError
 
-from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
+from akd_ext.agents._base import OpenAIBaseAgentConfig
 from akd_ext.agents.closed_loop._base import ClosedLoopStageConfig, append_context_to_agent
 
 # -- Generic stage classes --
-from akd_ext.agents.closed_loop.capability_feasibility_mapper import (
+from akd_ext.agents.closed_loop.stages.capability_feasibility_mapper import (
     CapabilityFeasibilityMapperAgent,
     CapabilityFeasibilityMapperConfig,
     CapabilityFeasibilityMapperInputSchema,
     CapabilityFeasibilityMapperOutputSchema,
 )
-from akd_ext.agents.closed_loop.experiment_implementation import (
+from akd_ext.agents.closed_loop.stages.experiment_implementation import (
     ExperimentImplementationAgent,
     ExperimentImplementationConfig,
     ExperimentImplementationInputSchema,
@@ -30,19 +30,19 @@ from akd_ext.agents.closed_loop.experiment_implementation import (
     ExperimentSpec,
     FileEdit,
 )
-from akd_ext.agents.closed_loop.interpretation_paper_assembly import (
+from akd_ext.agents.closed_loop.stages.interpretation_paper_assembly import (
     InterpretationPaperAssemblyAgent,
     InterpretationPaperAssemblyConfig,
     InterpretationPaperAssemblyInputSchema,
     InterpretationPaperAssemblyOutputSchema,
 )
-from akd_ext.agents.closed_loop.research_report_generator import (
+from akd_ext.agents.closed_loop.stages.research_report_generator import (
     ResearchReportGeneratorAgent,
     ResearchReportGeneratorConfig,
     ResearchReportGeneratorInputSchema,
     ResearchReportGeneratorOutputSchema,
 )
-from akd_ext.agents.closed_loop.workflow_spec_builder import (
+from akd_ext.agents.closed_loop.stages.workflow_spec_builder import (
     WorkflowSpecBuilderAgent,
     WorkflowSpecBuilderConfig,
     WorkflowSpecBuilderInputSchema,

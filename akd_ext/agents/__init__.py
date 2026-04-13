@@ -52,21 +52,21 @@ ResearchReportGeneratorAgent = CM1ResearchReportGeneratorAgent
 ResearchReportGeneratorConfig = CM1ResearchReportGeneratorConfig
 
 # Re-export input/output schemas from generic modules
-from akd_ext.agents.closed_loop.capability_feasibility_mapper import (  # noqa: E402
+from akd_ext.agents.closed_loop.stages.capability_feasibility_mapper import (  # noqa: E402
     CapabilityFeasibilityMapperInputSchema,
     CapabilityFeasibilityMapperOutputSchema,
 )
-from akd_ext.agents.closed_loop.workflow_spec_builder import (  # noqa: E402
-    WorkflowSpecBuilderInputSchema,
-    WorkflowSpecBuilderOutputSchema,
-)
-from akd_ext.agents.closed_loop.experiment_implementation import (  # noqa: E402
+from akd_ext.agents.closed_loop.stages.experiment_implementation import (  # noqa: E402
     ExperimentImplementationInputSchema,
     ExperimentImplementationOutputSchema,
 )
-from akd_ext.agents.closed_loop.research_report_generator import (  # noqa: E402
+from akd_ext.agents.closed_loop.stages.research_report_generator import (  # noqa: E402
     ResearchReportGeneratorInputSchema,
     ResearchReportGeneratorOutputSchema,
+)
+from akd_ext.agents.closed_loop.stages.workflow_spec_builder import (  # noqa: E402
+    WorkflowSpecBuilderInputSchema,
+    WorkflowSpecBuilderOutputSchema,
 )
 
 __all__ = [
