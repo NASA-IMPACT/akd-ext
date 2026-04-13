@@ -20,6 +20,13 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .stac_search import (
+    STACItem,
+    STACSearchTool,
+    STACSearchToolConfig,
+    STACSearchToolInputSchema,
+    STACSearchToolOutputSchema,
+)
 
 __all__ = [
     "DummyTool",
@@ -38,4 +45,9 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "STACSearchTool",
+    "STACSearchToolInputSchema",
+    "STACSearchToolOutputSchema",
+    "STACSearchToolConfig",
+    "STACItem",
 ]
