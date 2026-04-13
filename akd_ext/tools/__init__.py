@@ -21,6 +21,7 @@ from .code_search.repository_search import (
     RepositorySearchToolConfig,
 )
 from .ads import (
+    ADSFieldPreset,
     ADSPaper,
     ADSSearchTool,
     ADSSearchToolConfig,
@@ -35,6 +36,8 @@ from .ads import (
 )
 from .ascl import (
     ASCLEntry,
+    ASCLFieldPreset,
+    ASCLHostClass,
     ASCLToolConfig,
     ASCLSearchTool,
     ASCLSearchToolConfig,
@@ -63,6 +66,7 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "ADSFieldPreset",
     "ADSSearchTool",
     "ADSSearchToolInputSchema",
     "ADSSearchToolOutputSchema",
@@ -75,6 +79,8 @@ __all__ = [
     "ADSLinksResolverToolConfig",
     "ADSLink",
     "ASCLEntry",
+    "ASCLFieldPreset",
+    "ASCLHostClass",
     "ASCLToolConfig",
     "ASCLSearchTool",
     "ASCLSearchToolConfig",

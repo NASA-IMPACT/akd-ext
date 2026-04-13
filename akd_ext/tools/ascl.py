@@ -7,8 +7,8 @@ Two tools wrapping the ASCL API for astrophysics code discovery:
    curated code URLs, ADS bibcodes, and usage metadata.
 2. ASCLGetTool — fetch a single code entry by its ASCL identifier.
 
-Both share a single config (base_url, timeout) and the same entry parser since
-they hit the same API at https://ascl.net/api/search/.
+Both share a single config (base_url, timeout, retries) and the same entry parser
+since they hit the same API at https://ascl.net/api/search/.
 
 ASCL is a curated registry of ~4000 astrophysics source codes. Unlike ADS (which
 is paper-first), ASCL is code-first: every entry has a canonical code URL in its
@@ -23,9 +23,12 @@ API docs: https://github.com/teuben/ascl-tools/tree/master/API
 ASCL schema: https://ascl.net/wordpress/about-ascl/metadata-schema/
 """
 
+from __future__ import annotations
+
 import os
 import re
-from typing import Literal
+from enum import StrEnum
+from typing import Any
 
 import httpx
 from loguru import logger
@@ -35,6 +38,7 @@ from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
 
 from akd_ext.mcp import mcp_tool
+from akd_ext.tools._helpers import extract_rate_limit, get_with_retry, truncate_text
 
 
 # ---------------------------------------------------------------------------
@@ -46,13 +50,47 @@ class ASCLToolConfig(BaseToolConfig):
     """Shared configuration for all ASCL tools."""
 
     base_url: str = Field(
-        default=os.getenv("ASCL_API_URL", "https://ascl.net/api/search/"),
+        default_factory=lambda: os.getenv("ASCL_API_URL", "https://ascl.net/api/search/"),
         description="Base URL for the ASCL search API",
     )
     timeout: float = Field(
         default=30.0,
         description="HTTP request timeout in seconds",
     )
+    max_retries: int = Field(
+        default=2,
+        ge=0,
+        le=6,
+        description="Maximum retries on transient upstream failures (429/5xx, connection errors)",
+    )
+
+
+# ---------------------------------------------------------------------------
+# Host classification (single source of truth)
+# ---------------------------------------------------------------------------
+
+
+class ASCLHostClass(StrEnum):
+    GITHUB = "github"
+    GITLAB = "gitlab"
+    BITBUCKET = "bitbucket"
+    CODEBERG = "codeberg"
+    SRHT = "srht"
+    DOI = "doi"
+    DOCS = "docs"
+    ANY = "any"
+
+
+# Ordered — earlier entries win in primary-URL selection.
+_HOST_PATTERNS: dict[ASCLHostClass, re.Pattern] = {
+    ASCLHostClass.GITHUB: re.compile(r"https?://(www\.)?github\.com/"),
+    ASCLHostClass.GITLAB: re.compile(r"https?://(www\.)?gitlab\.com/"),
+    ASCLHostClass.BITBUCKET: re.compile(r"https?://(www\.)?bitbucket\.org/"),
+    ASCLHostClass.CODEBERG: re.compile(r"https?://(www\.)?codeberg\.org/"),
+    ASCLHostClass.SRHT: re.compile(r"https?://sr\.ht/"),
+    ASCLHostClass.DOI: re.compile(r"https?://(dx\.)?doi\.org/10\.|https?://zenodo\.org/record"),
+    ASCLHostClass.DOCS: re.compile(r"https?://.*readthedocs\.io|https?://.*\.github\.io"),
+}
 
 
 # ---------------------------------------------------------------------------
@@ -62,17 +100,6 @@ class ASCLToolConfig(BaseToolConfig):
 # Matches PHP-serialized string entries: s:39:"https://..."
 _PHP_STRING_RE = re.compile(r's:\d+:"([^"]*)"')
 
-# URL host priority for primary URL selection (order matters)
-_CODE_HOST_PATTERNS: list[tuple[str, re.Pattern]] = [
-    ("github", re.compile(r"https?://(www\.)?github\.com/")),
-    ("gitlab", re.compile(r"https?://(www\.)?gitlab\.com/")),
-    ("bitbucket", re.compile(r"https?://(www\.)?bitbucket\.org/")),
-    ("codeberg", re.compile(r"https?://(www\.)?codeberg\.org/")),
-    ("srht", re.compile(r"https?://sr\.ht/")),
-    ("doi", re.compile(r"https?://(dx\.)?doi\.org/10\.|https?://zenodo\.org/record")),
-    ("docs", re.compile(r"https?://.*readthedocs\.io|https?://.*\.github\.io")),
-]
-
 
 def _parse_php_array(php_str: str) -> list[str]:
     """Extract strings from a PHP-serialized array.
@@ -80,8 +107,6 @@ def _parse_php_array(php_str: str) -> list[str]:
     The ASCL API returns list-valued fields as PHP-serialized strings like::
 
         a:1:{i:0;s:39:"https://emcee.readthedocs.io/en/v3.1.3/";}
-
-    This extracts the string values into a plain Python list.
     """
     if not php_str or php_str == "a:0:{}":
         return []
@@ -89,30 +114,23 @@ def _parse_php_array(php_str: str) -> list[str]:
 
 
 def _pick_primary_url(urls: list[str]) -> str | None:
-    """Select the best code URL from a list of site URLs.
-
-    Priority: GitHub > GitLab > Bitbucket > Codeberg > sr.ht > DOI/Zenodo
-    > ReadTheDocs/GitHub Pages > first entry.
-    """
+    """Select the best code URL via host priority; falls back to first entry."""
     if not urls:
         return None
-    for _host_class, pattern in _CODE_HOST_PATTERNS:
+    for pattern in _HOST_PATTERNS.values():
         for url in urls:
             if pattern.search(url):
                 return url
     return urls[0]
 
 
-def _url_matches_host_class(url: str | None, host_class: str) -> bool:
-    """Check if a URL matches a host class filter (github, gitlab, doi, any)."""
+def _url_matches_host_class(url: str | None, host_class: ASCLHostClass) -> bool:
     if not url:
         return False
-    if host_class == "any":
+    if host_class == ASCLHostClass.ANY:
         return True
-    for name, pattern in _CODE_HOST_PATTERNS:
-        if name == host_class:
-            return bool(pattern.search(url))
-    return False
+    pattern = _HOST_PATTERNS.get(host_class)
+    return bool(pattern and pattern.search(url))
 
 
 def _parse_credit(credit: str) -> list[str]:
@@ -120,15 +138,6 @@ def _parse_credit(credit: str) -> list[str]:
     if not credit:
         return []
     return [name.strip() for name in credit.split(";") if name.strip()]
-
-
-def _truncate_text(text: str, max_chars: int) -> str:
-    """Truncate text to max_chars, appending '...' if truncated."""
-    if not text or max_chars <= 0:
-        return text
-    if len(text) > max_chars:
-        return text[:max_chars] + "..."
-    return text
 
 
 # ---------------------------------------------------------------------------
@@ -176,36 +185,23 @@ class ASCLEntry(OutputSchema):
 
 
 def _parse_entry(doc: dict, truncate_abstract: int = 0, max_authors: int = 0) -> ASCLEntry:
-    """Parse a single entry from the ASCL API response.
-
-    Handles PHP-serialized fields (site_list, described_in, used_in) and
-    normalizes them into clean Python types.
-
-    Args:
-        doc: Raw dict from the ASCL API JSON response.
-        truncate_abstract: Max abstract chars (0 = no truncation).
-        max_authors: Max authors to return (0 = all).
-    """
+    """Parse a single entry from the ASCL API response."""
     ascl_id = doc.get("ascl_id", "")
 
-    # Parse PHP-serialized list fields
     site_urls = _parse_php_array(doc.get("site_list", ""))
     described_in = _parse_php_array(doc.get("described_in", ""))
     used_in = _parse_php_array(doc.get("used_in", ""))
 
-    # Parse credit string into author list
     authors = _parse_credit(doc.get("credit", ""))
     if max_authors > 0 and len(authors) > max_authors:
         authors = authors[:max_authors] + [f"... and {len(authors) - max_authors} more"]
 
-    # Pick primary URL using host priority ranking
     primary_url = _pick_primary_url(site_urls)
 
-    # Build ADS abstract URL from bibcode
     bibcode = doc.get("bibcode", "")
     ads_abs_url = f"https://ui.adsabs.harvard.edu/abs/{bibcode}" if bibcode else None
 
-    # Views comes back as a string from the API
+    # Views comes back as a string from the API.
     try:
         views = int(doc.get("views", 0))
     except (ValueError, TypeError):
@@ -215,7 +211,7 @@ def _parse_entry(doc: dict, truncate_abstract: int = 0, max_authors: int = 0) ->
         ascl_id=ascl_id,
         title=doc.get("title", ""),
         authors=authors,
-        abstract=_truncate_text(doc.get("abstract", ""), truncate_abstract),
+        abstract=truncate_text(doc.get("abstract", ""), truncate_abstract),
         primary_url=primary_url,
         all_urls=site_urls,
         ads_bibcode=bibcode or None,
@@ -230,14 +226,52 @@ def _parse_entry(doc: dict, truncate_abstract: int = 0, max_authors: int = 0) ->
 
 
 # ---------------------------------------------------------------------------
-# Field presets (token efficiency)
+# Field presets (single source of truth)
 # ---------------------------------------------------------------------------
 
-ASCL_FIELD_PRESETS: dict[str, str] = {
-    "minimal": "ascl_id,title,site_list",
-    "standard": "ascl_id,title,credit,abstract,site_list,bibcode,described_in,used_in,views",
-    "extended": "ascl_id,title,credit,abstract,site_list,bibcode,described_in,used_in,views,citation_method,time_updated,keywords",
+
+class ASCLFieldPreset(StrEnum):
+    MINIMAL = "minimal"
+    STANDARD = "standard"
+    EXTENDED = "extended"
+
+
+ASCL_FIELD_PRESETS: dict[ASCLFieldPreset, str] = {
+    ASCLFieldPreset.MINIMAL: "ascl_id,title,site_list",
+    ASCLFieldPreset.STANDARD: "ascl_id,title,credit,abstract,site_list,bibcode,described_in,used_in,views",
+    ASCLFieldPreset.EXTENDED: (
+        "ascl_id,title,credit,abstract,site_list,bibcode,described_in,used_in,"
+        "views,citation_method,time_updated,keywords"
+    ),
 }
+
+
+# ---------------------------------------------------------------------------
+# Base class with shared HTTP plumbing
+# ---------------------------------------------------------------------------
+
+
+class _ASCLHttpMixin:
+    """Mixin providing a lazy per-instance httpx.AsyncClient.
+
+    Not a BaseTool subclass (so the metaclass schema check is bypassed). Expects
+    ``self.config`` to satisfy the ``ASCLToolConfig`` protocol (timeout).
+    """
+
+    config: ASCLToolConfig
+    _client: httpx.AsyncClient | None
+
+    async def _get_client(self) -> httpx.AsyncClient:
+        if getattr(self, "_client", None) is None:
+            self._client = httpx.AsyncClient(timeout=self.config.timeout)
+        assert self._client is not None
+        return self._client
+
+    async def aclose(self) -> None:
+        client = getattr(self, "_client", None)
+        if client is not None:
+            await client.aclose()
+            self._client = None
 
 
 # ---------------------------------------------------------------------------
@@ -250,11 +284,11 @@ class ASCLSearchToolConfig(ASCLToolConfig):
 
     truncate_abstract: int = Field(
         default=300,
-        description="Truncate abstracts to this many characters (0 = no truncation). Reduces token usage.",
+        description="Default abstract char cap (0 = no truncation). Overridable per-call via input.",
     )
     max_authors: int = Field(
         default=10,
-        description="Maximum number of authors to return per entry (0 = all). Reduces token usage.",
+        description="Default max authors per entry (0 = all). Overridable per-call via input.",
     )
 
 
@@ -266,23 +300,42 @@ class ASCLSearchToolInputSchema(InputSchema):
         description=(
             "Search query for astrophysics codes. Supports code names (e.g. 'emcee', "
             "'RADMC-3D'), capability keywords (e.g. 'Monte Carlo radiative transfer'), "
-            "and field-specific syntax (e.g. title:\"emcee\", abstract:\"dust\")"
+            'and field-specific syntax (e.g. title:"emcee", abstract:"dust")'
         ),
     )
-    rows: int = Field(default=10, ge=1, le=50, description="Number of results to return")
-    field_preset: Literal["minimal", "standard", "extended"] | None = Field(
+    rows: int = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description=(
+            "Maximum entries to return. Enforced client-side after host-class filtering — "
+            "the ASCL API itself does not accept a row limit parameter."
+        ),
+    )
+    field_preset: ASCLFieldPreset | None = Field(
         default=None,
         description=(
             "Field preset for token efficiency. "
             "'minimal': ascl_id, title, code URLs. "
             "'standard': + authors, abstract, ADS bibcode, described_in, used_in, views. "
             "'extended': all fields including citation_method, time_updated, keywords. "
-            "If None, uses 'standard' preset."
+            "If None, uses 'standard'."
         ),
     )
-    require_code_host: Literal["github", "gitlab", "doi", "any"] | None = Field(
+    require_code_host: ASCLHostClass | None = Field(
         default=None,
-        description="Filter to entries whose primary URL matches the given host class",
+        description=(
+            "Filter to entries whose primary URL matches the given host class. "
+            "One of: github, gitlab, bitbucket, codeberg, srht, doi, docs, any."
+        ),
+    )
+    truncate_abstract: int | None = Field(
+        default=None,
+        description="Per-call override for abstract truncation (0 = no truncation). Falls back to config default.",
+    )
+    max_authors: int | None = Field(
+        default=None,
+        description="Per-call override for max authors (0 = all). Falls back to config default.",
     )
 
 
@@ -290,12 +343,23 @@ class ASCLSearchToolOutputSchema(OutputSchema):
     """Output schema for ASCL code search results."""
 
     entries: list[ASCLEntry] = Field(..., description="List of matching ASCL code entries")
-    num_found: int = Field(default=0, description="Number of entries returned")
+    num_found: int = Field(
+        default=0,
+        description="Total entries matched by ASCL before host-class filtering / row-cap",
+    )
+    num_returned: int = Field(
+        default=0,
+        description="Number of entries actually returned in this response",
+    )
     fields_returned: str = Field(default="", description="Fields that were requested from ASCL")
+    rate_limit: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Rate-limit headers from the ASCL response, if present",
+    )
 
 
 @mcp_tool
-class ASCLSearchTool(BaseTool[ASCLSearchToolInputSchema, ASCLSearchToolOutputSchema]):
+class ASCLSearchTool(_ASCLHttpMixin, BaseTool[ASCLSearchToolInputSchema, ASCLSearchToolOutputSchema]):
     """
     Search the Astrophysics Source Code Library (ASCL) for codes by name or capability.
 
@@ -310,25 +374,23 @@ class ASCLSearchTool(BaseTool[ASCLSearchToolInputSchema, ASCLSearchToolOutputSch
 
     Complements ads_search_tool: ADS finds papers mentioning code; this finds codes directly.
 
-    Input parameters (query-time, LLM-controllable):
-    - query: Code name or capability keywords
-    - rows: Number of results (1-50, default: 10)
-    - field_preset: Preset name for token efficiency (default: standard)
-    - require_code_host: Filter by URL host type (github, gitlab, doi, any)
-
-    Returns code entries with curated URLs, ADS bibcodes, and usage metadata.
+    Output splits ``num_found`` (total matches from ASCL) from ``num_returned``
+    (entries actually in this page after host-class filter + row cap), keeping the
+    semantics aligned with ``ads_search_tool``.
     """
 
     input_schema = ASCLSearchToolInputSchema
     output_schema = ASCLSearchToolOutputSchema
     config_schema = ASCLSearchToolConfig
+    config: ASCLSearchToolConfig
 
     async def _arun(self, params: ASCLSearchToolInputSchema) -> ASCLSearchToolOutputSchema:
         """Execute ASCL search query and return formatted results."""
-        preset = params.field_preset or "standard"
+        preset = params.field_preset or ASCLFieldPreset.STANDARD
         fields = ASCL_FIELD_PRESETS[preset]
 
-        # ASCL API requires q value wrapped in double quotes
+        # ASCL API requires q wrapped in double quotes. The API rejects unknown query
+        # parameters (including ``rows``), so the row cap is enforced client-side below.
         query_params: dict[str, str] = {
             "q": f'"{params.query}"',
             "fl": fields,
@@ -336,27 +398,43 @@ class ASCLSearchTool(BaseTool[ASCLSearchToolInputSchema, ASCLSearchToolOutputSch
 
         logger.debug(f"ASCL API request: {query_params}")
 
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-            try:
-                response = await client.get(self.config.base_url, params=query_params)
-                response.raise_for_status()
-                data = response.json()
-            except httpx.TimeoutException as e:
-                msg = f"ASCL API request timed out after {self.config.timeout}s"
-                raise TimeoutError(msg) from e
-            except httpx.HTTPStatusError as e:
-                msg = f"ASCL API returned error status {e.response.status_code}: {e.response.text}"
-                raise RuntimeError(msg) from e
-            except Exception as e:
-                msg = f"Failed to query ASCL API: {e}"
-                raise RuntimeError(msg) from e
+        client = await self._get_client()
+
+        try:
+            response = await get_with_retry(
+                client,
+                self.config.base_url,
+                params=query_params,
+                max_retries=self.config.max_retries,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.TimeoutException as e:
+            msg = f"ASCL API request timed out after {self.config.timeout}s"
+            raise TimeoutError(msg) from e
+        except httpx.HTTPStatusError as e:
+            msg = f"ASCL API returned error status {e.response.status_code}: {e.response.text}"
+            raise RuntimeError(msg) from e
+        except Exception as e:
+            msg = f"Failed to query ASCL API: {e}"
+            raise RuntimeError(msg) from e
+
+        rate_limit = extract_rate_limit(response)
 
         if not isinstance(data, list):
+            logger.warning(f"ASCL API returned unexpected payload type: {type(data).__name__}")
             data = []
+
+        total_matched = len(data)
+
+        truncate_abstract = (
+            params.truncate_abstract if params.truncate_abstract is not None else self.config.truncate_abstract
+        )
+        max_authors = params.max_authors if params.max_authors is not None else self.config.max_authors
 
         entries: list[ASCLEntry] = []
         for doc in data:
-            entry = _parse_entry(doc, self.config.truncate_abstract, self.config.max_authors)
+            entry = _parse_entry(doc, truncate_abstract, max_authors)
             if params.require_code_host and not _url_matches_host_class(entry.primary_url, params.require_code_host):
                 continue
             entries.append(entry)
@@ -365,8 +443,10 @@ class ASCLSearchTool(BaseTool[ASCLSearchToolInputSchema, ASCLSearchToolOutputSch
 
         return ASCLSearchToolOutputSchema(
             entries=entries,
-            num_found=len(entries),
+            num_found=total_matched,
+            num_returned=len(entries),
             fields_returned=fields,
+            rate_limit=rate_limit,
         )
 
 
@@ -378,17 +458,17 @@ class ASCLSearchTool(BaseTool[ASCLSearchToolInputSchema, ASCLSearchToolOutputSch
 class ASCLGetToolConfig(ASCLToolConfig):
     """Configuration for the ASCL Get Tool.
 
-    Inherits base_url and timeout from ASCLToolConfig.
+    Inherits base_url, timeout, and max_retries from ASCLToolConfig.
     Defaults to no truncation for single lookups (full detail).
     """
 
     truncate_abstract: int = Field(
         default=0,
-        description="Truncate abstract to this many characters (0 = no truncation). Full text by default for single lookups.",
+        description="Default abstract char cap (0 = no truncation). Overridable per-call via input.",
     )
     max_authors: int = Field(
         default=0,
-        description="Maximum number of authors (0 = all). All authors by default for single lookups.",
+        description="Default max authors (0 = all). Overridable per-call via input.",
     )
 
 
@@ -402,6 +482,14 @@ class ASCLGetInputSchema(InputSchema):
             "The ASCL id encodes the year and month of registration (YYMM.NNN)."
         ),
     )
+    truncate_abstract: int | None = Field(
+        default=None,
+        description="Per-call override for abstract truncation (0 = no truncation). Falls back to config default.",
+    )
+    max_authors: int | None = Field(
+        default=None,
+        description="Per-call override for max authors (0 = all). Falls back to config default.",
+    )
 
 
 class ASCLGetOutputSchema(OutputSchema):
@@ -409,10 +497,14 @@ class ASCLGetOutputSchema(OutputSchema):
 
     entry: ASCLEntry | None = Field(default=None, description="The ASCL entry if found, or null")
     found: bool = Field(default=False, description="Whether the entry was found")
+    rate_limit: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Rate-limit headers from the ASCL response, if present",
+    )
 
 
 @mcp_tool
-class ASCLGetTool(BaseTool[ASCLGetInputSchema, ASCLGetOutputSchema]):
+class ASCLGetTool(_ASCLHttpMixin, BaseTool[ASCLGetInputSchema, ASCLGetOutputSchema]):
     """
     Fetch a single ASCL entry by its identifier.
 
@@ -421,17 +513,12 @@ class ASCLGetTool(BaseTool[ASCLGetInputSchema, ASCLGetOutputSchema]):
     ascl_search_tool result.
 
     Accepts id formats: '1303.002' or 'ascl:1303.002'.
-
-    Input parameters (query-time, LLM-controllable):
-    - ascl_id: ASCL identifier (required)
-
-    Returns the full entry with code URLs, ADS bibcodes, and usage metadata,
-    or found=False if the id does not exist.
     """
 
     input_schema = ASCLGetInputSchema
     output_schema = ASCLGetOutputSchema
     config_schema = ASCLGetToolConfig
+    config: ASCLGetToolConfig
 
     @staticmethod
     def _normalize_id(ascl_id: str) -> str:
@@ -439,7 +526,7 @@ class ASCLGetTool(BaseTool[ASCLGetInputSchema, ASCLGetOutputSchema]):
         clean = ascl_id.strip()
         for prefix in ("ascl:", "ASCL:", "https://ascl.net/"):
             if clean.startswith(prefix):
-                clean = clean[len(prefix):]
+                clean = clean[len(prefix) :]
         return clean.strip()
 
     async def _arun(self, params: ASCLGetInputSchema) -> ASCLGetOutputSchema:
@@ -452,29 +539,42 @@ class ASCLGetTool(BaseTool[ASCLGetInputSchema, ASCLGetOutputSchema]):
 
         logger.debug(f"ASCL API get request: {query_params}")
 
-        async with httpx.AsyncClient(timeout=self.config.timeout) as client:
-            try:
-                response = await client.get(self.config.base_url, params=query_params)
-                response.raise_for_status()
-                data = response.json()
-            except httpx.TimeoutException as e:
-                msg = f"ASCL API request timed out after {self.config.timeout}s"
-                raise TimeoutError(msg) from e
-            except httpx.HTTPStatusError as e:
-                msg = f"ASCL API returned error status {e.response.status_code}: {e.response.text}"
-                raise RuntimeError(msg) from e
-            except Exception as e:
-                msg = f"Failed to query ASCL API: {e}"
-                raise RuntimeError(msg) from e
+        client = await self._get_client()
+
+        try:
+            response = await get_with_retry(
+                client,
+                self.config.base_url,
+                params=query_params,
+                max_retries=self.config.max_retries,
+            )
+            response.raise_for_status()
+            data = response.json()
+        except httpx.TimeoutException as e:
+            msg = f"ASCL API request timed out after {self.config.timeout}s"
+            raise TimeoutError(msg) from e
+        except httpx.HTTPStatusError as e:
+            msg = f"ASCL API returned error status {e.response.status_code}: {e.response.text}"
+            raise RuntimeError(msg) from e
+        except Exception as e:
+            msg = f"Failed to query ASCL API: {e}"
+            raise RuntimeError(msg) from e
+
+        rate_limit = extract_rate_limit(response)
 
         if not isinstance(data, list) or len(data) == 0:
-            return ASCLGetOutputSchema(entry=None, found=False)
+            return ASCLGetOutputSchema(entry=None, found=False, rate_limit=rate_limit)
+
+        truncate_abstract = (
+            params.truncate_abstract if params.truncate_abstract is not None else self.config.truncate_abstract
+        )
+        max_authors = params.max_authors if params.max_authors is not None else self.config.max_authors
 
         # Prefer exact ascl_id match; fall back to first result
         for doc in data:
             if doc.get("ascl_id") == normalized_id:
-                entry = _parse_entry(doc, self.config.truncate_abstract, self.config.max_authors)
-                return ASCLGetOutputSchema(entry=entry, found=True)
+                entry = _parse_entry(doc, truncate_abstract, max_authors)
+                return ASCLGetOutputSchema(entry=entry, found=True, rate_limit=rate_limit)
 
-        entry = _parse_entry(data[0], self.config.truncate_abstract, self.config.max_authors)
-        return ASCLGetOutputSchema(entry=entry, found=True)
+        entry = _parse_entry(data[0], truncate_abstract, max_authors)
+        return ASCLGetOutputSchema(entry=entry, found=True, rate_limit=rate_limit)
