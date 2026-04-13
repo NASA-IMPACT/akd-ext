@@ -199,5 +199,6 @@ claude-flow
 hive-mind-prompt-*.txt
 
 AGENTS.md
+CLAUDE.md
 SYNOPSIS.md
 log*.txt
