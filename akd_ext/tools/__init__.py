@@ -20,6 +20,18 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .stats import (
+    StatsTool,
+    StatsToolConfig,
+    StatsToolInputSchema,
+    StatsToolOutputSchema,
+)
+from .viz import (
+    VizTool,
+    VizToolConfig,
+    VizToolInputSchema,
+    VizToolOutputSchema,
+)
 
 __all__ = [
     "DummyTool",
@@ -38,4 +50,12 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "StatsTool",
+    "StatsToolInputSchema",
+    "StatsToolOutputSchema",
+    "StatsToolConfig",
+    "VizTool",
+    "VizToolInputSchema",
+    "VizToolOutputSchema",
+    "VizToolConfig",
 ]
