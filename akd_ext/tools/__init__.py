@@ -25,6 +25,12 @@ from .get_place import (
     GetPlaceToolConfig,
     GetPlaceToolInputSchema,
     GetPlaceToolOutputSchema,
+from .collections_rag import (
+    CollectionMatch,
+    CollectionsRAGTool,
+    CollectionsRAGToolConfig,
+    CollectionsRAGToolInputSchema,
+    CollectionsRAGToolOutputSchema,
 )
 
 __all__ = [
@@ -48,4 +54,9 @@ __all__ = [
     "GetPlaceToolConfig",
     "GetPlaceToolInputSchema",
     "GetPlaceToolOutputSchema",
+    "CollectionsRAGTool",
+    "CollectionsRAGToolInputSchema",
+    "CollectionsRAGToolOutputSchema",
+    "CollectionsRAGToolConfig",
+    "CollectionMatch",
 ]
