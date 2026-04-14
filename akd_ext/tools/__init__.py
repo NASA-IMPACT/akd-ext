@@ -20,6 +20,13 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .collections_rag import (
+    CollectionMatch,
+    CollectionsRAGTool,
+    CollectionsRAGToolConfig,
+    CollectionsRAGToolInputSchema,
+    CollectionsRAGToolOutputSchema,
+)
 
 __all__ = [
     "DummyTool",
@@ -38,4 +45,9 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "CollectionsRAGTool",
+    "CollectionsRAGToolInputSchema",
+    "CollectionsRAGToolOutputSchema",
+    "CollectionsRAGToolConfig",
+    "CollectionMatch",
 ]
