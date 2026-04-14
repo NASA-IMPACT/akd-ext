@@ -20,6 +20,17 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .stats import (
+    StatsTool,
+    StatsToolConfig,
+    StatsToolInputSchema,
+    StatsToolOutputSchema,
+)
+from .viz import (
+    VizTool,
+    VizToolConfig,
+    VizToolInputSchema,
+    VizToolOutputSchema,
 from .get_place import (
     GetPlaceTool,
     GetPlaceToolConfig,
@@ -50,6 +61,14 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "StatsTool",
+    "StatsToolInputSchema",
+    "StatsToolOutputSchema",
+    "StatsToolConfig",
+    "VizTool",
+    "VizToolInputSchema",
+    "VizToolOutputSchema",
+    "VizToolConfig",
     "GetPlaceTool",
     "GetPlaceToolConfig",
     "GetPlaceToolInputSchema",
