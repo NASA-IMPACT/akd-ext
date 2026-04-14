@@ -22,14 +22,6 @@ class CollectionsRAGToolConfig(BaseToolConfig):
         ),
         description="Base URL for the collections RAG service",
     )
-    timeout: float = Field(
-        default=30.0,
-        description="HTTP request timeout in seconds",
-    )
-    verify_ssl: bool = Field(
-        default=False,
-        description="Whether to verify SSL certificates (False for internal services with self-signed certs)",
-    )
 
 
 class CollectionMatch(OutputSchema):
@@ -86,7 +78,6 @@ class CollectionsRAGTool(BaseTool[CollectionsRAGToolInputSchema, CollectionsRAGT
 
     Configuration parameters (instance-time, user-controlled):
     - base_url: Base URL for the collections RAG service
-    - timeout: HTTP request timeout in seconds (default 30)
 
     Returns matches with:
     - id, title, description: Collection metadata
@@ -116,13 +107,13 @@ class CollectionsRAGTool(BaseTool[CollectionsRAGToolInputSchema, CollectionsRAGT
 
         logger.debug(f"Collections RAG request: {request_body}")
 
-        async with httpx.AsyncClient(timeout=self.config.timeout, verify=self.config.verify_ssl) as client:
+        async with httpx.AsyncClient(timeout=30, verify=False) as client:
             try:
                 response = await client.post(url, json=request_body)
                 response.raise_for_status()
                 data = response.json()
             except httpx.TimeoutException as e:
-                msg = f"Collections RAG service timed out after {self.config.timeout}s"
+                msg = f"Collections RAG service timed out after 30s"
                 raise TimeoutError(msg) from e
             except httpx.HTTPStatusError as e:
                 msg = f"Collections RAG service returned {e.response.status_code}: {e.response.text}"
