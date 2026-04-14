@@ -20,6 +20,12 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .stac_search import (
+    STACItem,
+    STACSearchTool,
+    STACSearchToolConfig,
+    STACSearchToolInputSchema,
+    STACSearchToolOutputSchema,
 from .stats import (
     StatsTool,
     StatsToolConfig,
@@ -61,6 +67,11 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "STACSearchTool",
+    "STACSearchToolInputSchema",
+    "STACSearchToolOutputSchema",
+    "STACSearchToolConfig",
+    "STACItem",
     "StatsTool",
     "StatsToolInputSchema",
     "StatsToolOutputSchema",
