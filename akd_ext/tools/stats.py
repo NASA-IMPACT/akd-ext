@@ -9,7 +9,7 @@ from loguru import logger
 from pydantic import Field
 
 from akd_ext.mcp import mcp_tool
-from akd_ext.tools.utils import fetch_cmr_statistics, fetch_statistics_batch
+from akd_ext.tools.utils import fetch_cmr_statistics, fetch_collection_metadata, fetch_statistics_batch
 
 
 class StatsToolConfig(BaseToolConfig):
@@ -32,6 +32,11 @@ class StatsToolConfig(BaseToolConfig):
     def raster_api_url(self) -> str:
         """Raster API URL derived from veda_api_root."""
         return f"{self.veda_api_root.rstrip('/')}/raster"
+
+    @property
+    def stac_url(self) -> str:
+        """STAC API URL derived from veda_api_root."""
+        return f"{self.veda_api_root.rstrip('/')}/stac"
 
 
 class StatsItem(OutputSchema):
@@ -70,8 +75,11 @@ class StatsToolInputSchema(InputSchema):
     )
 
     # --- CMR path ---
+    collection_id: str | None = Field(
+        None, description="Collection ID — full metadata is fetched automatically (CMR path)"
+    )
     collection_metadata: dict | None = Field(
-        None, description="Full STAC collection JSON with collection_concept_id and renders (CMR path)"
+        None, description="Pre-fetched STAC collection JSON; if omitted, fetched from collection_id (CMR path)"
     )
     datetime_range: str | None = Field(
         None, description="ISO-8601 range 'start/end' for CMR timeseries (required with collection_metadata)"
@@ -128,15 +136,24 @@ class StatsTool(BaseTool[StatsToolInputSchema, StatsToolOutputSchema]):
     async def _arun(self, params: StatsToolInputSchema) -> StatsToolOutputSchema:
         """Execute statistics fetch — picks VEDA or CMR path based on inputs."""
 
-        # CMR path: collection_metadata provided
-        if params.collection_metadata is not None:
+        # Auto-fetch collection metadata from collection_id if not provided
+        collection_metadata = params.collection_metadata
+        if collection_metadata is None and params.collection_id:
+            collection_metadata = fetch_collection_metadata(params.collection_id, self.config.stac_url)
+            if collection_metadata is None:
+                return StatsToolOutputSchema(
+                    error=f"Could not fetch metadata for collection '{params.collection_id}'"
+                )
+
+        # CMR path: collection_metadata provided (or auto-fetched)
+        if collection_metadata is not None:
             if not params.datetime_range:
                 return StatsToolOutputSchema(
                     error="datetime_range is required when using collection_metadata (CMR path)"
                 )
 
             result = fetch_cmr_statistics(
-                collection_metadata=params.collection_metadata,
+                collection_metadata=collection_metadata,
                 datetime_range=params.datetime_range,
                 geometry=params.geometry,
                 titiler_cmr_url=self.config.titiler_cmr_url,

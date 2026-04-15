@@ -8,7 +8,7 @@ from akd.tools import BaseTool, BaseToolConfig
 from pydantic import Field
 
 from akd_ext.mcp import mcp_tool
-from akd_ext.tools.utils import build_cmr_tile_urls, build_tile_urls_batch
+from akd_ext.tools.utils import build_cmr_tile_urls, build_tile_urls_batch, fetch_collection_metadata
 
 
 class VizToolConfig(BaseToolConfig):
@@ -129,14 +129,19 @@ class VizTool(BaseTool[VizToolInputSchema, VizToolOutputSchema]):
     async def _arun(self, params: VizToolInputSchema) -> VizToolOutputSchema:
         """Execute tile URL generation — picks VEDA or CMR path based on inputs."""
 
+        # Auto-fetch collection metadata from collection_id if not provided
+        collection_metadata = params.collection_metadata
+        if collection_metadata is None and params.collection_id:
+            collection_metadata = fetch_collection_metadata(params.collection_id, self.config.stac_url)
+
         # CMR path: collection_metadata with concept_id + datetime_range
         if (
-            params.collection_metadata is not None
-            and params.collection_metadata.get("collection_concept_id")
+            collection_metadata is not None
+            and collection_metadata.get("collection_concept_id")
             and params.datetime_range
         ):
             result = build_cmr_tile_urls(
-                collection_metadata=params.collection_metadata,
+                collection_metadata=collection_metadata,
                 datetime_range=params.datetime_range,
                 titiler_cmr_url=self.config.titiler_cmr_url,
                 selected_variable=params.selected_variable,
@@ -169,7 +174,7 @@ class VizTool(BaseTool[VizToolInputSchema, VizToolOutputSchema]):
                 collection_id=params.collection_id,
                 raster_api_url=self.config.raster_api_url,
                 stac_url=self.config.stac_url,
-                collection_metadata=params.collection_metadata,
+                collection_metadata=collection_metadata,
             )
 
             tile_items = [TileResultItem(**item) for item in result.get("items", [])]

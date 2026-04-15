@@ -10,6 +10,7 @@ from loguru import logger
 from pydantic import Field
 
 from akd_ext.mcp import mcp_tool
+from akd_ext.tools.utils import fetch_collection_metadata, is_cmr_backed
 
 
 class CollectionsRAGToolConfig(BaseToolConfig):
@@ -22,9 +23,18 @@ class CollectionsRAGToolConfig(BaseToolConfig):
         ),
         description="Base URL for the collections RAG service",
     )
+    veda_api_root: str = Field(
+        default=os.getenv("VEDA_API_ROOT", "https://dev.openveda.cloud/api"),
+        description="VEDA API root (used to fetch full collection metadata for enrichment)",
+    )
+
+    @property
+    def stac_url(self) -> str:
+        """STAC API URL derived from veda_api_root."""
+        return f"{self.veda_api_root.rstrip('/')}/stac"
 
 
-class CollectionMatch(OutputSchema):
+class CollectionMatchInfo(OutputSchema):
     """A single collection match with extent metadata."""
 
     id: str = Field(..., description="Collection ID")
@@ -40,6 +50,9 @@ class CollectionMatch(OutputSchema):
     source: str = Field(..., description="Result source: 'veda' or 'cmr'")
     cmr_rank: int | None = Field(None, description="Position in CMR results (None for VEDA)")
     time_density: str | None = Field(None, description="Temporal density: 'day', 'month', 'year', or None")
+    is_cmr_backed: bool = Field(False, description="Whether this collection is accessed via titiler-cmr")
+    concept_id: str | None = Field(None, description="CMR collection_concept_id (if CMR-backed)")
+    available_variables: list[str] = Field(default_factory=list, description="Renderable variable names (CMR collections)")
 
 
 class CollectionsRAGToolInputSchema(InputSchema):
@@ -58,7 +71,9 @@ class CollectionsRAGToolInputSchema(InputSchema):
 class CollectionsRAGToolOutputSchema(OutputSchema):
     """Output schema for collections RAG search."""
 
-    matches: list[CollectionMatch] = Field(..., description="Ranked collection matches")
+    collections: list[str] = Field(default_factory=list, description="Matched collection IDs")
+    matches: list[CollectionMatchInfo] = Field(default_factory=list, description="Detailed match info with coverage")
+    error: str | None = Field(default=None, description="Error message if search failed")
 
 
 @mcp_tool
@@ -119,8 +134,35 @@ class CollectionsRAGTool(BaseTool[CollectionsRAGToolInputSchema, CollectionsRAGT
                 msg = f"Collections RAG service returned {e.response.status_code}: {e.response.text}"
                 raise RuntimeError(msg) from e
 
-        matches = [CollectionMatch(**item) for item in data]
+        # Enrich each match with full metadata (is_cmr_backed, concept_id, available_variables)
+        # Mirrors eie-llm-backend's injected_tools.py enrichment step.
+        auxiliary_suffixes = ("_cnt", "_cond", "Error", "_error")
+        enriched_matches = []
+        for item in data:
+            coll_metadata = fetch_collection_metadata(item["id"], self.config.stac_url)
+            concept_id = coll_metadata.get("collection_concept_id") if coll_metadata else None
+            cmr_backed = bool(concept_id)
 
-        logger.debug(f"Collections RAG returned {len(matches)} matches")
+            available_variables: list[str] = []
+            if cmr_backed and coll_metadata:
+                renders = coll_metadata.get("renders", {})
+                available_variables = [
+                    v for v in renders.keys()
+                    if not any(s in v for s in auxiliary_suffixes)
+                ]
 
-        return CollectionsRAGToolOutputSchema(matches=matches)
+            enriched_matches.append(
+                CollectionMatchInfo(
+                    **item,
+                    is_cmr_backed=cmr_backed,
+                    concept_id=concept_id,
+                    available_variables=available_variables,
+                )
+            )
+
+        logger.debug(f"Collections RAG returned {len(enriched_matches)} matches (enriched)")
+
+        return CollectionsRAGToolOutputSchema(
+            collections=[m.id for m in enriched_matches],
+            matches=enriched_matches,
+        )
