@@ -1,0 +1,124 @@
+"""Translate pydantic_ai stream events into AKD ``StreamEvent`` objects.
+
+``astream`` on ``PydanticAIBaseAgent`` wraps ``pydantic_ai.Agent.run_stream_events()``
+and yields whatever we can translate. Events we can't faithfully map are
+dropped (return ``None``); the caller iterator still terminates naturally when
+the run completes, which is the AKD signal for end-of-stream anyway.
+
+Translation table:
+
+| pydantic_ai event                                | AKD event             |
+|--------------------------------------------------|-----------------------|
+| ``PartDeltaEvent(delta=TextPartDelta)``          | ``StreamingTokenEvent`` |
+| ``PartStartEvent(part=ThinkingPart)``            | ``ThinkingEvent``       |
+| ``PartDeltaEvent(delta=ThinkingPartDelta)``      | ``ThinkingEvent``       |
+| ``FunctionToolCallEvent`` / ``BuiltinToolCallEvent`` | ``ToolCallingEvent`` |
+| ``FunctionToolResultEvent`` / ``BuiltinToolResultEvent`` | ``ToolResultEvent`` |
+| ``FinalResultEvent``                             | (dropped; iterator end signals completion) |
+| ``PartStartEvent(part=TextPart)``, ``PartEndEvent`` | (dropped; no AKD analogue) |
+
+A future ``CompletedEvent`` emission with the actual output value is the
+responsibility of ``astream`` itself (after the iterator exhausts), not this
+function — this translator is per-event.
+"""
+
+from __future__ import annotations
+
+from pydantic_ai.messages import (
+    BuiltinToolCallEvent,
+    BuiltinToolResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    PartStartEvent,
+    TextPartDelta,
+    ThinkingPart,
+    ThinkingPartDelta,
+    ToolCallPart,
+    ToolCallPartDelta,
+    ToolReturnPart,
+)
+
+from akd._base import (
+    StreamEvent,
+    StreamingEventData,
+    StreamingTokenEvent,
+    ThinkingEvent,
+    ThinkingEventData,
+    ToolCall,
+    ToolCallingEvent,
+    ToolCallingEventData,
+    ToolResult,
+    ToolResultEvent,
+    ToolResultEventData,
+)
+
+
+def pai_event_to_akd_event(pai_event) -> StreamEvent | None:
+    """Translate a single pydantic_ai stream event to an AKD ``StreamEvent``.
+
+    Returns ``None`` for events we don't map; callers should skip those.
+    """
+    # Text delta → streaming token
+    if isinstance(pai_event, PartDeltaEvent):
+        delta = pai_event.delta
+        if isinstance(delta, TextPartDelta):
+            token = getattr(delta, "content_delta", "") or ""
+            return StreamingTokenEvent(data=StreamingEventData(token=token))
+        if isinstance(delta, ThinkingPartDelta):
+            thinking = getattr(delta, "content_delta", "") or ""
+            return ThinkingEvent(data=ThinkingEventData(thinking_content=thinking, streaming=True))
+        if isinstance(delta, ToolCallPartDelta):
+            # Structured-output runs stream the args JSON of the final-output
+            # tool call. Surface each chunk as a streaming token so UIs see
+            # the model assembling its answer rather than nothing.
+            args_delta = getattr(delta, "args_delta", None) or ""
+            if isinstance(args_delta, dict):
+                args_delta = str(args_delta)
+            return StreamingTokenEvent(data=StreamingEventData(token=args_delta))
+        return None
+
+    # Thinking part started → emit a (non-streaming) thinking marker
+    if isinstance(pai_event, PartStartEvent):
+        part = pai_event.part
+        if isinstance(part, ThinkingPart):
+            content = getattr(part, "content", "") or ""
+            return ThinkingEvent(data=ThinkingEventData(thinking_content=content))
+        # TextPart start and other part kinds don't have a direct AKD analogue
+        return None
+
+    # Function tool call
+    if isinstance(pai_event, (FunctionToolCallEvent, BuiltinToolCallEvent)):
+        part = pai_event.part
+        if isinstance(part, ToolCallPart):
+            return ToolCallingEvent(
+                data=ToolCallingEventData(
+                    tool_call=ToolCall(
+                        tool_call_id=part.tool_call_id or "",
+                        tool_name=part.tool_name,
+                        arguments=part.args_as_dict() if hasattr(part, "args_as_dict") else (part.args or {}),
+                    ),
+                ),
+            )
+        return None
+
+    # Function tool result
+    if isinstance(pai_event, (FunctionToolResultEvent, BuiltinToolResultEvent)):
+        result = pai_event.result
+        if isinstance(result, ToolReturnPart):
+            return ToolResultEvent(
+                data=ToolResultEventData(
+                    result=ToolResult(
+                        tool_call_id=result.tool_call_id or "",
+                        tool_name=result.tool_name,
+                        content=result.content,
+                    ),
+                ),
+            )
+        # RetryPromptPart results (tool retries) don't map to a success event
+        return None
+
+    return None
+
+
+__all__ = ["pai_event_to_akd_event"]
