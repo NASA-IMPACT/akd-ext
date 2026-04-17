@@ -12,9 +12,12 @@ running against a live model.
 
 from __future__ import annotations
 
-from typing import Literal
+import os
+
+from typing import Any, Literal
 
 from pydantic import Field
+from pydantic_ai.capabilities import MCP
 
 from akd._base import TextOutput
 
@@ -402,13 +405,38 @@ CMR_CARE_PYDANTIC_SYSTEM_PROMPT = """ROLE
 # -----------------------------------------------------------------------------
 
 
+def get_default_cmr_capabilities() -> list[Any]:
+    """Default CMR MCP capability for pydantic_ai.
+
+    Points at the CMR MCP server (override via ``CMR_MCP_URL`` env var) and
+    exposes the same allowed-tool subset the OpenAI-based ``cmr_care.py``
+    uses, so the two agents hit the same backend surface.
+    """
+    return [
+        MCP(
+            # Trailing slash matters: the endpoint returns a 307 redirect
+            # to the slashed form, which the MCP streamable-HTTP client
+            # won't follow on POST (per HTTP semantics for POST redirects).
+            url=os.environ.get(
+                "CMR_MCP_URL",
+                "https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp/",
+            ),
+            allowed_tools=[
+                "search_collections",
+                "get_granules",
+                "get_collection_metadata",
+            ],
+            description="CMR MCP server for NASA dataset discovery",
+        ),
+    ]
+
+
 class CMRCarePydanticConfig(PydanticAIBaseAgentConfig):
     """Config for ``CMRCarePydanticAgent``.
 
-    Mirrors ``CMRCareConfig`` from ``cmr_care.py`` but points at the Pydantic AI
-    base class. Tools / MCP wiring is left out of the default — add a
-    ``pydantic_ai.capabilities.MCP(...)`` entry to ``capabilities=`` when you
-    want the agent to hit the real CMR MCP endpoint.
+    Mirrors ``CMRCareConfig`` from ``cmr_care.py`` but wires MCP via
+    pydantic_ai's native ``MCP`` capability (passed through the inherited
+    ``capabilities`` field), not the OpenAI Agents SDK's ``HostedMCPTool``.
     """
 
     description: str = Field(
@@ -423,6 +451,7 @@ class CMRCarePydanticConfig(PydanticAIBaseAgentConfig):
     system_prompt: str = Field(default=CMR_CARE_PYDANTIC_SYSTEM_PROMPT)
     model_name: str = Field(default="openai:gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
+    capabilities: list[Any] = Field(default_factory=get_default_cmr_capabilities)
 
 
 # -----------------------------------------------------------------------------

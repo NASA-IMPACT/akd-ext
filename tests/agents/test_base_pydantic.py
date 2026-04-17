@@ -290,11 +290,17 @@ def test_cmr_care_pydantic_agent_check_output():
 
 @pytest.mark.asyncio
 async def test_cmr_care_pydantic_agent_arun_with_test_model():
-    """End-to-end wiring check: CMRCarePydanticAgent.arun works against TestModel."""
+    """End-to-end wiring check: CMRCarePydanticAgent.arun works against TestModel.
+
+    The default config wires pydantic_ai's ``MCP`` capability at the CMR
+    endpoint — pydantic_ai tries to fetch the tool list even when ``TestModel``
+    stands in for the LLM, which would reach the real network. We override
+    ``capabilities=[]`` here so the test runs hermetically.
+    """
     from akd_ext.agents.cmr_care import CMRCareAgentInputSchema, CMRCareAgentOutputSchema
     from akd_ext.agents.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
 
-    agent = CMRCarePydanticAgent(CMRCarePydanticConfig())
+    agent = CMRCarePydanticAgent(CMRCarePydanticConfig(capabilities=[]))
     with agent.override(model=TestModel()):
         result = await agent.arun(CMRCareAgentInputSchema(query="sea ice datasets"))
     assert isinstance(result, (CMRCareAgentOutputSchema, TextOutput))

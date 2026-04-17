@@ -115,6 +115,17 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
         description="Pydantic AI history processor callables; merged with config-derived processors.",
     )
 
+    # Override BaseAgentConfig's default-on trimming. The naive ratio-based
+    # trimmer we ship in ``_capabilities.make_ratio_trimmer`` drops arbitrary
+    # slices of the message history, which breaks pydantic_ai's invariant
+    # that every ``tool`` message must be preceded by an ``assistant`` message
+    # with matching ``tool_calls``. A pydantic_ai-aware trimmer that respects
+    # tool-call pairing is a follow-up; until then, trimming is off by
+    # default. Consumers who want it enabled explicitly can set
+    # ``enable_trimming=True`` and supply their own processor via
+    # ``history_processors``.
+    enable_trimming: bool = Field(default=False)
+
     # -- Silence AKD-core's litellm-based config validators --------------
     # BaseAgentConfig defines ``validate_max_tokens_against_model`` and
     # ``validate_reasoning_params`` as @model_validator(mode="after") hooks
