@@ -80,7 +80,7 @@ class TestURLFileResolver:
         parts = await resolver.resolve(att)
 
         assert len(parts) == 1
-        assert parts[0]["type"] == "text"
+        assert parts[0]["type"] == "input_text"
         assert "[File: data.csv]" in parts[0]["text"]
         assert "col1,col2" in parts[0]["text"]
         resolver._fetch.assert_awaited_once_with("https://example.com/data.csv")
@@ -97,10 +97,12 @@ class TestURLFileResolver:
         )
         parts = await resolver.resolve(att)
 
-        assert len(parts) == 1
+        assert len(parts) == 2
         assert parts[0]["type"] == "input_image"
         expected_b64 = base64.b64encode(image_bytes).decode("utf-8")
         assert parts[0]["image_url"] == f"data:image/png;base64,{expected_b64}"
+        assert parts[1]["type"] == "input_text"
+        assert "img.png" in parts[1]["text"]
 
     @pytest.mark.asyncio
     async def test_resolve_with_custom_client(self):
@@ -113,7 +115,7 @@ class TestURLFileResolver:
         )
         parts = await resolver.resolve(att)
 
-        assert parts[0]["type"] == "text"
+        assert parts[0]["type"] == "input_text"
         assert "hello" in parts[0]["text"]
 
     @pytest.mark.asyncio
