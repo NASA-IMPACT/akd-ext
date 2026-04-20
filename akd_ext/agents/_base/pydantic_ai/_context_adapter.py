@@ -29,7 +29,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.result import RunUsage as PAIRunUsage
 
-from ._protocols import SupportsUsage
+from akd._base.protocols import TokenCounts
 
 
 def _akd_dicts_to_pai_messages(messages: list[dict[str, Any]]) -> list[ModelMessage]:
@@ -56,8 +56,8 @@ def _akd_dicts_to_pai_messages(messages: list[dict[str, Any]]) -> list[ModelMess
     return out
 
 
-def _usage_to_pai(usage: SupportsUsage) -> PAIRunUsage:
-    """Build a ``pydantic_ai.RunUsage`` from anything matching ``SupportsUsage``.
+def _usage_to_pai(usage: TokenCounts) -> PAIRunUsage:
+    """Build a ``pydantic_ai.RunUsage`` from anything matching ``TokenCounts``.
 
     Pass-through if the value is already a ``pydantic_ai.RunUsage``. Otherwise
     copy the three structural fields; all other ``RunUsage`` fields default to 0.

@@ -1,10 +1,8 @@
 """``PydanticAIBaseAgent`` — Pydantic AI-backed agent conforming to the AKD contract.
 
 Subclasses ``pydantic_ai.Agent`` directly (Path B) and also explicitly
-inherits the ``AKDAgent`` Protocol so ``isinstance(agent, AKDAgent)`` works
-at runtime. When akd-core ships its Protocol hierarchy and MRO fix, the
-swap to Path A (multi-inheriting ``BaseAgent`` for shared machinery) is a
-small diff; see ``docs/pydantic_ai_base_agent_implementation_plan.md``.
+inherits akd-core's ``AKDExecutable`` Protocol so
+``isinstance(agent, AKDExecutable)`` works at runtime.
 
 Consumers use the same AKD pattern they're used to:
 
@@ -18,7 +16,7 @@ Consumers use the same AKD pattern they're used to:
     agent = MyAgent(MyConfig(model_name="openai:gpt-5.2", reasoning_effort="high"))
     result = await agent.arun(MyIn(query="..."))
 
-Config auto-exposure is handled by ``AbstractBaseMeta`` — ``agent.model_name``,
+Config auto-exposure is handled by ``ConfigBindingMixin`` — ``agent.model_name``,
 ``agent.description``, etc. route to ``self.config.*`` without per-field
 property definitions. The single opt-out is ``system_prompt`` (re-bound to
 pydantic_ai's decorator method so it isn't shadowed by an auto-property).
@@ -27,7 +25,7 @@ pydantic_ai's decorator method so it isn't shadowed by an auto-property).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
-from typing import Any, _ProtocolMeta
+from typing import Any
 
 from pydantic import ConfigDict, Field, model_validator
 from pydantic_ai import Agent as PAIAgent
@@ -37,55 +35,19 @@ from pydantic_ai.capabilities import AbstractCapability
 from akd._base import (
     CompletedEvent,
     CompletedEventData,
+    ConfigBindingMixin,
     InputSchema,
     OutputSchema,
     StreamEvent,
     TextOutput,
 )
-from akd._base._base import AbstractBaseMeta
+from akd._base.protocols import AKDExecutable, RunContextProtocol
 from akd.agents._base import BaseAgentConfig
 
 from ._capabilities import ReflectionCapability, ToolCallLimits, make_ratio_trimmer
 from ._context_adapter import _message_history_from_run_context, _usage_from_run_context
 from ._event_translator import pai_event_to_akd_event
-from ._protocols import AKDAgent, RunContextProtocol
 from ._tool_adapter import akd_to_pai_tool
-
-# ---------------------------------------------------------------------------
-# Joint metaclass
-# ---------------------------------------------------------------------------
-# Explicit Protocol inheritance (AKDAgent) drags in ``_ProtocolMeta``;
-# AKD's config auto-exposure is driven by ``AbstractBaseMeta``. Both subclass
-# ``ABCMeta`` but neither subclasses the other, so combining them on a single
-# class raises ``TypeError: metaclass conflict``. The small joint subclass
-# below resolves the MRO: a PydanticAIBaseAgent subclass can satisfy both.
-
-
-class PydanticAIAgentMeta(_ProtocolMeta, AbstractBaseMeta):
-    """Joint metaclass: Protocol introspection + AKD config auto-exposure.
-
-    AKD's ``AbstractBaseMeta`` auto-creates a property per config field on
-    every subclass, which would shadow attributes like pydantic_ai.Agent's
-    ``system_prompt`` decorator method on every inheritor. The ``SKIP_AUTO_EXPOSE``
-    set names fields that must never get an auto-property — after the base
-    metaclass runs, we restore the inherited attribute from the MRO.
-    """
-
-    SKIP_AUTO_EXPOSE: frozenset[str] = frozenset({"system_prompt"})
-
-    def __new__(mcs, name, bases, dct):
-        cls = super().__new__(mcs, name, bases, dct)
-        # Undo auto-exposure for skipped fields: replace any property the
-        # base metaclass installed with the inherited attribute from an MRO base.
-        for field_name in mcs.SKIP_AUTO_EXPOSE:
-            current = cls.__dict__.get(field_name)
-            if isinstance(current, property):
-                for base in cls.__mro__[1:]:
-                    if field_name in vars(base):
-                        setattr(cls, field_name, vars(base)[field_name])
-                        break
-        return cls
-
 
 # ---------------------------------------------------------------------------
 # Config
@@ -151,11 +113,11 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
 
 
 class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
+    ConfigBindingMixin,
     PAIAgent,
-    AKDAgent,
-    metaclass=PydanticAIAgentMeta,
+    AKDExecutable,
 ):
-    """Pydantic AI-backed agent conforming to the AKD ``AKDAgent`` protocol.
+    """Pydantic AI-backed agent conforming to the AKD ``AKDExecutable`` protocol.
 
     Subclass this class to build new agents. Subclasses override:
 
@@ -172,11 +134,12 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     output_schema: type[OutSchema] = OutputSchema  # type: ignore[assignment]
     config_schema: type[PydanticAIBaseAgentConfig] = PydanticAIBaseAgentConfig
 
-    # Opt out of metaclass auto-exposure for ``system_prompt``: pydantic_ai's
-    # ``system_prompt`` is a decorator method used to register dynamic system
-    # prompts, and we must not shadow it with a config-routing property.
-    # Re-binding here puts ``system_prompt`` in the class dict, which
-    # ``AbstractBaseMeta`` treats as "already defined, skip auto-exposure".
+    # Opt out of ``ConfigBindingMixin`` auto-exposure for ``system_prompt``:
+    # pydantic_ai's ``system_prompt`` is a decorator method used to register
+    # dynamic system prompts, and we must not shadow it with a config-routing
+    # property. Re-binding here puts ``system_prompt`` in the class dict,
+    # which ``ConfigBindingMixin.__init_subclass__`` treats as "already
+    # defined, skip auto-exposure".
     system_prompt = PAIAgent.system_prompt
 
     # ── Construction ──────────────────────────────────────────────────────
@@ -406,7 +369,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
 
 
 __all__ = [
-    "PydanticAIAgentMeta",
     "PydanticAIBaseAgent",
     "PydanticAIBaseAgentConfig",
 ]

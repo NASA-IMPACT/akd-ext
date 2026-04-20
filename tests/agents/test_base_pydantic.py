@@ -18,12 +18,13 @@ from akd._base.errors import SchemaValidationError
 from akd.tools._base import BaseTool
 
 from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
-from akd_ext.agents._base.pydantic_ai._protocols import (
-    AKDAgent,
+from akd._base.protocols import (
+    AKDExecutable,
     AKDTool,
     RunContextProtocol,
-    SupportsUsage,
+    TokenCounts,
 )
+
 from akd_ext.agents._base.pydantic_ai._tool_adapter import akd_to_pai_tool
 
 
@@ -98,16 +99,16 @@ def test_system_prompt_not_shadowed_by_auto_exposure():
 
 
 def test_agent_is_runtime_akd_agent():
-    """Explicit Protocol inheritance means isinstance(agent, AKDAgent) works."""
+    """Explicit Protocol inheritance means isinstance(agent, AKDExecutable) works."""
     agent = _EchoAgent()
-    assert isinstance(agent, AKDAgent)
+    assert isinstance(agent, AKDExecutable)
 
 
 def test_config_is_runtime_run_context_protocol():
-    """Sanity check: SupportsUsage and RunContextProtocol are importable and checkable."""
+    """Sanity check: TokenCounts and RunContextProtocol are importable and checkable."""
     # Concrete instances satisfy these structurally in practice; here we just
     # confirm the symbols exist and are runtime-checkable.
-    assert hasattr(SupportsUsage, "_is_runtime_protocol")
+    assert hasattr(TokenCounts, "_is_runtime_protocol")
     assert hasattr(RunContextProtocol, "_is_runtime_protocol")
 
 
@@ -266,7 +267,7 @@ def test_cmr_care_pydantic_agent_constructs():
     agent = CMRCarePydanticAgent(CMRCarePydanticConfig(debug=True))
     assert agent.input_schema is CMRCareAgentInputSchema
     assert agent.output_schema == CMRCareAgentOutputSchema | TextOutput
-    assert isinstance(agent, AKDAgent)
+    assert isinstance(agent, AKDExecutable)
     # Config auto-exposure works through the subclass config:
     assert agent.reasoning_effort == "medium"
     assert "CMR" in (agent.description or "")

@@ -26,7 +26,7 @@ from pydantic_ai import Tool as PAITool
 
 from akd._base.errors import SchemaValidationError
 
-from ._protocols import AKDTool
+from akd._base.protocols import AKDTool
 
 
 def akd_to_pai_tool(akd_tool: AKDTool) -> PAITool:

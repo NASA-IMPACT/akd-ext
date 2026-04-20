@@ -243,22 +243,24 @@ classDiagram
 ```
 akd_ext/agents/_base/pydantic_ai/
 ├── __init__.py              # re-exports PydanticAIBaseAgent, PydanticAIBaseAgentConfig
-├── _base.py                 # PydanticAIBaseAgent, PydanticAIBaseAgentConfig, PydanticAIAgentMeta
-├── _protocols.py            # AKDAgent, AKDTool, AKDExecutable, RunContextProtocol, SupportsUsage
+├── _base.py                 # PydanticAIBaseAgent, PydanticAIBaseAgentConfig
 ├── _capabilities.py         # ToolCallLimits, ReflectionCapability, make_ratio_trimmer (factories)
 ├── _context_adapter.py      # AKD ↔ pydantic_ai run-context / message-history / usage translation
 ├── _event_translator.py     # pai_event_to_akd_event — stream event mapping
 └── _tool_adapter.py         # akd_to_pai_tool — BaseTool → pydantic_ai.Tool
 ```
 
+Structural protocols (``AKDExecutable``, ``AKDTool``, ``RunContextProtocol``, ``TokenCounts``)
+are sourced from ``akd._base.protocols`` and no longer duplicated here.
+
 ## Color Legend
 
 | Color | Layer | Meaning |
 |-------|-------|---------|
-| 🟢 Green (`#e8f5e9`) | Core new classes | The three classes this subpackage adds: `PydanticAIBaseAgent`, `PydanticAIBaseAgentConfig`, `PydanticAIAgentMeta`. |
+| 🟢 Green (`#e8f5e9`) | Core new classes | The two classes this subpackage adds: `PydanticAIBaseAgent`, `PydanticAIBaseAgentConfig`. |
 | 🔵 Blue (`#e3f2fd`) | External — pydantic_ai | Library types being subclassed, composed, or translated. Collapsed to a handful of boundary boxes — internal shape isn't diagrammed. |
-| ⚪ Gray (`#eceff1`) | External — akd-core | Foundations from the parent framework — schemas, config base, tool base, stream-event hierarchy, metaclass. |
-| 🟠 Orange (`#fff3e0`) | Protocols | Structural interfaces defined in `_protocols.py`. Runtime-checkable; satisfied by both AKD and pydantic_ai sides. |
+| ⚪ Gray (`#eceff1`) | External — akd-core | Foundations from the parent framework — schemas, config base, tool base, stream-event hierarchy, `ConfigBindingMixin`. |
+| 🟠 Orange (`#fff3e0`) | Protocols | Structural interfaces defined in `akd._base.protocols`. Runtime-checkable; satisfied by both AKD and pydantic_ai sides. |
 | 🩷 Pink (`#fce4ec`) | Adapters / bridges | Function-only modules presented as classes with static methods; each sits between an AKD concept and a pydantic_ai concept. |
 
 ## Inheritance & Conformance
@@ -266,21 +268,16 @@ akd_ext/agents/_base/pydantic_ai/
 ```
 Runtime (class) inheritance
 ──────────────────────────
-pydantic_ai.Agent ──┐
-                    ├──► PydanticAIBaseAgent [Path B]
-akd AKDAgent  ──────┘        (Protocol listed in bases so isinstance works)
-
-akd.AbstractBaseMeta ─┐
-                      ├──► PydanticAIAgentMeta  (joint metaclass)
-typing._ProtocolMeta ─┘
+akd.ConfigBindingMixin ──┐
+pydantic_ai.Agent        ├──► PydanticAIBaseAgent [Path B]
+akd AKDExecutable ───────┘        (Protocol listed in bases so isinstance works)
 
 akd.BaseAgentConfig ──► PydanticAIBaseAgentConfig
 
 Structural (Protocol) conformance
 ──────────────────────────────────
-AKDExecutable  ◄── AKDAgent         (both runtime_checkable)
-AKDExecutable  ◄── AKDTool
-SupportsUsage  is satisfied by both akd.RunUsage and pydantic_ai.RunUsage
+AKDExecutable  ◄── AKDTool         (both runtime_checkable)
+TokenCounts  is satisfied by both akd.RunUsage and pydantic_ai.RunUsage
 RunContextProtocol is satisfied by both akd.RunContext and pydantic_ai.RunContext
 ```
 
@@ -385,15 +382,15 @@ PydanticAIBaseAgent.__init__(config)
 
 ## Design Notes
 
-- **Path B** (subclassing `PAIAgent` directly) was chosen to decouple this work
-  from the akd-core Protocol/MRO fix. `AKDAgent` is also listed in the bases so
-  `isinstance(agent, AKDAgent)` returns `True` at runtime; swapping to Path A
-  (multi-inheriting `BaseAgent` for shared machinery) is a small diff once
-  akd-core ships its hierarchy.
-- **Joint metaclass** `PydanticAIAgentMeta` resolves the `_ProtocolMeta` ×
-  `AbstractBaseMeta` conflict (both subclass `ABCMeta`, neither subclasses the
-  other). `SKIP_AUTO_EXPOSE = {"system_prompt"}` prevents the auto-property
-  from shadowing pydantic_ai's `system_prompt` decorator method.
+- **Path B** (subclassing `PAIAgent` directly) keeps this implementation lean.
+  `AKDExecutable` is also listed in the bases so `isinstance(agent, AKDExecutable)`
+  returns `True` at runtime. Swapping to Path A (multi-inheriting `BaseAgent` for
+  shared machinery) is a small diff if ever needed.
+- **Config auto-exposure** uses akd-core's `ConfigBindingMixin` (a mixin driven
+  by `__init_subclass__`, no metaclass). Fields already defined in the class
+  dict are skipped automatically — we re-bind `system_prompt = PAIAgent.system_prompt`
+  at class scope to prevent the auto-property from shadowing pydantic_ai's
+  `system_prompt` decorator method.
 - **Trimming is off by default** on `PydanticAIBaseAgentConfig`: the naive
   ratio-trimmer breaks pydantic_ai's invariant that every `tool` message must
   follow an `assistant` with matching `tool_calls`. A pydantic_ai-aware
