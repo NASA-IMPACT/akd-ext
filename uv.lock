@@ -239,7 +239,7 @@ requires-dist = [
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "openai-agents", specifier = ">=0.6.7" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=4.2.0" },
-    { name = "pydantic-ai", specifier = ">=0.2.0" },
+    { name = "pydantic-ai", specifier = ">=1.81.0" },
     { name = "pygithub", specifier = ">=2.1.1" },
     { name = "pygithub", marker = "extra == 'dev'", specifier = ">=2.1.1" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=8.0.0" },
