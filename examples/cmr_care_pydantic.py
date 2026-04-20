@@ -21,7 +21,7 @@ from pydantic_ai.capabilities import MCP
 
 from akd._base import TextOutput
 
-from akd_ext.agents._base_pydantic import (
+from akd_ext.agents._base import (
     PydanticAIBaseAgent,
     PydanticAIBaseAgentConfig,
 )

@@ -17,14 +17,14 @@ from akd._base import InputSchema, OutputSchema, TextOutput
 from akd._base.errors import SchemaValidationError
 from akd.tools._base import BaseTool
 
-from akd_ext.agents._base_pydantic import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
-from akd_ext.agents._base_pydantic._protocols import (
+from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
+from akd_ext.agents._base.pydantic_ai._protocols import (
     AKDAgent,
     AKDTool,
     RunContextProtocol,
     SupportsUsage,
 )
-from akd_ext.agents._base_pydantic._tool_adapter import akd_to_pai_tool
+from akd_ext.agents._base.pydantic_ai._tool_adapter import akd_to_pai_tool
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +261,7 @@ def test_cmr_care_pydantic_agent_constructs():
     """CMRCarePydanticAgent builds cleanly on PydanticAIBaseAgent using the same
     schemas as the existing CMRCareAgent."""
     from akd_ext.agents.cmr_care import CMRCareAgentInputSchema, CMRCareAgentOutputSchema
-    from akd_ext.agents.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
+    from examples.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
 
     agent = CMRCarePydanticAgent(CMRCarePydanticConfig(debug=True))
     assert agent.input_schema is CMRCareAgentInputSchema
@@ -275,7 +275,7 @@ def test_cmr_care_pydantic_agent_constructs():
 def test_cmr_care_pydantic_agent_check_output():
     """Subclass override of check_output dispatches via the late-bound bridge."""
     from akd_ext.agents.cmr_care import CMRCareAgentOutputSchema
-    from akd_ext.agents.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
+    from examples.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
 
     agent = CMRCarePydanticAgent(CMRCarePydanticConfig())
     # Empty result should be rejected by the subclass override
@@ -298,7 +298,7 @@ async def test_cmr_care_pydantic_agent_arun_with_test_model():
     ``capabilities=[]`` here so the test runs hermetically.
     """
     from akd_ext.agents.cmr_care import CMRCareAgentInputSchema, CMRCareAgentOutputSchema
-    from akd_ext.agents.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
+    from examples.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
 
     agent = CMRCarePydanticAgent(CMRCarePydanticConfig(capabilities=[]))
     with agent.override(model=TestModel()):

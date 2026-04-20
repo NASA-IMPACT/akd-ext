@@ -1,6 +1,6 @@
 # PydanticAIBaseAgent — Full Class Diagram
 
-Full structural diagram for `akd_ext/agents/_base_pydantic/` traced from the
+Full structural diagram for `akd_ext/agents/_base/pydantic_ai/` traced from the
 entry file `_base.py`. Focus: the classes this subpackage adds, the protocols
 it defines, and the adapter modules that bridge AKD ↔ pydantic_ai. External
 SDK types are shown as single boundary boxes; their internal structure is
@@ -241,7 +241,7 @@ classDiagram
 ## Module Layout
 
 ```
-akd_ext/agents/_base_pydantic/
+akd_ext/agents/_base/pydantic_ai/
 ├── __init__.py              # re-exports PydanticAIBaseAgent, PydanticAIBaseAgentConfig
 ├── _base.py                 # PydanticAIBaseAgent, PydanticAIBaseAgentConfig, PydanticAIAgentMeta
 ├── _protocols.py            # AKDAgent, AKDTool, AKDExecutable, RunContextProtocol, SupportsUsage
