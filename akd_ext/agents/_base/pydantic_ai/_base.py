@@ -31,6 +31,7 @@ from pydantic import ConfigDict, Field, model_validator
 from pydantic_ai import Agent as PAIAgent
 from pydantic_ai import AgentRunResultEvent, ModelRetry
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.hooks import Hooks
 
 from akd._base import (
     CompletedEvent,
@@ -42,10 +43,17 @@ from akd._base import (
     TextOutput,
 )
 from akd._base.protocols import AKDExecutable, RunContextProtocol
+from akd._base.structures import RunContext as AKDRunContext
+from akd._base.structures import RunUsage as AKDRunUsage
 from akd.agents._base import BaseAgentConfig
 
 from ._capabilities import ReflectionCapability, ToolCallLimits, make_ratio_trimmer
-from ._context_adapter import _message_history_from_run_context, _usage_from_run_context
+from ._context_adapter import (
+    _message_history_from_run_context,
+    _pai_messages_to_akd_dicts,
+    _pai_usage_to_akd_usage,
+    _usage_from_run_context,
+)
 from ._event_translator import pai_event_to_akd_event
 from ._tool_adapter import akd_to_pai_tool
 
@@ -127,6 +135,19 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     - ``_build_history_processors_from_scalars`` — additional history processors
     - ``_to_prompt`` — custom prompt rendering from ``InputSchema``
     - ``_adapt_tools`` — custom tool adapter logic (rarely needed)
+
+    .. warning::
+
+        As suggested by pydanticAI Agents we also follow Single-run-per-instance.
+        Every stream event this agent emits carries
+        pydantic_ai's live ``RunContext`` (captured via a ``Hooks`` capability
+        and stored on ``self._live_pai_ctx``). Running two concurrent
+        ``arun`` / ``astream`` calls on the *same* agent instance will cause
+        the captured context to race between runs and misattribute
+        ``event.run_context`` on emitted events. For batch or multi-tenant
+        workloads, construct a fresh agent per run, or switch to the
+        queue-based capture mechanism tracked in follow-up item
+        "Concurrency-safe run_context capture".
     """
 
     # Subclasses override these three class attributes.
@@ -151,6 +172,13 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         # (via ``extra="allow"``) pass straight through to pydantic_ai.
         extra_kwargs = dict(self.config.model_extra or {})
 
+        # Latest pydantic_ai ``RunContext`` observed by our hooks. ``astream``
+        # attaches this (wrapped in an AKD ``RunContext``) to every emitted
+        # event so downstream consumers can drive multi-turn conversations.
+        # See the class docstring for the concurrency caveat.
+        self._live_pai_ctx: Any = None
+        ctx_capture = self._build_run_context_capture()
+
         super().__init__(
             model=self.config.model_name,
             system_prompt=self.config.system_prompt,
@@ -160,6 +188,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
             output_type=self.output_schema,
             tools=self._adapt_tools(self.config.tools),
             capabilities=[
+                ctx_capture,
                 *self._build_capabilities_from_scalars(),
                 *self.config.capabilities,
             ],
@@ -171,6 +200,30 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         )
 
         self._register_akd_output_validator()
+
+    def _build_run_context_capture(self) -> Hooks:
+        """Install a ``Hooks`` capability that captures pydantic_ai's live
+        ``RunContext`` onto ``self._live_pai_ctx`` whenever the agent reaches a
+        model request or a tool execution.
+
+        The first hook fires *before* any stream event escapes the run, so by
+        the time ``astream`` yields its first translated event we already
+        have a populated context. Both hooks observe-and-return so they don't
+        alter pydantic_ai's own request/argument flow.
+        """
+        hooks = Hooks()
+
+        @hooks.on.before_model_request
+        async def _grab_on_model_request(ctx, request_context):
+            self._live_pai_ctx = ctx
+            return request_context
+
+        @hooks.on.before_tool_execute
+        async def _grab_on_tool_execute(ctx, *, call, tool_def, args):
+            self._live_pai_ctx = ctx
+            return args
+
+        return hooks
 
     # ── AKD contract: arun / astream ──────────────────────────────────────
 
@@ -232,11 +285,76 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 if pai_event.result.output is not None:
                     yield CompletedEvent(
                         data=CompletedEventData(output=pai_event.result.output),
+                        run_context=self._wrap_pai_ctx(),
                     )
                 continue
-            akd_event = pai_event_to_akd_event(pai_event)
+            akd_event = pai_event_to_akd_event(
+                pai_event,
+                run_context=self._wrap_pai_ctx(),
+            )
             if akd_event is not None:
                 yield akd_event
+
+    # ── RunContext wrapping ───────────────────────────────────────────────
+
+    def _wrap_pai_ctx(self) -> AKDRunContext:
+        """Wrap ``self._live_pai_ctx`` in an AKD ``RunContext``.
+
+        Populates all three AKD typed fields so consumers who only read
+        ``run_context.messages`` / ``.usage`` / ``.run_id`` see useful values:
+
+        - ``messages`` — best-effort OpenAI-style ``list[dict]`` produced from
+          the pai ``ModelMessage`` list. Lossy for multi-part responses; the
+          lossless path lives on ``pai_run_context`` below.
+        - ``usage`` — AKD ``RunUsage`` with the three structural fields mapped
+          and pai overflow (cache / audio / tool_calls tokens) preserved in
+          ``details``.
+        - ``run_id`` — verbatim from the pai ctx.
+        - ``pai_run_context`` extra — the live pai ``RunContext`` itself. The
+          input-side helpers (``_message_history_from_run_context`` /
+          ``_usage_from_run_context``) prefer this when present, so a caller
+          who passes ``event.run_context`` straight back into the next
+          ``arun`` / ``astream`` gets lossless pai-native continuation.
+        """
+        pai_ctx = self._live_pai_ctx
+        if pai_ctx is None:
+            return AKDRunContext()
+        pai_messages = getattr(pai_ctx, "messages", None)
+        pai_usage = getattr(pai_ctx, "usage", None)
+        return AKDRunContext(
+            messages=_pai_messages_to_akd_dicts(pai_messages) if pai_messages else None,
+            usage=_pai_usage_to_akd_usage(pai_usage) if pai_usage is not None else AKDRunUsage(),
+            run_id=getattr(pai_ctx, "run_id", None),
+            pai_run_context=pai_ctx,
+        )
+
+    @property
+    def last_run_context(self) -> AKDRunContext | None:
+        """AKD ``RunContext`` reflecting the latest captured pai state.
+
+        Returns ``None`` before any run has happened on this instance.
+
+        ``arun`` returns only ``OutputSchema`` per the AKD contract, so this
+        property is the canonical way for ``arun`` callers to obtain a
+        continuation-ready context:
+
+        .. code-block:: python
+
+            output_1 = await agent.arun(InputSchema(query="first turn"))
+            ctx = agent.last_run_context               # populated AKD ctx
+            output_2 = await agent.arun(               # multi-turn
+                InputSchema(query="follow-up"), run_context=ctx,
+            )
+
+        Each access re-wraps the current ``self._live_pai_ctx`` (pai mutates
+        its own state in place during a run, so the property always reflects
+        the latest hook firing). Never silently consulted as a fallback when
+        the caller passes ``run_context=None`` — ``None`` means fresh
+        conversation, explicit opt-in required for continuation.
+        """
+        if self._live_pai_ctx is None:
+            return None
+        return self._wrap_pai_ctx()
 
     # ── Prompt rendering ──────────────────────────────────────────────────
 

@@ -177,6 +177,203 @@ async def test_astream_emits_completed_event_with_output():
     assert completed[-1].data.output is not None
 
 
+@pytest.mark.asyncio
+async def test_astream_run_context_available_after_run():
+    """Every emitted event — including the terminal CompletedEvent — must
+    carry the live pydantic_ai ``RunContext`` under ``run_context.pai_run_context``.
+
+    Consumers rely on this to drive multi-turn continuation (Flavor B HITL):
+    they read ``pai_run_context.messages`` / ``.usage`` from the last event
+    and feed them back into the next ``astream`` call.
+    """
+    from akd._base import CompletedEvent
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _EchoAgent()
+    with agent.override(model=TestModel()):
+        events = [ev async for ev in agent.astream(_EchoInput(query="hello"))]
+
+    # Every event carries a run_context — the Hooks capability fires before
+    # anything gets translated, so the live ctx is always captured in time.
+    for ev in events:
+        pai_ctx = getattr(ev.run_context, "pai_run_context", None)
+        assert pai_ctx is not None, f"{type(ev).__name__} missing pai_run_context"
+        assert isinstance(pai_ctx, PAIRunContext)
+
+    # Terminal event specifically: the captured context reflects a real run —
+    # at least one model request fired, and pydantic_ai attached a message
+    # history to the ctx.
+    completed = [ev for ev in events if isinstance(ev, CompletedEvent)]
+    assert completed
+    terminal_pai_ctx = completed[-1].run_context.pai_run_context
+    assert terminal_pai_ctx.usage.requests >= 1
+    assert isinstance(terminal_pai_ctx.messages, list)
+    assert len(terminal_pai_ctx.messages) >= 1
+
+
+@pytest.mark.asyncio
+async def test_arun_run_context_available_after_run():
+    """After ``await agent.arun(...)``, the agent's ``_live_pai_ctx`` holds
+    the pydantic_ai ``RunContext`` captured during the run.
+
+    ``arun`` itself returns the output value (per the AKD contract); the
+    captured ctx is retained on the instance so callers can inspect it if
+    needed. Exposing it as a public property (``agent.last_run_context``)
+    is a plausible future ergonomic; this test pins the internal hook in
+    the meantime.
+    """
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _EchoAgent()
+    # Before any run, nothing has been captured.
+    assert agent._live_pai_ctx is None
+
+    with agent.override(model=TestModel()):
+        result = await agent.arun(_EchoInput(query="hello"))
+
+    assert isinstance(result, (_EchoOutput, TextOutput))
+    assert agent._live_pai_ctx is not None
+    assert isinstance(agent._live_pai_ctx, PAIRunContext)
+    assert agent._live_pai_ctx.usage.requests >= 1
+
+
+# ---------------------------------------------------------------------------
+# RunContext reflection onto AKD typed fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_astream_reflects_pai_state_onto_akd_fields():
+    """Terminal ``CompletedEvent.run_context`` must expose pai state on the
+    AKD typed fields (``messages`` / ``usage`` / ``run_id``) *and* keep the
+    lossless ``pai_run_context`` extra."""
+    from akd._base import CompletedEvent
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _EchoAgent()
+    with agent.override(model=TestModel()):
+        events = [ev async for ev in agent.astream(_EchoInput(query="hello"))]
+
+    completed = [ev for ev in events if isinstance(ev, CompletedEvent)]
+    assert completed
+    ctx = completed[-1].run_context
+
+    # Reflected typed fields on the AKD RunContext:
+    assert isinstance(ctx.messages, list) and ctx.messages
+    for msg in ctx.messages:
+        assert isinstance(msg, dict)
+        assert "role" in msg
+    assert ctx.usage.requests >= 1
+    assert ctx.run_id is not None
+
+    # Lossless pai extra still attached alongside the reflected view:
+    assert isinstance(ctx.pai_run_context, PAIRunContext)
+
+
+@pytest.mark.asyncio
+async def test_arun_last_run_context_property():
+    """``agent.last_run_context`` returns ``None`` before any run and a
+    populated AKD ``RunContext`` after ``arun``."""
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _EchoAgent()
+    assert agent.last_run_context is None
+
+    with agent.override(model=TestModel()):
+        out = await agent.arun(_EchoInput(query="hello"))
+    assert isinstance(out, (_EchoOutput, TextOutput))
+
+    ctx = agent.last_run_context
+    assert ctx is not None
+    assert ctx.messages  # non-empty list of dicts
+    assert all(isinstance(m, dict) and "role" in m for m in ctx.messages)
+    assert ctx.usage.requests >= 1
+    assert ctx.run_id is not None
+    assert isinstance(ctx.pai_run_context, PAIRunContext)
+
+
+@pytest.mark.asyncio
+async def test_multi_turn_via_last_run_context():
+    """Feeding ``agent.last_run_context`` from turn 1 into turn 2 causes
+    pydantic_ai to see the full prior message history (via the lossless
+    ``pai_run_context`` extra)."""
+    agent = _EchoAgent()
+    with agent.override(model=TestModel()):
+        await agent.arun(_EchoInput(query="first turn"))
+        ctx_after_turn_1 = agent.last_run_context
+        assert ctx_after_turn_1 is not None
+        turn_1_message_count = len(ctx_after_turn_1.pai_run_context.messages)
+
+        await agent.arun(_EchoInput(query="follow-up"), run_context=ctx_after_turn_1)
+        ctx_after_turn_2 = agent.last_run_context
+
+    assert ctx_after_turn_2 is not None
+    assert len(ctx_after_turn_2.pai_run_context.messages) > turn_1_message_count
+
+
+def test_input_side_prefers_pai_run_context():
+    """When a ``run_context`` carries both stale AKD-shape messages *and* a
+    populated ``pai_run_context`` extra, the pai path wins — the dict view is
+    ignored in favor of the lossless pai ``ModelMessage`` list."""
+    from akd._base.structures import RunContext as AKDRunContext
+    from pydantic_ai import RunContext as PAIRunContext
+    from pydantic_ai.messages import ModelRequest, UserPromptPart
+    from pydantic_ai.result import RunUsage as PAIRunUsage
+
+    from akd_ext.agents._base.pydantic_ai._context_adapter import (
+        _message_history_from_run_context,
+        _usage_from_run_context,
+    )
+
+    pai_messages = [ModelRequest(parts=[UserPromptPart(content="pai-truth")])]
+    pai_usage = PAIRunUsage(input_tokens=10, output_tokens=20, requests=3)
+    pai_ctx = PAIRunContext(deps=None, model=None, usage=pai_usage)
+    pai_ctx.messages = pai_messages
+
+    akd_ctx = AKDRunContext(
+        messages=[{"role": "user", "content": "stale-akd-shape"}],
+        pai_run_context=pai_ctx,
+    )
+
+    history = _message_history_from_run_context(akd_ctx)
+    assert history is pai_messages or history == pai_messages
+    assert history[0].parts[0].content == "pai-truth"
+
+    usage = _usage_from_run_context(akd_ctx)
+    assert usage is pai_usage
+    assert usage.input_tokens == 10
+
+
+def test_input_side_falls_back_to_akd_shape():
+    """Pure AKD ``RunContext`` (no ``pai_run_context`` extra) still works
+    through the historical conversion path."""
+    from akd._base.structures import RunContext as AKDRunContext
+    from akd._base.structures import RunUsage as AKDRunUsage
+    from pydantic_ai.result import RunUsage as PAIRunUsage
+
+    from akd_ext.agents._base.pydantic_ai._context_adapter import (
+        _message_history_from_run_context,
+        _usage_from_run_context,
+    )
+
+    akd_ctx = AKDRunContext(
+        messages=[
+            {"role": "system", "content": "you are helpful"},
+            {"role": "user", "content": "hi"},
+        ],
+        usage=AKDRunUsage(input_tokens=5, output_tokens=7, requests=1),
+    )
+
+    history = _message_history_from_run_context(akd_ctx)
+    assert history is not None
+    assert len(history) == 2
+
+    usage = _usage_from_run_context(akd_ctx)
+    assert isinstance(usage, PAIRunUsage)
+    assert usage.input_tokens == 5
+    assert usage.requests == 1
+
+
 # ---------------------------------------------------------------------------
 # Tool adapter
 # ---------------------------------------------------------------------------

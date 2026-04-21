@@ -52,22 +52,36 @@ from akd._base import (
     ToolResultEvent,
     ToolResultEventData,
 )
+from akd._base.structures import RunContext as AKDRunContext
 
 
-def pai_event_to_akd_event(pai_event) -> StreamEvent | None:
+def pai_event_to_akd_event(
+    pai_event,
+    run_context: AKDRunContext | None = None,
+) -> StreamEvent | None:
     """Translate a single pydantic_ai stream event to an AKD ``StreamEvent``.
 
     Returns ``None`` for events we don't map; callers should skip those.
+
+    ``run_context`` is an AKD ``RunContext`` built by the caller (typically
+    wrapping the live ``pydantic_ai.RunContext`` under the ``pai_run_context``
+    extra attribute); if supplied, it is attached to every constructed event
+    so consumers can drive multi-turn continuation from any event.
     """
+    ctx_kwargs = {"run_context": run_context} if run_context is not None else {}
+
     # Text delta → streaming token
     if isinstance(pai_event, PartDeltaEvent):
         delta = pai_event.delta
         if isinstance(delta, TextPartDelta):
             token = getattr(delta, "content_delta", "") or ""
-            return StreamingTokenEvent(data=StreamingEventData(token=token))
+            return StreamingTokenEvent(data=StreamingEventData(token=token), **ctx_kwargs)
         if isinstance(delta, ThinkingPartDelta):
             thinking = getattr(delta, "content_delta", "") or ""
-            return ThinkingEvent(data=ThinkingEventData(thinking_content=thinking, streaming=True))
+            return ThinkingEvent(
+                data=ThinkingEventData(thinking_content=thinking, streaming=True),
+                **ctx_kwargs,
+            )
         if isinstance(delta, ToolCallPartDelta):
             # Structured-output runs stream the args JSON of the final-output
             # tool call. Surface each chunk as a streaming token so UIs see
@@ -75,7 +89,7 @@ def pai_event_to_akd_event(pai_event) -> StreamEvent | None:
             args_delta = getattr(delta, "args_delta", None) or ""
             if isinstance(args_delta, dict):
                 args_delta = str(args_delta)
-            return StreamingTokenEvent(data=StreamingEventData(token=args_delta))
+            return StreamingTokenEvent(data=StreamingEventData(token=args_delta), **ctx_kwargs)
         return None
 
     # Thinking part started → emit a (non-streaming) thinking marker
@@ -83,7 +97,7 @@ def pai_event_to_akd_event(pai_event) -> StreamEvent | None:
         part = pai_event.part
         if isinstance(part, ThinkingPart):
             content = getattr(part, "content", "") or ""
-            return ThinkingEvent(data=ThinkingEventData(thinking_content=content))
+            return ThinkingEvent(data=ThinkingEventData(thinking_content=content), **ctx_kwargs)
         # TextPart start and other part kinds don't have a direct AKD analogue
         return None
 
@@ -99,6 +113,7 @@ def pai_event_to_akd_event(pai_event) -> StreamEvent | None:
                         arguments=part.args_as_dict() if hasattr(part, "args_as_dict") else (part.args or {}),
                     ),
                 ),
+                **ctx_kwargs,
             )
         return None
 
@@ -114,6 +129,7 @@ def pai_event_to_akd_event(pai_event) -> StreamEvent | None:
                         content=result.content,
                     ),
                 ),
+                **ctx_kwargs,
             )
         # RetryPromptPart results (tool retries) don't map to a success event
         return None
