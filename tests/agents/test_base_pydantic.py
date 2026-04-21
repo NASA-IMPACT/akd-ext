@@ -526,3 +526,116 @@ def test_subclass_can_extend_capabilities_hook():
     agent.config = _EchoConfig(enable_extra_capability=True)
     produced = agent._build_capabilities_from_scalars()
     assert any(isinstance(c, _MarkerCapability) for c in produced)
+
+
+# ---------------------------------------------------------------------------
+# Smoke tests for a PydanticAIBaseAgent derivative
+# ---------------------------------------------------------------------------
+#
+# A self-contained derivative (mirrors the shape of an MCP-free CMR agent)
+# defined inline so these smoke tests don't depend on any untracked
+# scaffolding. Reuses the committed CMR input / output schemas so the
+# agent-under-test matches the shape of a real AKD agent.
+
+from akd_ext.agents.cmr_care import (  # noqa: E402
+    CMRCareAgentInputSchema,
+    CMRCareAgentOutputSchema,
+)
+
+_SMOKE_SYSTEM_PROMPT = "You are a helpful agent spacializing in CMR and Earth Science."
+
+
+class _SmokeCMRConfig(PydanticAIBaseAgentConfig):
+    """Minimal CMR-shaped config: no MCP (hermetic), placeholder prompt."""
+
+    description: str = Field(default="Smoke-test CMR agent on PydanticAIBaseAgent.")
+    system_prompt: str = Field(default=_SMOKE_SYSTEM_PROMPT)
+    model_name: str = Field(default="openai:gpt-4o-mini")
+    # capabilities default to [] via PydanticAIBaseAgentConfig — no MCP.
+
+
+class _SmokeCMRAgent(PydanticAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
+    """Self-contained PydanticAIBaseAgent derivative for smoke tests."""
+
+    input_schema = CMRCareAgentInputSchema
+    output_schema = CMRCareAgentOutputSchema | TextOutput
+    config_schema = _SmokeCMRConfig
+
+    def check_output(self, output):
+        if isinstance(output, CMRCareAgentOutputSchema) and not output.result.strip():
+            return "Result is empty. Provide search reasoning and details."
+        return super().check_output(output)
+
+
+@pytest.mark.asyncio
+async def test_smoke_arun_and_last_run_context():
+    """End-to-end arun smoke test: return matches output schema; getter
+    exposes a populated AKD RunContext for the next turn."""
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _SmokeCMRAgent()
+    with agent.override(model=TestModel()):
+        result = await agent.arun(CMRCareAgentInputSchema(query="sea ice datasets"))
+
+    assert isinstance(result, (CMRCareAgentOutputSchema, TextOutput))
+
+    ctx = agent.last_run_context
+    assert ctx is not None
+    assert ctx.messages and all(isinstance(m, dict) and "role" in m for m in ctx.messages)
+    assert ctx.usage.requests >= 1
+    assert ctx.run_id is not None
+    assert isinstance(ctx.pai_run_context, PAIRunContext)
+
+
+@pytest.mark.asyncio
+async def test_smoke_astream_no_run_context():
+    """astream tolerates ``run_context=None`` and still attaches a populated
+    run_context (messages + usage + run_id + pai_run_context) to at least
+    one emitted event."""
+    from akd._base import StreamEvent
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _SmokeCMRAgent()
+    with agent.override(model=TestModel()):
+        events = [
+            ev
+            async for ev in agent.astream(
+                CMRCareAgentInputSchema(query="ocean carbon observations"),
+            )
+        ]
+
+    assert events, "astream should produce at least one event"
+    assert all(isinstance(ev, StreamEvent) for ev in events)
+    assert all(ev.run_context is not None for ev in events)
+
+    populated = [ev for ev in events if ev.run_context.messages and ev.run_context.usage.requests >= 1]
+    assert populated, "expected at least one event with populated messages + usage"
+
+    sample = populated[-1]
+    assert sample.run_context.run_id is not None
+    assert isinstance(sample.run_context.pai_run_context, PAIRunContext)
+
+
+def test_smoke_pai_agent_surface_available():
+    """Path B single inheritance: pydantic_ai.Agent's public surface must
+    still be reachable on a PydanticAIBaseAgent derivative instance."""
+    from pydantic_ai import Agent as PAIAgent
+
+    agent = _SmokeCMRAgent()
+    assert isinstance(agent, PAIAgent)
+
+    for attr in (
+        "run",
+        "run_stream_events",
+        "iter",
+        "override",
+        "output_validator",
+        "tool",
+        "system_prompt",
+    ):
+        assert callable(getattr(agent, attr)), f"{attr} missing or not callable"
+
+    # name / description come from config via ConfigBindingMixin auto-exposure.
+    assert isinstance(agent.description, str) and agent.description
+    # name may be None by default; just confirm attribute access doesn't raise.
+    _ = agent.name
