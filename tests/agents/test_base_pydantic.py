@@ -445,6 +445,67 @@ def test_tool_adapter_accepts_akdtool_protocol():
     assert isinstance(_GreetTool(), AKDTool)
 
 
+@pytest.mark.asyncio
+async def test_existing_akd_tool_is_pai_compatible():
+    """Real shipped AKD tool (``DummyTool``) adapts cleanly to pydantic_ai.
+
+    Compatibility checks:
+
+    1. The adapter returns a real ``pydantic_ai.Tool``.
+    2. ``name`` and ``description`` are populated (pydantic_ai uses these for
+       the tool definition it advertises to the model).
+    3. The wrapped function's signature exposes the AKD ``InputSchema``'s
+       fields as parameters (so pydantic_ai's JSON-schema introspection
+       produces the same shape the AKD schema declares).
+    4. Invoking the wrapped function with valid kwargs returns the AKD
+       ``OutputSchema`` instance — the conversion is invocation-safe, not
+       just structural.
+    5. Dropping the tool into ``PydanticAIBaseAgentConfig(tools=[...])`` and
+       building a ``PydanticAIBaseAgent`` succeeds; the agent's toolset lists
+       the adapted tool under the expected name.
+    """
+    import inspect
+
+    from pydantic_ai import Tool as PAITool
+
+    from akd_ext.tools.dummy import DummyInputSchema, DummyOutputSchema, DummyTool
+
+    akd_tool = DummyTool()
+    pai = akd_to_pai_tool(akd_tool)
+
+    assert isinstance(pai, PAITool)
+    assert pai.name == akd_tool.name
+    assert pai.description and akd_tool.description.splitlines()[0] in pai.description
+
+    # Signature preserved from AKDInputSchema → kwargs pydantic_ai can introspect.
+    sig = inspect.signature(pai.function)
+    assert "query" in sig.parameters
+    assert sig.return_annotation is DummyOutputSchema
+
+    # Invocation round-trips through the AKD tool.
+    result = await pai.function(query="compatibility-check")
+    assert isinstance(result, DummyOutputSchema)
+    assert result.query == "compatibility-check"
+
+    # Registration on a PydanticAIBaseAgent: the config path wraps the AKD
+    # tool via ``_adapt_tools``; the agent's toolset must end up carrying
+    # it. We use _EchoAgent's schemas since the smoke agent shape is
+    # immaterial — we only care that registration succeeds.
+    agent = _EchoAgent(_EchoConfig(tools=[DummyTool()]))
+    assert agent.toolset is not None
+    # Walk the registered toolsets to find our adapted tool by name.
+    assert any(
+        pai.name in getattr(ts, "tools", {}) or pai.name in getattr(ts, "_tools", {})
+        for ts in getattr(agent, "toolsets", [])
+    ), f"expected adapted tool {pai.name!r} to be reachable on agent.toolsets"
+
+    # Sanity: the AKD tool still satisfies the AKDTool protocol after
+    # passing through the adapter (nothing mutates the source).
+    assert isinstance(akd_tool, AKDTool)
+    # And the input schema reference is intact.
+    assert akd_tool.input_schema is DummyInputSchema
+
+
 # ---------------------------------------------------------------------------
 # Zone 3: subclass extension via _build_capabilities_from_scalars
 # ---------------------------------------------------------------------------
