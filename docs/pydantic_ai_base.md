@@ -44,9 +44,10 @@ classDiagram
         +result.output
     }
 
-    class AbstractBaseMeta {
-        <<akd ABCMeta>>
-        +auto-expose config fields as properties
+    class ConfigBindingMixin {
+        <<akd mixin>>
+        +__init_subclass__() auto-exposes config fields as properties
+        +skips in-dict redeclarations (e.g. system_prompt)
     }
     class BaseAgentConfig {
         <<akd>>
@@ -58,7 +59,7 @@ classDiagram
     class BaseTool {
         <<akd>>
         +name / description
-        +arun / as_function / as_tool_definition
+        +arun / as_function
     }
     class InputSchema {
         <<akd>>
@@ -75,13 +76,22 @@ classDiagram
         <<akd>>
         +Completed / StreamingToken / Thinking
         +ToolCalling / ToolResult
+        +run_context: AKDRunContext
+    }
+
+    class AKDRunContext {
+        <<akd>>
+        +messages: list[dict] | None
+        +usage: RunUsage
+        +run_id: str | None
+        +pai_run_context: pai.RunContext «extra / lossless»
     }
 
     %% ══════════════════════════════════════════════════════════
-    %% Protocols (_protocols.py)
+    %% Protocols (akd._base.protocols)
     %% ══════════════════════════════════════════════════════════
 
-    class SupportsUsage {
+    class TokenCounts {
         <<Protocol>>
         +input_tokens / output_tokens / requests
     }
@@ -92,20 +102,17 @@ classDiagram
     class AKDExecutable {
         <<Protocol>>
         +input_schema / output_schema / config_schema
+        +name / description
         +arun(params, run_context) Any
-    }
-    class AKDAgent {
-        <<Protocol>>
         +astream(params, run_context) AsyncIterator
     }
     class AKDTool {
         <<Protocol>>
         +name / description
-        +as_function / as_tool_definition
+        +as_function() Callable
     }
-    AKDExecutable <|-- AKDAgent
     AKDExecutable <|-- AKDTool
-    RunContextProtocol ..> SupportsUsage
+    RunContextProtocol ..> TokenCounts
 
     %% ══════════════════════════════════════════════════════════
     %% Adapter / bridge modules (_*.py) — function-only
@@ -115,12 +122,14 @@ classDiagram
         <<_context_adapter.py>>
         +_akd_dicts_to_pai_messages(msgs)$ list
         +_usage_to_pai(usage)$ PAIRunUsage
+        +_pai_messages_to_akd_dicts(msgs)$ list[dict]
+        +_pai_usage_to_akd_usage(pai_usage)$ AKDRunUsage
         +_message_history_from_run_context(ctx)$ list
         +_usage_from_run_context(ctx)$ PAIRunUsage
     }
     class EventTranslator {
         <<_event_translator.py>>
-        +pai_event_to_akd_event(event)$ AKDStreamEvent
+        +pai_event_to_akd_event(event, run_context=None)$ AKDStreamEvent
     }
     class ToolAdapter {
         <<_tool_adapter.py>>
@@ -134,15 +143,8 @@ classDiagram
     }
 
     %% ══════════════════════════════════════════════════════════
-    %% Metaclass + Config + Core (_base.py)
+    %% Config + Core (_base.py)
     %% ══════════════════════════════════════════════════════════
-
-    class PydanticAIAgentMeta {
-        <<metaclass>>
-        +SKIP_AUTO_EXPOSE: frozenset
-        +__new__(name, bases, dct)
-    }
-    AbstractBaseMeta <|-- PydanticAIAgentMeta
 
     class PydanticAIBaseAgentConfig {
         +capabilities: list
@@ -157,9 +159,14 @@ classDiagram
         +output_schema: type
         +config_schema: type
         +config: PydanticAIBaseAgentConfig
+        +_live_pai_ctx: Any
         ── AKD contract ──
         +arun(params, run_context) OutSchema
         +astream(params, run_context) AsyncIterator
+        ── RunContext propagation ──
+        +_build_run_context_capture() Hooks
+        +_wrap_pai_ctx() AKDRunContext
+        +last_run_context AKDRunContext? «property»
         ── hooks ──
         +_to_prompt(params) str
         +_deps_from_run_context(ctx) Any
@@ -170,12 +177,14 @@ classDiagram
     }
 
     %% ── Inheritance / conformance ─────────────────────────────
+    ConfigBindingMixin <|-- PydanticAIBaseAgent
     PAIAgent <|-- PydanticAIBaseAgent
-    AKDAgent <|.. PydanticAIBaseAgent
-    PydanticAIBaseAgent ..> PydanticAIAgentMeta : metaclass
+    AKDExecutable <|.. PydanticAIBaseAgent
 
     %% ── Composition ───────────────────────────────────────────
     PydanticAIBaseAgent --> PydanticAIBaseAgentConfig : config
+    PydanticAIBaseAgent --> AKDRunContext : wraps live pai ctx
+    PydanticAIBaseAgent --> Hooks : installs ctx_capture
 
     %% ── Adapter usage (one edge per bridge module) ────────────
     PydanticAIBaseAgent ..> ContextAdapter : uses
@@ -185,8 +194,10 @@ classDiagram
 
     %% ── Adapters target their respective external types ──────
     ContextAdapter ..> RunContextProtocol : accepts
+    ContextAdapter ..> AKDRunContext : reads pai_run_context extra
     EventTranslator ..> AKDStreamEvent : produces
     EventTranslator ..> AgentRunResultEvent : consumes (terminal)
+    EventTranslator ..> AKDRunContext : attaches to events
     ToolAdapter ..> AKDTool : accepts
     ToolAdapter ..> PAITool : produces
     ToolAdapter ..> ModelRetry : raises
@@ -205,13 +216,11 @@ classDiagram
     %% Core new classes — green
     style PydanticAIBaseAgent fill:#e8f5e9,stroke:#2e7d32
     style PydanticAIBaseAgentConfig fill:#e8f5e9,stroke:#2e7d32
-    style PydanticAIAgentMeta fill:#e8f5e9,stroke:#2e7d32
 
     %% Protocols — orange
-    style SupportsUsage fill:#fff3e0,stroke:#e65100
+    style TokenCounts fill:#fff3e0,stroke:#e65100
     style RunContextProtocol fill:#fff3e0,stroke:#e65100
     style AKDExecutable fill:#fff3e0,stroke:#e65100
-    style AKDAgent fill:#fff3e0,stroke:#e65100
     style AKDTool fill:#fff3e0,stroke:#e65100
 
     %% Adapters / Bridges — pink
@@ -229,13 +238,14 @@ classDiagram
     style AgentRunResultEvent fill:#e3f2fd,stroke:#1565c0
 
     %% External akd-core — gray
-    style AbstractBaseMeta fill:#eceff1,stroke:#455a64
+    style ConfigBindingMixin fill:#eceff1,stroke:#455a64
     style BaseAgentConfig fill:#eceff1,stroke:#455a64
     style BaseTool fill:#eceff1,stroke:#455a64
     style InputSchema fill:#eceff1,stroke:#455a64
     style OutputSchema fill:#eceff1,stroke:#455a64
     style TextOutput fill:#eceff1,stroke:#455a64
     style AKDStreamEvent fill:#eceff1,stroke:#455a64
+    style AKDRunContext fill:#eceff1,stroke:#455a64
 ```
 
 ## Module Layout
@@ -302,12 +312,17 @@ PydanticAIBaseAgent.arun(params, run_context=?)
 ### `astream(params)` — event stream
 
 ```
-PydanticAIBaseAgent.astream(params)
+PydanticAIBaseAgent.astream(params, run_context=None)
  ├─ prompt = self._to_prompt(params)
  └─ async for pai_event in super().run_stream_events(prompt, deps, msg_history, usage):
-      ├─ AgentRunResultEvent → yield CompletedEvent(data=CompletedEventData(output=...))
+      ├─ AgentRunResultEvent → yield CompletedEvent(
+      │                              data=CompletedEventData(output=...),
+      │                              run_context=self._wrap_pai_ctx(),
+      │                          )
       └─ else:
-            EventTranslator.pai_event_to_akd_event(pai_event)
+            akd_event = EventTranslator.pai_event_to_akd_event(
+                           pai_event, run_context=self._wrap_pai_ctx()
+                       )
               ├─ PartDeltaEvent(TextPartDelta)      → StreamingTokenEvent
               ├─ PartDeltaEvent(ThinkingPartDelta)  → ThinkingEvent(streaming=True)
               ├─ PartDeltaEvent(ToolCallPartDelta)  → StreamingTokenEvent (args JSON chunk)
@@ -325,17 +340,58 @@ PydanticAIBaseAgent.astream(params)
 PydanticAIBaseAgent.__init__(config)
  ├─ self.config = config or self.config_schema()
  ├─ extra_kwargs = dict(config.model_extra or {})         # forward-compat
+ ├─ self._live_pai_ctx = None                             # RunContext capture slot
+ ├─ ctx_capture = self._build_run_context_capture()       # Hooks: before_model_request,
+ │                                                        #        before_tool_execute
  ├─ super().__init__(PAIAgent, …)
  │    ├─ tools        = self._adapt_tools(config.tools)
  │    │    └─ for each BaseTool: ToolAdapter.akd_to_pai_tool → PAITool
  │    │    └─ else: pass through (already pydantic_ai.Tool)
- │    ├─ capabilities = [*self._build_capabilities_from_scalars(), *config.capabilities]
+ │    ├─ capabilities = [ctx_capture,
+ │    │                  *self._build_capabilities_from_scalars(),
+ │    │                  *config.capabilities]
  │    │    ├─ reasoning_effort        → Thinking(effort=…)
  │    │    ├─ max_tool_iterations /calls → ToolCallLimits(Hooks)
  │    │    └─ reflection_prompt       → ReflectionCapability(Hooks)
  │    └─ history_processors = [*self._build_history_processors_from_scalars(), *config.history_processors]
  │         └─ enable_trimming         → make_ratio_trimmer(1 - trim_ratio)
  └─ self._register_akd_output_validator()     # wires self.check_output via @output_validator
+```
+
+### RunContext propagation — Hooks capture and emission
+
+```
+At __init__
+ └─ self._live_pai_ctx = None
+     ctx_capture = Hooks().on.before_model_request / .on.before_tool_execute
+     (registered as the first capability on super().__init__)
+
+During a run (hooks fire on each model request / tool execution)
+ ├─ before_model_request(ctx, request) → self._live_pai_ctx = ctx; return request
+ └─ before_tool_execute(ctx, call, tool_def, args) → self._live_pai_ctx = ctx; return args
+        ↑ ctx is pai's live RunContext — a shared reference into GraphAgentState,
+          so .messages / .usage / .run_id reflect the latest state between hooks
+
+On stream emission (astream)
+ └─ self._wrap_pai_ctx() builds an AKD RunContext per event:
+      ├─ messages     = ContextAdapter._pai_messages_to_akd_dicts(pai_ctx.messages)
+      ├─ usage        = ContextAdapter._pai_usage_to_akd_usage(pai_ctx.usage)
+      ├─ run_id       = pai_ctx.run_id
+      └─ pai_run_context = pai_ctx                 # lossless extra for continuation
+
+On input (arun / astream receiving a prior turn's run_context)
+ ├─ ContextAdapter._message_history_from_run_context(ctx)
+ │    └─ if ctx.pai_run_context: use its .messages verbatim (lossless)
+ │       else: convert ctx.messages dicts → ModelMessage (AKD-shape fallback)
+ └─ ContextAdapter._usage_from_run_context(ctx)
+      └─ if ctx.pai_run_context: use its .usage verbatim
+         else: copy 3 structural fields from ctx.usage
+
+For arun callers (return stays OutputSchema)
+ └─ agent.last_run_context → self._wrap_pai_ctx()  # None before any run
+    Used as: out_1 = await agent.arun(X)
+             ctx  = agent.last_run_context
+             out_2 = await agent.arun(Y, run_context=ctx)  # multi-turn
 ```
 
 ## Translation / Mapping Tables
@@ -353,14 +409,27 @@ PydanticAIBaseAgent.__init__(config)
 | `AgentRunResultEvent` | `CompletedEvent(data=CompletedEventData(output=…))` | emitted by `astream` itself, not by translator |
 | `FinalResultEvent`, `PartStartEvent(TextPart)`, `PartEndEvent`, `RetryPromptPart` results | *(dropped — return `None`)* | iterator termination is the end-of-stream signal |
 
-### Run context (AKD ↔ pydantic_ai)
+### Run context — input side (caller → pydantic_ai)
 
 | Field | AKD `RunContext` | pydantic_ai `RunContext` | Adapter behavior |
 |---|---|---|---|
-| `messages` | `list[dict]` (OpenAI-style) | `list[ModelMessage]` (typed) | Dict path: `system/user/assistant` → `ModelRequest/ModelRequest/ModelResponse`. Typed path: pass through. |
-| `usage` | `akd.RunUsage` (pydantic BaseModel) | `pydantic_ai.RunUsage` (dataclass) | If already `PAIRunUsage`, pass through; else copy the 3 structural fields; rest default to 0. |
-| `deps` | (not present) | `Any` | If run_context is a `PAIRunContext`, forward `.deps`; else `None`. |
+| `messages` | `list[dict]` (OpenAI-style) | `list[ModelMessage]` (typed) | **Preferred path**: if `ctx.pai_run_context` is present, use `pai_run_context.messages` verbatim (lossless). **Fallback**: dicts → `ModelRequest` / `ModelResponse` via `_akd_dicts_to_pai_messages`; already-typed list passes through. |
+| `usage` | `akd.RunUsage` (pydantic BaseModel) | `pydantic_ai.RunUsage` (dataclass) | **Preferred path**: `ctx.pai_run_context.usage` (already `PAIRunUsage`). **Fallback**: copy 3 structural fields from AKD `RunUsage`; rest default to 0. |
+| `deps` | (not present) | `Any` | If run_context is a `PAIRunContext` itself, forward `.deps`; else `None`. |
 | `run_id` | structural | structural | Read via `RunContextProtocol`, not converted. |
+
+Preferring `pai_run_context` means handing back `event.run_context` verbatim on the next turn "just works": the lossless pai objects round-trip without re-conversion, and the reflected AKD typed fields below are never read as input.
+
+### Run context — output side (pydantic_ai → event.run_context)
+
+Emitted by `PydanticAIBaseAgent._wrap_pai_ctx()` from `self._live_pai_ctx` (the live pai `RunContext` captured by the hooks capability). Populates AKD's typed fields for read-only inspection and carries the lossless pai object under an extra slot:
+
+| AKD `RunContext` field | Source | Helper | Lossiness |
+|---|---|---|---|
+| `messages` | `pai_ctx.messages` (`list[ModelMessage]`) | `_pai_messages_to_akd_dicts` | Lossy — multi-part responses collapse to OpenAI-style dicts; `ThinkingPart`s prefix-tagged into `content`; `ToolCallPart.args` serialized to JSON strings. |
+| `usage` | `pai_ctx.usage` (`PAIRunUsage`) | `_pai_usage_to_akd_usage` | Near-lossless — 3 structural fields exact; overflow fields (cache / audio tokens, `tool_calls`) + pai `details` collapse into AKD `details` dict. |
+| `run_id` | `pai_ctx.run_id` | (verbatim) | Lossless. |
+| `pai_run_context` (extra) | `pai_ctx` itself | (verbatim) | **Lossless escape hatch** — the full pai `RunContext` preserved intact. Input-side helpers consult this first when it's present. |
 
 ### Scalar config → capability
 
@@ -391,6 +460,17 @@ PydanticAIBaseAgent.__init__(config)
   dict are skipped automatically — we re-bind `system_prompt = PAIAgent.system_prompt`
   at class scope to prevent the auto-property from shadowing pydantic_ai's
   `system_prompt` decorator method.
+- **RunContext propagation** pairs a `Hooks`-capability capture of pai's live
+  `RunContext` (stored on `self._live_pai_ctx`) with `_wrap_pai_ctx()` emission.
+  Every stream event carries an AKD `RunContext` whose typed fields reflect
+  pai state (lossy but inspectable) and whose `pai_run_context` extra holds
+  the lossless pai object. Input-side helpers prefer the extra when present,
+  so callers round-trip `event.run_context` verbatim. `arun` keeps its
+  `OutputSchema` return contract; `agent.last_run_context` exposes the same
+  wrapped context for multi-turn continuation. **Concurrency caveat**:
+  `_live_pai_ctx` is instance-scoped, so concurrent `arun` / `astream` calls on
+  one agent will race — use a fresh agent per run or move to the queue-based
+  `event_stream_handler` design (tracked follow-up).
 - **Trimming is off by default** on `PydanticAIBaseAgentConfig`: the naive
   ratio-trimmer breaks pydantic_ai's invariant that every `tool` message must
   follow an `assistant` with matching `tool_calls`. A pydantic_ai-aware
