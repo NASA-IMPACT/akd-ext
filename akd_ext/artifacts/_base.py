@@ -3,7 +3,7 @@ from datetime import datetime
 from pathlib import PurePosixPath
 from typing import Any, Self
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class Artifact[T](BaseModel):
@@ -32,6 +32,25 @@ class Artifact[T](BaseModel):
             "on read; ignored on write (stores set it according to their backend)."
         ),
     )
+
+    @field_validator("path")
+    @classmethod
+    def _normalize_path(cls, v: str) -> str:
+        """Reject clearly broken paths; normalize obvious oddities.
+
+        - Rejects: empty/whitespace-only, null byte, '..' segments.
+        - Normalizes: leading '/' stripped, '//' collapsed, './' collapsed.
+        - Backend-specific path-traversal defense still lives in each store.
+        """
+        v = v.strip()
+        if not v:
+            raise ValueError("path cannot be empty")
+        if "\0" in v:
+            raise ValueError("path contains null byte")
+        p = PurePosixPath(v.lstrip("/"))
+        if ".." in p.parts:
+            raise ValueError(f"path contains '..' segment: {v!r}")
+        return str(p)
 
 
 class ArtifactStore[T](ABC):
