@@ -157,3 +157,14 @@ class ArtifactStore[T](ABC):
 
     def __iter__(self):
         return iter(self._artifacts)
+
+    def __str__(self) -> str:
+        """Flat bulleted list of paths (with descriptions where available),
+        suitable for dropping into an LLM system prompt. Each line contains
+        the exact path the caller should pass to `read_artifact`."""
+        lines = []
+        for path in sorted(self._artifacts):
+            a = self._artifacts[path]
+            desc = f" — {a.description}" if a.description else ""
+            lines.append(f"- {path}{desc}")
+        return "\n".join(lines)
