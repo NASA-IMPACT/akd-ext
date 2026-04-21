@@ -1,5 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
+from pathlib import PurePosixPath
 from typing import Any, Self
 
 from pydantic import BaseModel, Field
@@ -47,10 +48,33 @@ class ArtifactStore[T](ABC):
     stores populate them on read; caller-supplied values on write are ignored.
     """
 
-    def __init__(self, root: str, *, debug: bool = False) -> None:
+    def __init__(
+        self,
+        root: str,
+        *,
+        index_file: str | None = "index.md",
+        debug: bool = False,
+    ) -> None:
         self.root = root
+        self.index_file = index_file
         self.debug = bool(debug)
         self._artifacts: dict[str, Artifact[T]] = {}
+
+    def index_for(self, dir_path: str = "") -> Artifact[T] | None:
+        """Return the designated index artifact for a directory (or the
+        root overview if `dir_path` is empty). Returns None if `index_file`
+        is None or no such artifact is cached.
+
+        Transparent across backend conventions: set `index_file` to
+        "index.md" (dev/local), "README.md" (GitHub), "SKILL.md" (Anthropic
+        skills), or "AGENT.md" (agent manifests) per store."""
+        if not self.index_file:
+            return None
+        dir_path = dir_path.strip("/")
+        if not dir_path:
+            return self._artifacts.get(self.index_file)
+        key = str(PurePosixPath(dir_path) / self.index_file)
+        return self._artifacts.get(key)
 
     @abstractmethod
     async def read_artifact(self, path: str) -> Artifact[T]:
