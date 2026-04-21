@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
 from datetime import datetime
-from typing import Any
+from typing import Any, Self
 
 from pydantic import BaseModel, Field
 
@@ -47,7 +47,8 @@ class ArtifactStore[T](ABC):
     stores populate them on read; caller-supplied values on write are ignored.
     """
 
-    def __init__(self, debug: bool = False) -> None:
+    def __init__(self, root: str, *, debug: bool = False) -> None:
+        self.root = root
         self.debug = bool(debug)
         self._artifacts: dict[str, Artifact[T]] = {}
 
@@ -65,20 +66,20 @@ class ArtifactStore[T](ABC):
         raise NotImplementedError()
 
     @abstractmethod
-    async def load_artifacts(self) -> None:
-        """Populate `self._artifacts` from the backend. Called once after
-        construction (and again by `refresh()`). Functional counterpart of
-        ada's `@model_validator(mode='after')` loader, but explicit so the
-        base class does not depend on pydantic."""
+    async def load_artifacts(self) -> Self:
+        """Populate `self._artifacts` from the backend and return `self` for
+        fluent chaining. Called once after construction (and again by
+        `refresh()`). Functional counterpart of ada's
+        `@model_validator(mode='after')` loader, but explicit so the base
+        class does not depend on pydantic."""
         raise NotImplementedError()
 
-    # ---------------- defaults built on the cache ----------------
-
-    async def refresh(self) -> None:
+    async def refresh(self) -> Self:
         """Re-sync the cache from the backend. Clears in-memory state and
-        re-invokes `load_artifacts()`. Callers use this after external writes."""
+        re-invokes `load_artifacts()`. Returns `self` for fluent chaining."""
         self._artifacts.clear()
         await self.load_artifacts()
+        return self
 
     async def list_artifacts(self, prefix: str | None = None) -> list[Artifact[T]]:
         """List from the in-memory cache. Override only if the backend must be
@@ -94,6 +95,16 @@ class ArtifactStore[T](ABC):
         """Cache-only lookup. Raises KeyError on miss. For async
         fetch-if-missing, use `await store.read_artifact(path)`."""
         return self._artifacts[path]
+
+    def __setitem__(self, path: str, artifact: Artifact[T]) -> None:
+        """Cache-only write. Does NOT persist to the backend. Subclasses use
+        this inside `write_artifact` / `read_artifact` to keep the cache in
+        sync after real I/O."""
+        self._artifacts[path] = artifact
+
+    def __delitem__(self, path: str) -> None:
+        """Cache-only removal. Does NOT delete from the backend."""
+        del self._artifacts[path]
 
     def __contains__(self, path: str) -> bool:
         return path in self._artifacts
