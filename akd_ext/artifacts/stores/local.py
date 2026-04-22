@@ -104,3 +104,23 @@ class LocalArtifactStore(ArtifactStore[str]):
         )
         self[path] = artifact
         return artifact
+
+    async def write_artifact(self, artifact: Artifact[str]) -> Artifact[str]:
+        """Persist an artifact to disk.
+
+        Args:
+            artifact: Artifact to write. Its content is saved as UTF-8 text
+                at the artifact's `path`.
+
+        Returns:
+            The stored artifact with `updated_at` set from disk.
+        """
+        full = self._resolve(artifact.path)
+        full.parent.mkdir(parents=True, exist_ok=True)
+        full.write_text(artifact.content)
+        st = full.stat()
+        stored = artifact.model_copy(update={"updated_at": datetime.fromtimestamp(st.st_mtime)})
+        self[artifact.path] = stored
+        if self.debug:
+            logger.debug("[LocalArtifactStore] wrote: {}", stored)
+        return stored
