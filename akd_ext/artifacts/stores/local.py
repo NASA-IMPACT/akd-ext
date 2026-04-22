@@ -75,7 +75,7 @@ class LocalArtifactStore(ArtifactStore[str]):
         return self
 
     async def read_artifact(self, path: str) -> Artifact[str]:
-        """Load the content of an artifact.
+        """Fetch an artifact by path.
 
         Args:
             path: Path of the artifact to load (e.g. "contexts/role.md").
