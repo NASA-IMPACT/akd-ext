@@ -274,13 +274,12 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     def _wrap_pai_ctx(self) -> AKDRunContext:
         """Wrap ``self._live_pai_ctx`` in an AKD ``RunContext``.
 
-        Phase 1 populates **only** the ``pai_run_context`` extra so round-trip
+        populates **only** the ``pai_run_context`` extra so round-trip
         continuation works losslessly: a caller who passes
         ``event.run_context`` (or ``agent.last_run_context``) back into the
         next ``arun`` / ``astream`` gets pai-native message history and usage
         via the input-side helpers below. AKD's typed fields (``messages`` /
         ``usage`` / ``run_id``) are deliberately left at defaults here;
-        reflecting pai state onto them is Phase 2's job.
         """
         pai_ctx = self._live_pai_ctx
         if pai_ctx is None:
@@ -420,8 +419,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
 # multi-turn continuation feed back ``agent.last_run_context`` (or any event's
 # ``run_context``) — both carry the live pai ``RunContext`` under the extra,
 # so message history / usage come across losslessly with no conversion.
-# Phase 2 (``_context_adapter.py``) adds reflection onto AKD typed fields;
-# the plain AKD-shape → pai-shape conversion path is intentionally omitted.
 # ---------------------------------------------------------------------------
 
 
