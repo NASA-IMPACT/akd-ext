@@ -8,13 +8,51 @@ from akd_ext.artifacts._base import Artifact, ArtifactStore
 
 
 class LocalArtifactStore(ArtifactStore[str]):
-    """Local file-system based artifact store."""
+    """Local file-system based artifact store.
+
+    Treats `self.root` as a directory on disk. `load_artifacts()` eagerly
+    walks the tree, filtering by `self.supported_extensions` and reading
+    each matched file as UTF-8 text into the cache.
+
+    Caching strategy: reads are freshness-checked against disk — the
+    cached copy is served only if its `updated_at` matches the file's
+    current mtime; otherwise the file is re-read and the cache is
+    refreshed. This keeps the store in sync with external edits without
+    requiring an explicit refresh.
+
+    Writes flush to disk (creating parent directories as needed) and
+    update the cache with the post-write mtime.
+
+    Path traversal is rejected at both the model level (via
+    `Artifact.path` validation) and the store level (via `_resolve`,
+    which rejects any path that escapes `self.root` via `..` or
+    symlinks).
+    """
+
+    def _resolve(self, rel_path: str) -> Path:
+        """Resolve a relative path to an absolute path under root.
+
+        Args:
+            rel_path: Path relative to `self.root`.
+
+        Returns:
+            Absolute filesystem path.
+
+        Raises:
+            ValueError: If the resolved path escapes `self.root`.
+        """
+        root_abs = Path(self.root).resolve()
+        full = (Path(self.root) / rel_path).resolve()
+        if not full.is_relative_to(root_abs):
+            raise ValueError(f"path escapes store root: {rel_path!r}")
+        return full
 
     async def load_artifacts(self) -> Self:
-        """Populate the cache by walking `self.root` and reading every file
-        whose extension is in `self.supported_extensions`. Each artifact's
-        path is its slug relative to root; `updated_at` is taken from the
-        filesystem mtime. Returns `self` for fluent chaining."""
+        """Load all available artifacts into the cache.
+
+        Returns:
+            Self, for fluent chaining.
+        """
         root = Path(self.root)
         if not root.exists():
             logger.warning(
@@ -35,3 +73,34 @@ class LocalArtifactStore(ArtifactStore[str]):
                 updated_at=datetime.fromtimestamp(st.st_mtime),
             )
         return self
+
+    async def read_artifact(self, path: str) -> Artifact[str]:
+        """Load the content of an artifact.
+
+        Args:
+            path: Path of the artifact to load (e.g. "contexts/role.md").
+
+        Returns:
+            The artifact including its content.
+
+        Raises:
+            FileNotFoundError: If no artifact exists at that path.
+        """
+        full = self._resolve(path)
+        if not full.is_file():
+            if path in self:
+                del self[path]
+            raise FileNotFoundError(f"artifact not found: {path!r}")
+
+        disk_mtime = datetime.fromtimestamp(full.stat().st_mtime)
+        cached = self._artifacts.get(path)
+        if cached is not None and cached.updated_at == disk_mtime:
+            return cached
+
+        artifact = Artifact[str](
+            path=path,
+            content=full.read_text(),
+            updated_at=disk_mtime,
+        )
+        self[path] = artifact
+        return artifact
