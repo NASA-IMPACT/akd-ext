@@ -15,16 +15,15 @@ from pydantic_ai.models.test import TestModel
 
 from akd._base import InputSchema, OutputSchema, TextOutput
 from akd._base.errors import SchemaValidationError
-from akd.tools._base import BaseTool
-
-from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
 from akd._base.protocols import (
     AKDExecutable,
     AKDTool,
     RunContextProtocol,
     TokenCounts,
 )
+from akd.tools._base import BaseTool
 
+from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
 from akd_ext.agents._base.pydantic_ai._tool_adapter import akd_to_pai_tool
 
 
@@ -49,9 +48,7 @@ class _EchoOutput(OutputSchema):
 
 
 class _EchoConfig(PydanticAIBaseAgentConfig):
-    """Config for the echo test agent; adds one subclass-specific scalar."""
-
-    enable_extra_capability: bool = Field(default=False)
+    """Config for the echo test agent."""
 
 
 class _EchoAgent(PydanticAIBaseAgent[_EchoInput, _EchoOutput]):
@@ -217,16 +214,15 @@ async def test_arun_run_context_available_after_run():
     the pydantic_ai ``RunContext`` captured during the run.
 
     ``arun`` itself returns the output value (per the AKD contract); the
-    captured ctx is retained on the instance so callers can inspect it if
-    needed. Exposing it as a public property (``agent.last_run_context``)
-    is a plausible future ergonomic; this test pins the internal hook in
-    the meantime.
+    captured ctx is retained on the instance so callers can inspect it via
+    ``agent.last_run_context``.
     """
     from pydantic_ai import RunContext as PAIRunContext
 
     agent = _EchoAgent()
     # Before any run, nothing has been captured.
     assert agent._live_pai_ctx is None
+    assert agent.last_run_context is None
 
     with agent.override(model=TestModel()):
         result = await agent.arun(_EchoInput(query="hello"))
@@ -236,59 +232,9 @@ async def test_arun_run_context_available_after_run():
     assert isinstance(agent._live_pai_ctx, PAIRunContext)
     assert agent._live_pai_ctx.usage.requests >= 1
 
-
-# ---------------------------------------------------------------------------
-# RunContext reflection onto AKD typed fields
-# ---------------------------------------------------------------------------
-
-
-@pytest.mark.asyncio
-async def test_astream_reflects_pai_state_onto_akd_fields():
-    """Terminal ``CompletedEvent.run_context`` must expose pai state on the
-    AKD typed fields (``messages`` / ``usage`` / ``run_id``) *and* keep the
-    lossless ``pai_run_context`` extra."""
-    from akd._base import CompletedEvent
-    from pydantic_ai import RunContext as PAIRunContext
-
-    agent = _EchoAgent()
-    with agent.override(model=TestModel()):
-        events = [ev async for ev in agent.astream(_EchoInput(query="hello"))]
-
-    completed = [ev for ev in events if isinstance(ev, CompletedEvent)]
-    assert completed
-    ctx = completed[-1].run_context
-
-    # Reflected typed fields on the AKD RunContext:
-    assert isinstance(ctx.messages, list) and ctx.messages
-    for msg in ctx.messages:
-        assert isinstance(msg, dict)
-        assert "role" in msg
-    assert ctx.usage.requests >= 1
-    assert ctx.run_id is not None
-
-    # Lossless pai extra still attached alongside the reflected view:
-    assert isinstance(ctx.pai_run_context, PAIRunContext)
-
-
-@pytest.mark.asyncio
-async def test_arun_last_run_context_property():
-    """``agent.last_run_context`` returns ``None`` before any run and a
-    populated AKD ``RunContext`` after ``arun``."""
-    from pydantic_ai import RunContext as PAIRunContext
-
-    agent = _EchoAgent()
-    assert agent.last_run_context is None
-
-    with agent.override(model=TestModel()):
-        out = await agent.arun(_EchoInput(query="hello"))
-    assert isinstance(out, (_EchoOutput, TextOutput))
-
+    # last_run_context wraps the pai ctx; the lossless extra is populated.
     ctx = agent.last_run_context
     assert ctx is not None
-    assert ctx.messages  # non-empty list of dicts
-    assert all(isinstance(m, dict) and "role" in m for m in ctx.messages)
-    assert ctx.usage.requests >= 1
-    assert ctx.run_id is not None
     assert isinstance(ctx.pai_run_context, PAIRunContext)
 
 
@@ -311,16 +257,15 @@ async def test_multi_turn_via_last_run_context():
     assert len(ctx_after_turn_2.pai_run_context.messages) > turn_1_message_count
 
 
-def test_input_side_prefers_pai_run_context():
-    """When a ``run_context`` carries both stale AKD-shape messages *and* a
-    populated ``pai_run_context`` extra, the pai path wins — the dict view is
-    ignored in favor of the lossless pai ``ModelMessage`` list."""
+def test_input_side_reads_pai_run_context():
+    """Message history and usage are pulled verbatim from
+    ``run_context.pai_run_context`` — no conversion, no fallback branches."""
     from akd._base.structures import RunContext as AKDRunContext
     from pydantic_ai import RunContext as PAIRunContext
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.result import RunUsage as PAIRunUsage
 
-    from akd_ext.agents._base.pydantic_ai._context_adapter import (
+    from akd_ext.agents._base.pydantic_ai._base import (
         _message_history_from_run_context,
         _usage_from_run_context,
     )
@@ -330,13 +275,10 @@ def test_input_side_prefers_pai_run_context():
     pai_ctx = PAIRunContext(deps=None, model=None, usage=pai_usage)
     pai_ctx.messages = pai_messages
 
-    akd_ctx = AKDRunContext(
-        messages=[{"role": "user", "content": "stale-akd-shape"}],
-        pai_run_context=pai_ctx,
-    )
+    akd_ctx = AKDRunContext(pai_run_context=pai_ctx)
 
     history = _message_history_from_run_context(akd_ctx)
-    assert history is pai_messages or history == pai_messages
+    assert history == pai_messages
     assert history[0].parts[0].content == "pai-truth"
 
     usage = _usage_from_run_context(akd_ctx)
@@ -344,34 +286,26 @@ def test_input_side_prefers_pai_run_context():
     assert usage.input_tokens == 10
 
 
-def test_input_side_falls_back_to_akd_shape():
-    """Pure AKD ``RunContext`` (no ``pai_run_context`` extra) still works
-    through the historical conversion path."""
+def test_input_side_returns_none_without_pai_run_context():
+    """AKD ``RunContext`` with no ``pai_run_context`` extra yields ``None`` —
+    Phase 1 does not convert AKD-shape typed fields into pai shapes."""
     from akd._base.structures import RunContext as AKDRunContext
     from akd._base.structures import RunUsage as AKDRunUsage
-    from pydantic_ai.result import RunUsage as PAIRunUsage
 
-    from akd_ext.agents._base.pydantic_ai._context_adapter import (
+    from akd_ext.agents._base.pydantic_ai._base import (
         _message_history_from_run_context,
         _usage_from_run_context,
     )
 
     akd_ctx = AKDRunContext(
-        messages=[
-            {"role": "system", "content": "you are helpful"},
-            {"role": "user", "content": "hi"},
-        ],
+        messages=[{"role": "user", "content": "hi"}],
         usage=AKDRunUsage(input_tokens=5, output_tokens=7, requests=1),
     )
 
-    history = _message_history_from_run_context(akd_ctx)
-    assert history is not None
-    assert len(history) == 2
-
-    usage = _usage_from_run_context(akd_ctx)
-    assert isinstance(usage, PAIRunUsage)
-    assert usage.input_tokens == 5
-    assert usage.requests == 1
+    assert _message_history_from_run_context(akd_ctx) is None
+    assert _usage_from_run_context(akd_ctx) is None
+    assert _message_history_from_run_context(None) is None
+    assert _usage_from_run_context(None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -504,199 +438,3 @@ async def test_existing_akd_tool_is_pai_compatible():
     assert isinstance(akd_tool, AKDTool)
     # And the input schema reference is intact.
     assert akd_tool.input_schema is DummyInputSchema
-
-
-# ---------------------------------------------------------------------------
-# Zone 3: subclass extension via _build_capabilities_from_scalars
-# ---------------------------------------------------------------------------
-
-
-# ---------------------------------------------------------------------------
-# CMRCarePydanticAgent parity smoke test
-# ---------------------------------------------------------------------------
-
-
-def test_cmr_care_pydantic_agent_constructs():
-    """CMRCarePydanticAgent builds cleanly on PydanticAIBaseAgent using the same
-    schemas as the existing CMRCareAgent."""
-    from akd_ext.agents.cmr_care import CMRCareAgentInputSchema, CMRCareAgentOutputSchema
-    from examples.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
-
-    agent = CMRCarePydanticAgent(CMRCarePydanticConfig(debug=True))
-    assert agent.input_schema is CMRCareAgentInputSchema
-    assert agent.output_schema == CMRCareAgentOutputSchema | TextOutput
-    assert isinstance(agent, AKDExecutable)
-    # Config auto-exposure works through the subclass config:
-    assert agent.reasoning_effort == "medium"
-    assert "CMR" in (agent.description or "")
-
-
-def test_cmr_care_pydantic_agent_check_output():
-    """Subclass override of check_output dispatches via the late-bound bridge."""
-    from akd_ext.agents.cmr_care import CMRCareAgentOutputSchema
-    from examples.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
-
-    agent = CMRCarePydanticAgent(CMRCarePydanticConfig())
-    # Empty result should be rejected by the subclass override
-    msg = agent.check_output(CMRCareAgentOutputSchema(result="   "))
-    assert isinstance(msg, str)
-    assert "empty" in msg.lower()
-    # Non-empty result passes
-    assert agent.check_output(CMRCareAgentOutputSchema(result="found datasets")) is None
-    # TextOutput still bubbles through per the base class default
-    assert agent.check_output(TextOutput(content="need clarification")) is None
-
-
-@pytest.mark.asyncio
-async def test_cmr_care_pydantic_agent_arun_with_test_model():
-    """End-to-end wiring check: CMRCarePydanticAgent.arun works against TestModel.
-
-    The default config wires pydantic_ai's ``MCP`` capability at the CMR
-    endpoint — pydantic_ai tries to fetch the tool list even when ``TestModel``
-    stands in for the LLM, which would reach the real network. We override
-    ``capabilities=[]`` here so the test runs hermetically.
-    """
-    from akd_ext.agents.cmr_care import CMRCareAgentInputSchema, CMRCareAgentOutputSchema
-    from examples.cmr_care_pydantic import CMRCarePydanticAgent, CMRCarePydanticConfig
-
-    agent = CMRCarePydanticAgent(CMRCarePydanticConfig(capabilities=[]))
-    with agent.override(model=TestModel()):
-        result = await agent.arun(CMRCareAgentInputSchema(query="sea ice datasets"))
-    assert isinstance(result, (CMRCareAgentOutputSchema, TextOutput))
-
-
-def test_subclass_can_extend_capabilities_hook():
-    """Subclasses may override ``_build_capabilities_from_scalars`` and call super()."""
-
-    class _MarkerCapability:
-        """Stand-in capability used to assert the hook was invoked."""
-
-    class _ExtAgent(_EchoAgent):
-        """Echo agent that adds a marker capability when enabled."""
-
-        def _build_capabilities_from_scalars(self):
-            caps = super()._build_capabilities_from_scalars()
-            if self.config.enable_extra_capability:
-                caps.append(_MarkerCapability())
-            return caps
-
-    # Instantiation would normally require the capability to be a real one,
-    # but construction-time pydantic_ai validation is model-side; we only
-    # check the hook output directly here.
-    agent = _ExtAgent.__new__(_ExtAgent)  # bypass __init__; we only want the method
-    agent.config = _EchoConfig(enable_extra_capability=True)
-    produced = agent._build_capabilities_from_scalars()
-    assert any(isinstance(c, _MarkerCapability) for c in produced)
-
-
-# ---------------------------------------------------------------------------
-# Smoke tests for a PydanticAIBaseAgent derivative
-# ---------------------------------------------------------------------------
-#
-# A self-contained derivative (mirrors the shape of an MCP-free CMR agent)
-# defined inline so these smoke tests don't depend on any untracked
-# scaffolding. Reuses the committed CMR input / output schemas so the
-# agent-under-test matches the shape of a real AKD agent.
-
-from akd_ext.agents.cmr_care import (  # noqa: E402
-    CMRCareAgentInputSchema,
-    CMRCareAgentOutputSchema,
-)
-
-_SMOKE_SYSTEM_PROMPT = "You are a helpful agent spacializing in CMR and Earth Science."
-
-
-class _SmokeCMRConfig(PydanticAIBaseAgentConfig):
-    """Minimal CMR-shaped config: no MCP (hermetic), placeholder prompt."""
-
-    description: str = Field(default="Smoke-test CMR agent on PydanticAIBaseAgent.")
-    system_prompt: str = Field(default=_SMOKE_SYSTEM_PROMPT)
-    model_name: str = Field(default="openai:gpt-4o-mini")
-    # capabilities default to [] via PydanticAIBaseAgentConfig — no MCP.
-
-
-class _SmokeCMRAgent(PydanticAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
-    """Self-contained PydanticAIBaseAgent derivative for smoke tests."""
-
-    input_schema = CMRCareAgentInputSchema
-    output_schema = CMRCareAgentOutputSchema | TextOutput
-    config_schema = _SmokeCMRConfig
-
-    def check_output(self, output):
-        if isinstance(output, CMRCareAgentOutputSchema) and not output.result.strip():
-            return "Result is empty. Provide search reasoning and details."
-        return super().check_output(output)
-
-
-@pytest.mark.asyncio
-async def test_smoke_arun_and_last_run_context():
-    """End-to-end arun smoke test: return matches output schema; getter
-    exposes a populated AKD RunContext for the next turn."""
-    from pydantic_ai import RunContext as PAIRunContext
-
-    agent = _SmokeCMRAgent()
-    with agent.override(model=TestModel()):
-        result = await agent.arun(CMRCareAgentInputSchema(query="sea ice datasets"))
-
-    assert isinstance(result, (CMRCareAgentOutputSchema, TextOutput))
-
-    ctx = agent.last_run_context
-    assert ctx is not None
-    assert ctx.messages and all(isinstance(m, dict) and "role" in m for m in ctx.messages)
-    assert ctx.usage.requests >= 1
-    assert ctx.run_id is not None
-    assert isinstance(ctx.pai_run_context, PAIRunContext)
-
-
-@pytest.mark.asyncio
-async def test_smoke_astream_no_run_context():
-    """astream tolerates ``run_context=None`` and still attaches a populated
-    run_context (messages + usage + run_id + pai_run_context) to at least
-    one emitted event."""
-    from akd._base import StreamEvent
-    from pydantic_ai import RunContext as PAIRunContext
-
-    agent = _SmokeCMRAgent()
-    with agent.override(model=TestModel()):
-        events = [
-            ev
-            async for ev in agent.astream(
-                CMRCareAgentInputSchema(query="ocean carbon observations"),
-            )
-        ]
-
-    assert events, "astream should produce at least one event"
-    assert all(isinstance(ev, StreamEvent) for ev in events)
-    assert all(ev.run_context is not None for ev in events)
-
-    populated = [ev for ev in events if ev.run_context.messages and ev.run_context.usage.requests >= 1]
-    assert populated, "expected at least one event with populated messages + usage"
-
-    sample = populated[-1]
-    assert sample.run_context.run_id is not None
-    assert isinstance(sample.run_context.pai_run_context, PAIRunContext)
-
-
-def test_smoke_pai_agent_surface_available():
-    """Path B single inheritance: pydantic_ai.Agent's public surface must
-    still be reachable on a PydanticAIBaseAgent derivative instance."""
-    from pydantic_ai import Agent as PAIAgent
-
-    agent = _SmokeCMRAgent()
-    assert isinstance(agent, PAIAgent)
-
-    for attr in (
-        "run",
-        "run_stream_events",
-        "iter",
-        "override",
-        "output_validator",
-        "tool",
-        "system_prompt",
-    ):
-        assert callable(getattr(agent, attr)), f"{attr} missing or not callable"
-
-    # name / description come from config via ConfigBindingMixin auto-exposure.
-    assert isinstance(agent.description, str) and agent.description
-    # name may be None by default; just confirm attribute access doesn't raise.
-    _ = agent.name

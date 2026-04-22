@@ -13,7 +13,7 @@ Consumers use the same AKD pattern they're used to:
         output_schema = MyOut | TextOutput
         config_schema = MyConfig
 
-    agent = MyAgent(MyConfig(model_name="openai:gpt-5.2", reasoning_effort="high"))
+    agent = MyAgent(MyConfig(model_name="openai:gpt-5.2"))
     result = await agent.arun(MyIn(query="..."))
 
 Config auto-exposure is handled by ``ConfigBindingMixin`` — ``agent.model_name``,
@@ -32,6 +32,8 @@ from pydantic_ai import Agent as PAIAgent
 from pydantic_ai import AgentRunResultEvent, ModelRetry
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.result import RunUsage as PAIRunUsage
 
 from akd._base import (
     CompletedEvent,
@@ -44,16 +46,8 @@ from akd._base import (
 )
 from akd._base.protocols import AKDExecutable, RunContextProtocol
 from akd._base.structures import RunContext as AKDRunContext
-from akd._base.structures import RunUsage as AKDRunUsage
 from akd.agents._base import BaseAgentConfig
 
-from ._capabilities import ReflectionCapability, ToolCallLimits, make_ratio_trimmer
-from ._context_adapter import (
-    _message_history_from_run_context,
-    _pai_messages_to_akd_dicts,
-    _pai_usage_to_akd_usage,
-    _usage_from_run_context,
-)
 from ._event_translator import pai_event_to_akd_event
 from ._tool_adapter import akd_to_pai_tool
 
@@ -76,25 +70,10 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
     capabilities: list[Any] = Field(
         default_factory=list,
         description=(
-            "Pydantic AI capabilities (Thinking, WebSearch, Hooks, custom). "
+            "Pydantic AI capabilities (Thinking, WebSearch, MCP, Hooks, custom). "
             "Merged with any capabilities auto-derived from AKD scalar fields."
         ),
     )
-    history_processors: list[Any] = Field(
-        default_factory=list,
-        description="Pydantic AI history processor callables; merged with config-derived processors.",
-    )
-
-    # Override BaseAgentConfig's default-on trimming. The naive ratio-based
-    # trimmer we ship in ``_capabilities.make_ratio_trimmer`` drops arbitrary
-    # slices of the message history, which breaks pydantic_ai's invariant
-    # that every ``tool`` message must be preceded by an ``assistant`` message
-    # with matching ``tool_calls``. A pydantic_ai-aware trimmer that respects
-    # tool-call pairing is a follow-up; until then, trimming is off by
-    # default. Consumers who want it enabled explicitly can set
-    # ``enable_trimming=True`` and supply their own processor via
-    # ``history_processors``.
-    enable_trimming: bool = Field(default=False)
 
     # -- Silence AKD-core's litellm-based config validators --------------
     # BaseAgentConfig defines ``validate_max_tokens_against_model`` and
@@ -131,8 +110,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
 
     - ``input_schema`` / ``output_schema`` / ``config_schema`` — class attrs
     - ``check_output`` — semantic output validation (optional)
-    - ``_build_capabilities_from_scalars`` — additional scalar→capability mappings
-    - ``_build_history_processors_from_scalars`` — additional history processors
+    - ``_build_capabilities_from_scalars`` — scalar→capability mappings (future)
     - ``_to_prompt`` — custom prompt rendering from ``InputSchema``
     - ``_adapt_tools`` — custom tool adapter logic (rarely needed)
 
@@ -191,10 +169,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 ctx_capture,
                 *self._build_capabilities_from_scalars(),
                 *self.config.capabilities,
-            ],
-            history_processors=[
-                *self._build_history_processors_from_scalars(),
-                *self.config.history_processors,
             ],
             **extra_kwargs,
         )
@@ -300,33 +274,18 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     def _wrap_pai_ctx(self) -> AKDRunContext:
         """Wrap ``self._live_pai_ctx`` in an AKD ``RunContext``.
 
-        Populates all three AKD typed fields so consumers who only read
-        ``run_context.messages`` / ``.usage`` / ``.run_id`` see useful values:
-
-        - ``messages`` — best-effort OpenAI-style ``list[dict]`` produced from
-          the pai ``ModelMessage`` list. Lossy for multi-part responses; the
-          lossless path lives on ``pai_run_context`` below.
-        - ``usage`` — AKD ``RunUsage`` with the three structural fields mapped
-          and pai overflow (cache / audio / tool_calls tokens) preserved in
-          ``details``.
-        - ``run_id`` — verbatim from the pai ctx.
-        - ``pai_run_context`` extra — the live pai ``RunContext`` itself. The
-          input-side helpers (``_message_history_from_run_context`` /
-          ``_usage_from_run_context``) prefer this when present, so a caller
-          who passes ``event.run_context`` straight back into the next
-          ``arun`` / ``astream`` gets lossless pai-native continuation.
+        Phase 1 populates **only** the ``pai_run_context`` extra so round-trip
+        continuation works losslessly: a caller who passes
+        ``event.run_context`` (or ``agent.last_run_context``) back into the
+        next ``arun`` / ``astream`` gets pai-native message history and usage
+        via the input-side helpers below. AKD's typed fields (``messages`` /
+        ``usage`` / ``run_id``) are deliberately left at defaults here;
+        reflecting pai state onto them is Phase 2's job.
         """
         pai_ctx = self._live_pai_ctx
         if pai_ctx is None:
             return AKDRunContext()
-        pai_messages = getattr(pai_ctx, "messages", None)
-        pai_usage = getattr(pai_ctx, "usage", None)
-        return AKDRunContext(
-            messages=_pai_messages_to_akd_dicts(pai_messages) if pai_messages else None,
-            usage=_pai_usage_to_akd_usage(pai_usage) if pai_usage is not None else AKDRunUsage(),
-            run_id=getattr(pai_ctx, "run_id", None),
-            pai_run_context=pai_ctx,
-        )
+        return AKDRunContext(pai_run_context=pai_ctx)
 
     @property
     def last_run_context(self) -> AKDRunContext | None:
@@ -382,48 +341,16 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
             return run_context.deps
         return None
 
-    # ── Zone 1: scalar-driven capability / history-processor construction ─
+    # ── Zone 1: scalar-driven capability construction ────────────────────
 
     def _build_capabilities_from_scalars(self) -> list[AbstractCapability]:
-        """Derive capabilities from AKD scalar config fields shared by all agents.
+        """Derive capabilities from AKD config fields.
 
-        Subclasses override to append their own scalar→capability mappings; call
-        ``super()._build_capabilities_from_scalars()`` first to inherit the defaults.
+        Subclasses override to append their own scalar→capability mappings;
+        call ``super()._build_capabilities_from_scalars()`` first to inherit
+        future defaults.
         """
-        caps: list[AbstractCapability] = []
-
-        if self.config.reasoning_effort:
-            from pydantic_ai.capabilities import Thinking
-
-            # pydantic_ai's Thinking currently only accepts `effort`.
-            # AKD's `reasoning_summary` is dormant for now; if pydantic_ai
-            # adds a summary knob later, expose it here.
-            caps.append(Thinking(effort=self.config.reasoning_effort))
-
-        if self.config.max_tool_iterations or self.config.max_tool_calls:
-            caps.append(
-                ToolCallLimits(
-                    max_iterations=self.config.max_tool_iterations,
-                    max_calls=self.config.max_tool_calls,
-                ),
-            )
-
-        if self.config.reflection_prompt:
-            caps.append(ReflectionCapability(prompt=self.config.reflection_prompt))
-
-        return caps
-
-    def _build_history_processors_from_scalars(self) -> list:
-        """Derive history processors from AKD scalar config fields.
-
-        Subclasses override to append their own; call ``super()`` first.
-        """
-        procs: list = []
-        if self.config.enable_trimming:
-            procs.append(make_ratio_trimmer(1 - self.config.trim_ratio))
-            # ``trim_ratio`` in AKD is the *target retention* ratio (0.75 = keep 75%).
-            # The trimmer we pass expects the *drop* fraction, hence 1 - ratio.
-        return procs
+        return []
 
     # ── Tool adaptation ──────────────────────────────────────────────────
 
@@ -484,6 +411,39 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 "Output is empty. Provide a complete structured answer with meaningful content in all required fields."
             )
         return None
+
+
+# ---------------------------------------------------------------------------
+# Input-side run-context helpers
+#
+# Only the ``pai_run_context`` extra is consulted. Callers who want to drive
+# multi-turn continuation feed back ``agent.last_run_context`` (or any event's
+# ``run_context``) — both carry the live pai ``RunContext`` under the extra,
+# so message history / usage come across losslessly with no conversion.
+# Phase 2 (``_context_adapter.py``) adds reflection onto AKD typed fields;
+# the plain AKD-shape → pai-shape conversion path is intentionally omitted.
+# ---------------------------------------------------------------------------
+
+
+def _message_history_from_run_context(run_context: Any | None) -> list[ModelMessage] | None:
+    """Return the pai message history from ``run_context.pai_run_context``, or ``None``."""
+    if run_context is None:
+        return None
+    pai_ctx = getattr(run_context, "pai_run_context", None)
+    if pai_ctx is None:
+        return None
+    messages = getattr(pai_ctx, "messages", None)
+    return list(messages) if messages else None
+
+
+def _usage_from_run_context(run_context: Any | None) -> PAIRunUsage | None:
+    """Return the pai ``RunUsage`` from ``run_context.pai_run_context``, or ``None``."""
+    if run_context is None:
+        return None
+    pai_ctx = getattr(run_context, "pai_run_context", None)
+    if pai_ctx is None:
+        return None
+    return getattr(pai_ctx, "usage", None)
 
 
 __all__ = [
