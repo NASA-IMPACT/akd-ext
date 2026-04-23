@@ -169,8 +169,7 @@ class GapAgentConfig(OpenAIBaseAgentConfig):
 
     description: str = Field(
         default=(
-            """Stage-1: INTERNAL ONLY — Do NOT select this agent in planner workflows. It is part of a specialized pipeline and cannot be used standalone.
-            Research gap detection and synthesis agent for identifying defensible gaps, 
+            """Research gap detection and synthesis agent for identifying defensible gaps, 
             contradictions, and candidate research questions from a user-provided corpus of academic papers. 
             Executes a structured six-stage process (scope inference, extraction, gap-matrix, gap identification, 
             research questions, and prioritization). 
