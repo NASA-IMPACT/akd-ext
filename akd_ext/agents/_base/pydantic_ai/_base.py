@@ -50,6 +50,7 @@ from akd._base.protocols import AKDExecutable, RunContextProtocol
 from akd._base.structures import RunContext as AKDRunContext
 from akd.agents._base import BaseAgentConfig
 
+from ._capabilities import make_ratio_trimmer
 from ._event_translator import pai_event_to_akd_event
 from ._tool_adapter import akd_to_pai_tool
 
@@ -76,6 +77,24 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
             "Merged with any capabilities auto-derived from AKD scalar fields."
         ),
     )
+    history_processors: list[Any] = Field(
+        default_factory=list,
+        description=(
+            "Pydantic AI history processors (callables that shape the message "
+            "history before each model request). Merged with any processors "
+            "auto-derived from AKD scalar fields."
+        ),
+    )
+
+    # Override ``BaseAgentConfig.enable_trimming`` (default ``True``) to ``False``:
+    # the naive ratio-based trimmer we ship in ``_capabilities.make_ratio_trimmer``
+    # drops arbitrary message-history slices, which can strand a
+    # ``ToolReturnPart`` that was paired with an earlier ``ToolCallPart`` —
+    # OpenAI's API rejects histories shaped that way. Consumers who know their
+    # history doesn't contain tool calls (or who supply their own pairing-aware
+    # processor via ``history_processors``) can opt in explicitly with
+    # ``enable_trimming=True``.
+    enable_trimming: bool = Field(default=False)
 
     # -- Silence AKD-core's litellm-based config validators --------------
     # The following validator help for lookups that expect
@@ -168,6 +187,10 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 ctx_capture,
                 *self._build_capabilities_from_scalars(),
                 *self.config.capabilities,
+            ],
+            history_processors=[
+                *self._build_history_processors_from_scalars(),
+                *self.config.history_processors,
             ],
             **extra_kwargs,
         )
@@ -337,6 +360,27 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         TLDR; this is to map configs to a capability in pydanticAI
         """
         return []
+
+    def _build_history_processors_from_scalars(self) -> list:
+        """Derive history processors from AKD scalar config fields.
+
+        Current wiring:
+
+        - ``enable_trimming`` + ``trim_ratio`` → ``make_ratio_trimmer`` —
+          a stateless history processor that drops the oldest
+          ``1 - trim_ratio`` fraction of messages on every invocation.
+          ``trim_ratio`` is AKD's *retention* ratio (``0.75`` = keep 75%)
+          so we invert it for the trimmer's *drop* fraction. Disabled by
+          default via the ``enable_trimming=False`` override on
+          ``PydanticAIBaseAgentConfig`` — see that field's docstring for
+          the caveat on tool-call pairing.
+
+        Subclasses override to append their own; call ``super()`` first.
+        """
+        procs: list = []
+        if self.config.enable_trimming:
+            procs.append(make_ratio_trimmer(1 - self.config.trim_ratio))
+        return procs
 
     # ── Tool adaptation ──────────────────────────────────────────────────
 

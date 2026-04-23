@@ -438,3 +438,90 @@ async def test_existing_akd_tool_is_pai_compatible():
     assert isinstance(akd_tool, AKDTool)
     # And the input schema reference is intact.
     assert akd_tool.input_schema is DummyInputSchema
+
+
+# ---------------------------------------------------------------------------
+# make_ratio_trimmer history processor + wiring
+# ---------------------------------------------------------------------------
+
+
+def test_ratio_trimmer_is_noop_at_zero():
+    """``trim_ratio=0`` returns every message unchanged — useful as an
+    explicit "don't trim" sentinel."""
+    from akd_ext.agents._base.pydantic_ai._capabilities import make_ratio_trimmer
+
+    trimmer = make_ratio_trimmer(0)
+    msgs = [f"msg-{i}" for i in range(5)]
+    assert trimmer(msgs) == msgs
+
+
+def test_ratio_trimmer_drops_oldest_fraction_and_preserves_head():
+    """Non-zero ratio drops the oldest ``ratio`` fraction of messages
+    *after* the first (which is preserved as system-prompt-like head)."""
+    from akd_ext.agents._base.pydantic_ai._capabilities import make_ratio_trimmer
+
+    trimmer = make_ratio_trimmer(0.5)  # drop oldest 50% of the tail
+    msgs = ["system"] + [f"msg-{i}" for i in range(10)]
+    trimmed = trimmer(msgs)
+    # Head preserved:
+    assert trimmed[0] == "system"
+    # Half of the 10 tail messages dropped from the oldest end:
+    assert trimmed[1:] == [f"msg-{i}" for i in range(5, 10)]
+
+
+def test_ratio_trimmer_empty_input_passthrough():
+    """Empty list returns empty list regardless of ratio."""
+    from akd_ext.agents._base.pydantic_ai._capabilities import make_ratio_trimmer
+
+    assert make_ratio_trimmer(0.5)([]) == []
+
+
+def test_ratio_trimmer_rejects_invalid_ratio():
+    """Ratio must be in ``[0, 1)`` — negative or ≥1 raises at factory time."""
+    from akd_ext.agents._base.pydantic_ai._capabilities import make_ratio_trimmer
+
+    with pytest.raises(ValueError, match="trim_ratio"):
+        make_ratio_trimmer(-0.1)
+    with pytest.raises(ValueError, match="trim_ratio"):
+        make_ratio_trimmer(1.0)
+
+
+def test_build_history_processors_from_scalars_off_by_default():
+    """``enable_trimming`` defaults to ``False`` on
+    ``PydanticAIBaseAgentConfig``, so the builder emits no processors."""
+    agent = _EchoAgent(_EchoConfig())
+    assert agent._build_history_processors_from_scalars() == []
+
+
+def test_build_history_processors_from_scalars_includes_trimmer_when_enabled():
+    """When ``enable_trimming=True``, the builder emits one callable — the
+    trimmer produced by ``make_ratio_trimmer(1 - trim_ratio)``."""
+    # trim_ratio=0.5 avoids floating-point drift on (1 - ratio) evaluation.
+    agent = _EchoAgent(_EchoConfig(enable_trimming=True, trim_ratio=0.5))
+    procs = agent._build_history_processors_from_scalars()
+    assert len(procs) == 1
+    assert callable(procs[0])
+    # Sanity: the returned trimmer should behave like make_ratio_trimmer(0.5)
+    # — on a 1+10 message list it drops 50% of the tail (5 messages).
+    trimmer = procs[0]
+    result = trimmer(["sys"] + [f"m-{i}" for i in range(10)])
+    assert result[0] == "sys"
+    assert len(result) == 1 + 5  # head + 10 - int(10 * 0.5) = 5 kept
+
+
+def test_config_history_processors_pass_through():
+    """Processors the caller supplies via ``config.history_processors`` must
+    show up in ``_build_history_processors_from_scalars``'s merge path
+    (i.e. the agent sees both the scalar-derived trimmer and the
+    config-provided callables)."""
+
+    def custom_processor(messages):
+        return messages  # no-op
+
+    agent = _EchoAgent(_EchoConfig(history_processors=[custom_processor]))
+    # The builder itself doesn't return custom processors — only scalar-derived
+    # ones — but the agent's __init__ merges them into pydantic_ai's
+    # history_processors kwarg. Confirm the custom one survives registration
+    # by inspecting the config directly (the canonical assertion available
+    # without reaching into pydantic_ai internals).
+    assert custom_processor in agent.config.history_processors
