@@ -328,15 +328,24 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     # ── Zone 1: scalar-driven capability construction ────────────────────
 
     def _build_capabilities_from_scalars(self) -> list[AbstractCapability]:
-        """Derive capabilities from (scalar) AKD config fields.
+        """Derive pydantic_ai capabilities from scalar AKD config fields.
+
+        Current wiring:
+
+        - ``reasoning_effort`` → ``pydantic_ai.capabilities.Thinking`` —
+          turns on the model's reasoning / extended-thinking mode at the
+          requested effort level. No-op on non-reasoning models.
 
         Subclasses override to append their own scalar→capability mappings;
-        call ``super()._build_capabilities_from_scalars()`` first to inherit
-        future defaults.
-
-        TLDR; this is to map configs to a capability in pydanticAI
+        call ``super()._build_capabilities_from_scalars()`` first to
+        inherit the defaults.
         """
-        return []
+        from pydantic_ai.capabilities import Thinking
+
+        caps: list[AbstractCapability] = []
+        if self.config.reasoning_effort:
+            caps.append(Thinking(effort=self.config.reasoning_effort))
+        return caps
 
     # ── Tool adaptation ──────────────────────────────────────────────────
 

@@ -438,3 +438,33 @@ async def test_existing_akd_tool_is_pai_compatible():
     assert isinstance(akd_tool, AKDTool)
     # And the input schema reference is intact.
     assert akd_tool.input_schema is DummyInputSchema
+
+
+# ---------------------------------------------------------------------------
+# reasoning_effort → Thinking capability wiring
+# ---------------------------------------------------------------------------
+
+
+def test_build_capabilities_from_scalars_includes_thinking():
+    """When ``reasoning_effort`` is set on the config,
+    ``_build_capabilities_from_scalars`` must include a ``Thinking``
+    capability carrying the requested effort level."""
+    from pydantic_ai.capabilities import Thinking
+
+    agent = _EchoAgent(_EchoConfig(reasoning_effort="high"))
+    caps = agent._build_capabilities_from_scalars()
+    thinking_caps = [c for c in caps if isinstance(c, Thinking)]
+    assert thinking_caps, f"expected a Thinking capability in {caps!r}"
+    assert thinking_caps[0].effort == "high"
+
+
+def test_build_capabilities_from_scalars_skips_thinking_when_unset():
+    """Default config has ``reasoning_effort=None``; no ``Thinking``
+    capability should be emitted (the field is an opt-in)."""
+    from pydantic_ai.capabilities import Thinking
+
+    agent = _EchoAgent(_EchoConfig())
+    caps = agent._build_capabilities_from_scalars()
+    assert not any(isinstance(c, Thinking) for c in caps), (
+        f"Thinking should not be wired when reasoning_effort is None; got {caps!r}"
+    )
