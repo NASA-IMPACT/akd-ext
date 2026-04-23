@@ -5,6 +5,8 @@ from typing import Any, Self
 
 from pydantic import BaseModel, Field, field_validator
 
+from akd_ext.artifacts.utils import canonical_ext
+
 
 class Artifact[T](BaseModel):
     path: str = Field(..., description="Slug that identifies the artifact.")
@@ -72,12 +74,21 @@ class ArtifactStore[T](ABC):
         root: str,
         *,
         index_file: str | None = "index.md",
+        supported_extensions: tuple[str, ...] = (".md",),
         debug: bool = False,
     ) -> None:
         self.root = root
         self.index_file = index_file
+        self.supported_extensions = tuple(map(canonical_ext, supported_extensions))
         self.debug = bool(debug)
         self._artifacts: dict[str, Artifact[T]] = {}
+
+    def _is_supported(self, path: str) -> bool:
+        """True if `path`'s extension is in `self.supported_extensions`.
+        An empty `supported_extensions` disables filtering."""
+        if not self.supported_extensions:
+            return True
+        return PurePosixPath(path).suffix in self.supported_extensions
 
     def index_for(self, dir_path: str = "") -> Artifact[T] | None:
         """Return the designated index artifact for a directory (or the
