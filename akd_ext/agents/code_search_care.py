@@ -208,57 +208,75 @@ Before proceeding to ranking, compare the running candidate list against the Exp
 
 **OUTPUT FORMAT**
 
-**Authoritative Output (Mandatory)**
+Return a single **Markdown** document (not JSON, not a code block wrapping JSON). The Markdown is rendered directly in the downstream flow UI, so it must be clean, well-structured, and self-contained. Do not wrap the entire response in a fenced code block.
 
-A single deterministic JSON object conforming to the fixed schema, containing:
-- Zero to six repositories.
-- For each repository:
-```json
-{
-  "name": "string",
-  "url": "string -- primary URL: the code site URL that the ASCL entry links to, or the GitHub/GitLab repo, or the official project website",
-  "url2": "string or null -- secondary URL: if available, include a second relevant URL from a different source (e.g., if url is the ASCL-linked project site, url2 could be the GitHub repo or vice versa). Set to null if only one URL was found.",
-  "ranking_position": "integer (1-6)",
-  "rationale_for_inclusion": "string -- reason for inclusion, including what discovery channel found it",
-  "fit_notes_and_limitations": "string -- alignment notes and limitations for the user's specific task",
-  "provenance": "string -- tool/source used for discovery (e.g., 'NASA Repository Search', 'ADS', 'SDE Text Search', 'External Web Search')",
-  "ads_evidence": {
-    "bibcodes": ["list of ADS bibcodes -- the FIRST entry should be the code's canonical paper (the 'Described in' bibcode from the ASCL record when available), followed by papers that use the code for the queried task"],
-    "citation_count": "integer -- number of ADS papers found referencing this repository",
-    "usage_summary": "string or null -- brief description of how the code was used in literature, with specific mention of relevance to the user's queried task"
-  }
-}
-```
+The document MUST contain the sections below, in this order, using these exact headings.
 
-Note: The ads_evidence object is populated only for Astrophysics queries; for all other domains, return null or empty values for these fields.
+---
 
-**Excluded Candidates (Mandatory when applicable)**
+**Section: Ranked Repositories (Mandatory)**
 
-If any candidates were found during the search process but excluded from the final ranked list, append:
-```json
-{
-  "excluded_candidates": [
-    {
-      "name": "string",
-      "reason_for_exclusion": "string -- why this candidate was not included in the final list"
-    }
-  ],
-  "unlocated_known_codes": [
-    {
-      "name": "string",
-      "note": "string -- why this well-known code could not be found through available channels"
-    }
-  ]
-}
-```
+Use the heading `## Ranked Repositories`.
 
-**Optional Companion Output**
+- Include **zero to six** repositories.
+- Order them by `ranking_position` (1 = best match).
+- For each repository, emit a subsection using the heading `### {ranking_position}. {name}` followed by a bullet list with these exact labels (one bullet per field, in this order):
+  - `- **Primary URL:** <url>` — the code site URL that the ASCL entry links to, or the GitHub/GitLab repo, or the official project website. Render as a Markdown link: `[<url>](<url>)`.
+  - `- **Secondary URL:** <url2 or —>` — if available, a second relevant URL from a different source (e.g., if Primary URL is the ASCL-linked project site, Secondary URL could be the GitHub repo, or vice versa). If only one URL was found, write `—`.
+  - `- **Rationale for inclusion:** <text>` — reason for inclusion, including what discovery channel found it.
+  - `- **Fit notes & limitations:** <text>` — alignment notes and limitations for the user's specific task.
+  - `- **Provenance:** <text>` — tool/source used for discovery (e.g., `NASA Repository Search`, `ADS`, `SDE Text Search`, `External Web Search`).
+  - `- **ADS Evidence:**` — followed by a nested bullet list with:
+    - `  - Bibcodes: <comma-separated list>` — the FIRST entry MUST be the code's canonical paper (the "Described in" bibcode from the ASCL record when available), followed by papers that use the code for the queried task.
+    - `  - Citation count: <integer>` — number of ADS papers found referencing this repository.
+    - `  - Usage summary: <text or —>` — brief description of how the code was used in literature, with specific mention of relevance to the user's queried task.
 
-A human-readable narrative and/or table:
-- MUST be semantically equivalent to the JSON.
-- MUST introduce no new information.
-- Should highlight ADS citation findings as part of the comparative discussion.
-- Should explicitly mention any well-known codes that were searched for but could not be located.
+Note: The **ADS Evidence** block is populated only for Astrophysics queries. For all other domains, emit `- **ADS Evidence:** N/A (non-Astrophysics query)` on a single line in place of the nested bullets.
+
+If **zero** repositories were found across all discovery steps, still emit the `## Ranked Repositories` heading followed by a short paragraph explaining what was searched and why no candidates were located. Do not silently omit the section.
+
+---
+
+**Section: Excluded Candidates (Mandatory when applicable)**
+
+Use the heading `## Excluded Candidates`. Include this section **only if** candidates were found during the search process but not included in the final ranked list. Emit one bullet per excluded candidate:
+
+- `- **{name}** — {reason_for_exclusion}`
+
+If no candidates were excluded, omit this section entirely.
+
+---
+
+**Section: Well-known Codes Not Located (Mandatory when applicable)**
+
+Use the heading `## Well-known Codes Not Located`. Include this section **only if** there are well-known codes you searched for but could not find through any available channel. Emit one bullet per code:
+
+- `- **{name}** — {note on why it could not be located}`
+
+If there are none, omit this section entirely.
+
+---
+
+**Section: Search Notes (Mandatory)**
+
+Use the heading `## Search Notes`. Include a brief, readable summary that surfaces:
+
+- Evidence used across candidates and any uncertainty or confidence levels.
+- Conflicting signals encountered.
+- Assumptions applied during ranking.
+- ADS citation findings (including absence of citations), when applicable.
+
+Keep this section concise — a few bullets or a short paragraph. Do not restate the full per-repository detail.
+
+---
+
+**Formatting rules**
+
+- Output Markdown only; do not emit raw JSON anywhere in the response.
+- Do not wrap the entire document in a fenced code block.
+- URLs must be rendered as Markdown links.
+- Use the exact headings and bullet labels specified above so the UI renders consistently.
+- The Markdown document MUST be semantically complete on its own — it is the sole deliverable.
 """
 
 # -----------------------------------------------------------------------------
