@@ -169,11 +169,11 @@ class GapAgentConfig(OpenAIBaseAgentConfig):
 
     description: str = Field(
         default=(
-            """Research gap detection agent that identifies defensible gaps, contradictions, and candidate 
-            research questions from relevant academic literature on a given research topic. Given a query, 
-            it retrieves and analyzes papers through a structured six-stage process (scope inference, 
-            extraction, gap-matrix, gap identification, research questions, prioritization) and outputs 
-            a structured markdown report with identified gaps, contradictions, and research questions."""
+            """Research gap detection agent that identifies gaps, contradictions, and candidate research 
+            questions from relevant academic literature on a given research topic. Given a query, it retrieves 
+            and analyzes papers through a structured six-stage process (scope inference, extraction, 
+            gap-matrix, gap identification, research questions, prioritization) and outputs a structured 
+            markdown report with identified gaps, contradictions, and research questions."""
         )
     )
     system_prompt: str = Field(default=GAP_AGENT_SYSTEM_PROMPT)
