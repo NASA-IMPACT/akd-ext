@@ -1,8 +1,8 @@
 """``PydanticAIBaseAgent`` — Pydantic AI-backed agent conforming to the AKD contract.
 
-Subclasses ``pydantic_ai.Agent`` directly (Path B) and also explicitly
-inherits akd-core's ``AKDExecutable`` Protocol so
-``isinstance(agent, AKDExecutable)`` works at runtime.
+Subclasses ``pydantic_ai.Agent`` directly and also explicitly
+inherits akd-core's ``AKDExecutable`` Protocol
+so ``isinstance(agent, AKDExecutable)`` works at runtime.
 
 Consumers use the same AKD pattern they're used to:
 
@@ -18,7 +18,9 @@ Consumers use the same AKD pattern they're used to:
 
 Config auto-exposure is handled by ``ConfigBindingMixin`` — ``agent.model_name``,
 ``agent.description``, etc. route to ``self.config.*`` without per-field
-property definitions. The single opt-out is ``system_prompt`` (re-bound to
+property definitions.
+
+The single opt-out is ``system_prompt`` (re-bound to
 pydantic_ai's decorator method so it isn't shadowed by an auto-property).
 """
 
@@ -60,7 +62,7 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
     """AKD-style config that is also a superset of ``pydantic_ai.Agent`` kwargs.
 
     Inherits the full ``BaseAgentConfig`` surface (``model_name``, ``system_prompt``,
-    ``tools``, ``reasoning_effort``, etc.) and adds pydantic_ai-specific fields.
+    ``tools``, ``reasoning_effort``, etc.) and adds pydantic_ai-specific fields like capabilities.
     ``extra="allow"`` forwards any additional future pydantic_ai kwargs via
     ``model_extra`` without requiring this class to be updated.
     """
@@ -76,11 +78,8 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
     )
 
     # -- Silence AKD-core's litellm-based config validators --------------
-    # BaseAgentConfig defines ``validate_max_tokens_against_model`` and
-    # ``validate_reasoning_params`` as @model_validator(mode="after") hooks
-    # that call ``litellm.get_model_info(self.model_name)`` and
-    # ``litellm.supports_reasoning(model=self.model_name)``. Those lookups
-    # expect litellm's bare model names (e.g. ``gpt-5.2``), not the
+    # The following validator help for lookups that expect
+    # litellm's bare model names (e.g. ``gpt-5.2``), not the
     # ``provider:model`` format pydantic_ai requires (e.g. ``openai:gpt-5.2``),
     # so they emit misleading ERROR / WARNING logs for every construction.
     # pydantic_ai handles model resolution itself, so we override both to no-ops.
@@ -110,11 +109,8 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
 
     - ``input_schema`` / ``output_schema`` / ``config_schema`` — class attrs
     - ``check_output`` — semantic output validation (optional)
-    - ``_build_capabilities_from_scalars`` — scalar→capability mappings (future)
-    - ``_to_prompt`` — custom prompt rendering from ``InputSchema``
-    - ``_adapt_tools`` — custom tool adapter logic (rarely needed)
 
-    .. warning::
+    .. Note (warning)::
 
         As suggested by pydanticAI Agents we also follow Single-run-per-instance.
         Every stream event this agent emits carries
@@ -122,15 +118,18 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         and stored on ``self._live_pai_ctx``). Running two concurrent
         ``arun`` / ``astream`` calls on the *same* agent instance will cause
         the captured context to race between runs and misattribute
-        ``event.run_context`` on emitted events. For batch or multi-tenant
-        workloads, construct a fresh agent per run, or switch to the
+        ``event.run_context`` on emitted events.
+
+        For batch or multi-tenant workloads, construct a fresh agent per run, or switch to the
         queue-based capture mechanism tracked in follow-up item
         "Concurrency-safe run_context capture".
+
+        This is because of current (simple) _build_run_context_capture implementation.
     """
 
     # Subclasses override these three class attributes.
-    input_schema: type[InSchema] = InputSchema  # type: ignore[assignment]
-    output_schema: type[OutSchema] = OutputSchema  # type: ignore[assignment]
+    input_schema: type[InSchema] = InputSchema
+    output_schema: type[OutSchema] = OutputSchema
     config_schema: type[PydanticAIBaseAgentConfig] = PydanticAIBaseAgentConfig
 
     # Opt out of ``ConfigBindingMixin`` auto-exposure for ``system_prompt``:
@@ -224,25 +223,11 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         run_context: RunContextProtocol | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
-        """AKD stream entry point. Translates pydantic_ai events → AKD ``StreamEvent``s.
+        """AKD stream entry point. Translates pydantic_ai events → AKD ``StreamEvent``."""
 
-        Uses ``pydantic_ai.Agent.run_stream_events`` rather than ``self.iter``
-        because it is a plain async iterator with no ``async with`` at the
-        call site. Pydantic_ai handles the anyio-backed task decoupling
-        internally, so wrapping it in this async generator is safe even when
-        the consumer cancels mid-stream (e.g. marimo cancelling an in-flight
-        stream when the user sends a follow-up). Using ``iter()`` here is
-        unsafe in that setting because its context manager must exit in the
-        same task that entered it.
-
-        ``run_stream_events`` emits an :class:`AgentRunResultEvent` as its
-        final event, carrying the run's ``output`` — we unwrap that into
-        AKD's :class:`CompletedEvent` so callers that rely on the AKD
-        contract (like ``agent_chat.py``) see the final answer.
-        """
-        # Drop legacy AKD kwargs that pydantic_ai's run_stream_events
-        # doesn't accept. ``token_batch_size`` was a no-op on the OpenAI SDK
-        # runner; nothing in pydantic_ai batches events by count. Call sites
+        # Drop legacy AKD kwargs that pydantic_ai's run_stream_events doesn't accept.
+        # 1. ``token_batch_size`` was a no-op on the OpenAI SDK runner;
+        # nothing in pydantic_ai batches events by count. Call sites
         # should stop passing it, but we strip defensively for backward compat.
         kwargs.pop("token_batch_size", None)
 
@@ -343,11 +328,13 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     # ── Zone 1: scalar-driven capability construction ────────────────────
 
     def _build_capabilities_from_scalars(self) -> list[AbstractCapability]:
-        """Derive capabilities from AKD config fields.
+        """Derive capabilities from (scalar) AKD config fields.
 
         Subclasses override to append their own scalar→capability mappings;
         call ``super()._build_capabilities_from_scalars()`` first to inherit
         future defaults.
+
+        TLDR; this is to map configs to a capability in pydanticAI
         """
         return []
 
