@@ -50,6 +50,7 @@ from akd._base.protocols import AKDExecutable, RunContextProtocol
 from akd._base.structures import RunContext as AKDRunContext
 from akd.agents._base import BaseAgentConfig
 
+from ._capabilities import ToolCallLimits
 from ._event_translator import pai_event_to_akd_event
 from ._tool_adapter import akd_to_pai_tool
 
@@ -328,15 +329,30 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     # ── Zone 1: scalar-driven capability construction ────────────────────
 
     def _build_capabilities_from_scalars(self) -> list[AbstractCapability]:
-        """Derive capabilities from (scalar) AKD config fields.
+        """Derive pydantic_ai capabilities from scalar AKD config fields.
+
+        Current wiring:
+
+        - ``max_tool_iterations`` / ``max_tool_calls`` → ``ToolCallLimits``
+          — caps the model-request loop and total tool executions per agent
+          instance; raises ``MaxToolIterationsExceeded`` /
+          ``MaxToolCallsExceeded`` (subclasses of ``UsageLimitExceeded``)
+          which pydantic_ai surfaces via ``UnexpectedModelBehavior`` to the
+          caller.
 
         Subclasses override to append their own scalar→capability mappings;
-        call ``super()._build_capabilities_from_scalars()`` first to inherit
-        future defaults.
-
-        TLDR; this is to map configs to a capability in pydanticAI
+        call ``super()._build_capabilities_from_scalars()`` first to
+        inherit the defaults.
         """
-        return []
+        caps: list[AbstractCapability] = []
+        if self.config.max_tool_iterations or self.config.max_tool_calls:
+            caps.append(
+                ToolCallLimits(
+                    max_iterations=self.config.max_tool_iterations,
+                    max_calls=self.config.max_tool_calls,
+                ),
+            )
+        return caps
 
     # ── Tool adaptation ──────────────────────────────────────────────────
 

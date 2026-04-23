@@ -50,6 +50,8 @@ class _EchoOutput(OutputSchema):
 class _EchoConfig(PydanticAIBaseAgentConfig):
     """Config for the echo test agent."""
 
+    enable_extra_capability: bool = Field(default=False)
+
 
 class _EchoAgent(PydanticAIBaseAgent[_EchoInput, _EchoOutput]):
     """Minimal test agent exercising the base class's feature surface."""
@@ -438,3 +440,77 @@ async def test_existing_akd_tool_is_pai_compatible():
     assert isinstance(akd_tool, AKDTool)
     # And the input schema reference is intact.
     assert akd_tool.input_schema is DummyInputSchema
+
+
+# ---------------------------------------------------------------------------
+# Phase 3a: ToolCallLimits capability + _build_capabilities_from_scalars wiring
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_tool_call_limits_raises_max_iterations():
+    """The ``before_model_request`` hook raises ``MaxToolIterationsExceeded``
+    on the first invocation that pushes the counter past ``max_iterations``."""
+    from akd._base.errors import MaxToolIterationsExceeded
+
+    from akd_ext.agents._base.pydantic_ai._capabilities import ToolCallLimits
+
+    hooks = ToolCallLimits(max_iterations=1)
+
+    # First invocation: counter goes from 0 → 1; 1 > 1 is False; pass.
+    result = await hooks.before_model_request(None, "request-context-sentinel")
+    assert result == "request-context-sentinel"
+
+    # Second invocation: counter 1 → 2; 2 > 1 triggers the cap.
+    with pytest.raises(MaxToolIterationsExceeded, match="max tool iterations"):
+        await hooks.before_model_request(None, "request-context-sentinel")
+
+
+@pytest.mark.asyncio
+async def test_tool_call_limits_raises_max_calls():
+    """The ``before_tool_execute`` hook raises ``MaxToolCallsExceeded`` on the
+    first invocation that pushes the counter past ``max_calls``."""
+    from akd._base.errors import MaxToolCallsExceeded
+
+    from akd_ext.agents._base.pydantic_ai._capabilities import ToolCallLimits
+
+    hooks = ToolCallLimits(max_calls=1)
+
+    result = await hooks.before_tool_execute(None, call=None, tool_def=None, args="args-sentinel")
+    assert result == "args-sentinel"
+
+    with pytest.raises(MaxToolCallsExceeded, match="max tool calls"):
+        await hooks.before_tool_execute(None, call=None, tool_def=None, args="args-sentinel")
+
+
+def test_build_capabilities_from_scalars_includes_tool_call_limits():
+    """When ``max_tool_iterations`` / ``max_tool_calls`` are set on the config,
+    ``_build_capabilities_from_scalars`` must include a ``Hooks`` capability
+    (the one produced by ``ToolCallLimits``)."""
+    from pydantic_ai.capabilities.hooks import Hooks
+
+    agent = _EchoAgent(_EchoConfig(max_tool_iterations=3))
+    caps = agent._build_capabilities_from_scalars()
+    assert any(isinstance(c, Hooks) for c in caps), f"expected a Hooks capability in {caps!r}"
+
+
+def test_subclass_can_extend_capabilities_hook():
+    """Subclasses may override ``_build_capabilities_from_scalars`` and call super()."""
+
+    class _MarkerCapability:
+        """Stand-in capability used to assert the hook was invoked."""
+
+    class _ExtAgent(_EchoAgent):
+        """Echo agent that adds a marker capability when enabled."""
+
+        def _build_capabilities_from_scalars(self):
+            caps = super()._build_capabilities_from_scalars()
+            if self.config.enable_extra_capability:
+                caps.append(_MarkerCapability())
+            return caps
+
+    # Bypass __init__; we only want the method output.
+    agent = _ExtAgent.__new__(_ExtAgent)
+    agent.config = _EchoConfig(enable_extra_capability=True)
+    produced = agent._build_capabilities_from_scalars()
+    assert any(isinstance(c, _MarkerCapability) for c in produced)
