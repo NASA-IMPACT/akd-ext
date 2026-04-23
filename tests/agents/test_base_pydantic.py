@@ -50,6 +50,8 @@ class _EchoOutput(OutputSchema):
 class _EchoConfig(PydanticAIBaseAgentConfig):
     """Config for the echo test agent."""
 
+    enable_extra_capability: bool = Field(default=False)
+
 
 class _EchoAgent(PydanticAIBaseAgent[_EchoInput, _EchoOutput]):
     """Minimal test agent exercising the base class's feature surface."""
@@ -438,3 +440,90 @@ async def test_existing_akd_tool_is_pai_compatible():
     assert isinstance(akd_tool, AKDTool)
     # And the input schema reference is intact.
     assert akd_tool.input_schema is DummyInputSchema
+
+
+# ---------------------------------------------------------------------------
+# Phase 3b: ReflectionCapability + _build_capabilities_from_scalars wiring
+# ---------------------------------------------------------------------------
+
+
+class _FakeRequestContext:
+    """Tiny stand-in for pydantic_ai's ModelRequestContext.
+
+    The reflection hook only reads and mutates ``.messages`` on the
+    request context; any object with that attribute is enough for a
+    direct-invocation unit test.
+    """
+
+    def __init__(self, messages):
+        self.messages = messages
+
+
+@pytest.mark.asyncio
+async def test_reflection_capability_skips_first_turn():
+    """The first model request must pass through untouched so the
+    reflection prompt never leaks into the initial user-facing turn."""
+    from akd_ext.agents._base.pydantic_ai._capabilities import ReflectionCapability
+
+    hooks = ReflectionCapability(prompt="reflect please")
+
+    ctx = _FakeRequestContext(messages=[])
+    result = await hooks.before_model_request(None, ctx)
+    assert result is ctx
+    assert ctx.messages == []  # nothing injected
+
+
+@pytest.mark.asyncio
+async def test_reflection_capability_injects_on_subsequent_turns():
+    """On turn 2 onwards the reflection prompt is prepended as a
+    ``SystemPromptPart`` on a fresh ``ModelRequest``."""
+    from pydantic_ai.messages import ModelRequest, SystemPromptPart
+
+    from akd_ext.agents._base.pydantic_ai._capabilities import ReflectionCapability
+
+    hooks = ReflectionCapability(prompt="reflect please")
+
+    ctx = _FakeRequestContext(messages=[])
+    await hooks.before_model_request(None, ctx)  # turn 1: skipped
+    await hooks.before_model_request(None, ctx)  # turn 2: inject
+
+    assert len(ctx.messages) == 1
+    injected = ctx.messages[0]
+    assert isinstance(injected, ModelRequest)
+    assert len(injected.parts) == 1
+    part = injected.parts[0]
+    assert isinstance(part, SystemPromptPart)
+    assert part.content == "reflect please"
+
+
+def test_build_capabilities_from_scalars_includes_reflection_capability():
+    """``_build_capabilities_from_scalars`` must include a ``Hooks`` capability
+    (the one produced by ``ReflectionCapability``) when ``reflection_prompt``
+    is set on the config."""
+    from pydantic_ai.capabilities.hooks import Hooks
+
+    agent = _EchoAgent(_EchoConfig(reflection_prompt="do reflect"))
+    caps = agent._build_capabilities_from_scalars()
+    assert any(isinstance(c, Hooks) for c in caps), f"expected a Hooks capability in {caps!r}"
+
+
+def test_subclass_can_extend_capabilities_hook():
+    """Subclasses may override ``_build_capabilities_from_scalars`` and call super()."""
+
+    class _MarkerCapability:
+        """Stand-in capability used to assert the hook was invoked."""
+
+    class _ExtAgent(_EchoAgent):
+        """Echo agent that adds a marker capability when enabled."""
+
+        def _build_capabilities_from_scalars(self):
+            caps = super()._build_capabilities_from_scalars()
+            if self.config.enable_extra_capability:
+                caps.append(_MarkerCapability())
+            return caps
+
+    # Bypass __init__; we only want the method output.
+    agent = _ExtAgent.__new__(_ExtAgent)
+    agent.config = _EchoConfig(enable_extra_capability=True)
+    produced = agent._build_capabilities_from_scalars()
+    assert any(isinstance(c, _MarkerCapability) for c in produced)
