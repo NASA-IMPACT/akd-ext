@@ -1,5 +1,6 @@
 import os
 import re
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Self
@@ -28,6 +29,7 @@ class GitHubArtifactStore(ArtifactStore[str]):
         *,
         branch: str = "main",
         access_token: str | None = None,
+        github_client: Github | None = None,
         index_file: str | None = "README.md",
         supported_extensions: tuple[str, ...] = (".md",),
         debug: bool = False,
@@ -42,7 +44,13 @@ class GitHubArtifactStore(ArtifactStore[str]):
                 over this kwarg.
             access_token: GitHub personal access token. Falls back to
                 the `GITHUB_ACCESS_TOKEN` env var. Anonymous (public-read
-                only) if neither is set.
+                only) if neither is set. Ignored if `github_client` is set.
+            github_client: Optional pre-built PyGithub client. When set,
+                the store uses it for all API calls and does NOT close
+                it on method exit (caller owns the lifetime). Useful for
+                bulk writes (reuses the HTTP session) and for tests
+                (inject a MagicMock). When None (default), a fresh
+                client is constructed per method call.
             index_file: Directory-overview filename (defaults to README.md,
                 which GitHub renders at the directory level).
             supported_extensions: Extensions to include; see ArtifactStore.
@@ -61,6 +69,18 @@ class GitHubArtifactStore(ArtifactStore[str]):
         self.branch = url_branch or branch
         self._token = access_token or os.getenv("GITHUB_ACCESS_TOKEN")
         self._auth = Auth.Token(self._token) if self._token else None
+        self._github_client = github_client
+
+    def _client(self):
+        """Context manager yielding a Github client.
+
+        If a `github_client` was injected via `__init__`, returns it
+        wrapped in `nullcontext` (no close on exit — caller owns it).
+        Otherwise constructs a fresh client that closes on context exit.
+        """
+        if self._github_client is not None:
+            return nullcontext(self._github_client)
+        return Github(auth=self._auth, retry=None)
 
     @staticmethod
     def _parse_root(root: str) -> tuple[str, str, str | None]:
@@ -86,7 +106,7 @@ class GitHubArtifactStore(ArtifactStore[str]):
             Self, for fluent chaining.
         """
         prefix = PurePosixPath(self.path_prefix) if self.path_prefix else None
-        with Github(auth=self._auth, retry=None) as gh:
+        with self._client() as gh:
             repo = gh.get_repo(self.repo_name)
             tree = repo.get_git_tree(self.branch, recursive=True)
             for entry in tree.tree:
@@ -156,7 +176,7 @@ class GitHubArtifactStore(ArtifactStore[str]):
             return cached
         sha = cached.metadata.get("sha") if cached else None
 
-        with Github(auth=self._auth, retry=None) as gh:
+        with self._client() as gh:
             repo = gh.get_repo(self.repo_name)
 
             # Probe remote if we don't already know the sha
