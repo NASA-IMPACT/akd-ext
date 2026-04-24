@@ -3,7 +3,8 @@ import re
 from pathlib import PurePosixPath
 from typing import Self
 
-from github import Auth
+from github import Auth, Github
+from loguru import logger
 
 from akd_ext.artifacts._base import Artifact, ArtifactStore
 
@@ -78,6 +79,35 @@ class GitHubArtifactStore(ArtifactStore[str]):
         return repo_name, "/".join(parts[2:]), None
 
     async def load_artifacts(self) -> Self:
+        """Load all available artifacts into the cache.
+
+        Returns:
+            Self, for fluent chaining.
+        """
+        prefix = PurePosixPath(self.path_prefix) if self.path_prefix else None
+        with Github(auth=self._auth, retry=None) as gh:
+            repo = gh.get_repo(self.repo_name)
+            tree = repo.get_git_tree(self.branch, recursive=True)
+            for entry in tree.tree:
+                if entry.type != "blob":
+                    continue
+                full = PurePosixPath(entry.path)
+                if prefix and not full.is_relative_to(prefix):
+                    continue
+                slug = str(full.relative_to(prefix)) if prefix else entry.path
+                if not self._is_supported(slug):
+                    continue
+                content_file = repo.get_contents(entry.path, ref=self.branch)
+                self[slug] = Artifact[str](
+                    path=slug,
+                    content=content_file.decoded_content.decode("utf-8"),
+                    metadata={"sha": entry.sha},
+                )
+        logger.info(
+            "[GitHubArtifactStore] loaded {} artifacts from {}",
+            len(self),
+            self.root,
+        )
         return self
 
     async def read_artifact(self, path: str) -> Artifact[str]:
