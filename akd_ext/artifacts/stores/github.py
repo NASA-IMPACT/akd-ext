@@ -1,9 +1,10 @@
 import os
 import re
+from datetime import datetime, timezone
 from pathlib import PurePosixPath
 from typing import Self
 
-from github import Auth, Github
+from github import Auth, Github, UnknownObjectException
 from loguru import logger
 
 from akd_ext.artifacts._base import Artifact, ArtifactStore
@@ -130,4 +131,59 @@ class GitHubArtifactStore(ArtifactStore[str]):
         return self[path]
 
     async def write_artifact(self, artifact: Artifact[str]) -> Artifact[str]:
-        pass
+        """Persist an artifact to the repo as a commit.
+
+        Args:
+            artifact: Artifact to write. Commit message comes from
+                `artifact.metadata["commit_message"]` if set, else
+                "Update {path}".
+
+        Returns:
+            Stored artifact with refreshed `metadata["sha"]` and
+            `updated_at` from the new commit.
+        """
+        full_path = str(PurePosixPath(self.path_prefix) / artifact.path) if self.path_prefix else artifact.path
+        message = artifact.metadata.get("commit_message") or f"Update {artifact.path}"
+
+        cached = self._artifacts.get(artifact.path)
+        # Fast-path: skip write if content is unchanged vs. cache — avoids a
+        # spurious commit with identical tree.
+        if cached and cached.content == artifact.content:
+            logger.debug(
+                "[GitHubArtifactStore] no-op write (unchanged): {}",
+                artifact.path,
+            )
+            return cached
+        sha = cached.metadata.get("sha") if cached else None
+
+        with Github(auth=self._auth, retry=None) as gh:
+            repo = gh.get_repo(self.repo_name)
+
+            # Probe remote if we don't already know the sha
+            if sha is None:
+                try:
+                    sha = repo.get_contents(full_path, ref=self.branch).sha
+                except UnknownObjectException:
+                    pass  # stays None → will create
+
+            common = dict(
+                path=full_path,
+                message=message,
+                content=artifact.content,
+                branch=self.branch,
+            )
+            result = repo.update_file(sha=sha, **common) if sha else repo.create_file(**common)
+
+        stored = artifact.model_copy(
+            update={
+                "metadata": {**artifact.metadata, "sha": result["content"].sha},
+                "updated_at": datetime.now(timezone.utc),
+            }
+        )
+        self[artifact.path] = stored
+        logger.info(
+            "[GitHubArtifactStore] wrote: {} (sha={})",
+            stored.path,
+            result["content"].sha,
+        )
+        return stored
