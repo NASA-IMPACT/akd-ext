@@ -102,6 +102,7 @@ class GitHubArtifactStore(ArtifactStore[str]):
                     path=slug,
                     content=content_file.decoded_content.decode("utf-8"),
                     metadata={"sha": entry.sha},
+                    updated_at=content_file.last_modified_datetime,
                 )
         logger.info(
             "[GitHubArtifactStore] loaded {} artifacts from {}",
@@ -111,7 +112,22 @@ class GitHubArtifactStore(ArtifactStore[str]):
         return self
 
     async def read_artifact(self, path: str) -> Artifact[str]:
-        pass
+        """Fetch an artifact by path from the cache.
+
+        Cache-only — does not hit the GitHub API. Call `refresh()` to
+        re-sync after external changes to the repo.
+
+        Args:
+            path: Path of the artifact to load (e.g. "contexts/role.md").
+
+        Returns:
+            The artifact including its content.
+
+        Raises:
+            KeyError: If the artifact is not in the cache — call
+                `load_artifacts()` or `refresh()` first.
+        """
+        return self[path]
 
     async def write_artifact(self, artifact: Artifact[str]) -> Artifact[str]:
         pass
