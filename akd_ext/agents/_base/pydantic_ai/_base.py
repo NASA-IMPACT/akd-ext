@@ -209,7 +209,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         **kwargs: Any,
     ) -> OutSchema:
         """AKD entry point. Bridges ``InputSchema`` → ``pydantic_ai.Agent.run`` → ``OutputSchema``."""
-        prompt = self._to_prompt(params)
+        prompt = params.model_dump_json(indent=2)
         result = await self.run(
             prompt,
             deps=self._deps_from_run_context(run_context),
@@ -233,7 +233,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         # should stop passing it, but we strip defensively for backward compat.
         kwargs.pop("token_batch_size", None)
 
-        prompt = self._to_prompt(params)
+        prompt = params.model_dump_json(indent=2)
         async for pai_event in self.run_stream_events(
             prompt,
             deps=self._deps_from_run_context(run_context),
@@ -300,16 +300,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         if self._live_pai_ctx is None:
             return None
         return self._wrap_pai_ctx()
-
-    # ── Prompt rendering ──────────────────────────────────────────────────
-
-    def _to_prompt(self, params: InSchema) -> str:
-        """Convert an ``InputSchema`` instance to the prompt string pydantic_ai expects.
-
-        Default: pretty-printed JSON dump. Subclasses override for custom
-        templates or more readable renderings.
-        """
-        return params.model_dump_json(indent=2)
 
     # ── Run-context helpers ───────────────────────────────────────────────
 
