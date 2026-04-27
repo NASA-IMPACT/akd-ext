@@ -32,6 +32,7 @@ from typing import Any
 from pydantic import ConfigDict, Field, model_validator
 from pydantic_ai import Agent as PAIAgent
 from pydantic_ai import AgentRunResultEvent, ModelRetry
+from pydantic_ai import RunContext as PAIRunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.hooks import Hooks
 from pydantic_ai.messages import ModelMessage
@@ -49,6 +50,7 @@ from akd._base import (
 from akd._base.protocols import AKDExecutable, RunContextProtocol
 from akd._base.structures import RunContext as AKDRunContext
 from akd.agents._base import BaseAgentConfig
+from akd.tools._base import BaseTool
 
 from ._event_translator import pai_event_to_akd_event
 from ._tool_adapter import akd_to_pai_tool
@@ -319,8 +321,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         tool authors can use pydantic_ai-native dependency injection.
         Subclasses override to inject their own deps construction.
         """
-        from pydantic_ai import RunContext as PAIRunContext
-
         if isinstance(run_context, PAIRunContext):
             return run_context.deps
         return None
@@ -347,8 +347,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         functions, toolsets, etc.) pass through unchanged. Anything structurally
         conforming to ``AKDTool`` gets wrapped via ``akd_to_pai_tool``.
         """
-        from akd.tools._base import BaseTool
-
         adapted = []
         for tool in tools:
             if isinstance(tool, BaseTool):
