@@ -261,17 +261,14 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     def _wrap_pai_ctx(self) -> AKDRunContext:
         """Wrap ``self._live_pai_ctx`` in an AKD ``RunContext``.
 
-        populates **only** the ``pai_run_context`` extra so round-trip
-        continuation works losslessly: a caller who passes
-        ``event.run_context`` (or ``agent.last_run_context``) back into the
-        next ``arun`` / ``astream`` gets pai-native message history and usage
-        via the input-side helpers below. AKD's typed fields (``messages`` /
-        ``usage`` / ``run_id``) are deliberately left at defaults here;
+        Mirrors pai's message history onto ``RunContext.messages`` so backend
+        serializers and downstream consumers see the conversation directly,
+        and keeps the live pai ``RunContext`` under the ``pai_run_context``
+        extra for lossless round-trip continuation (usage, deps, etc.).
         """
         pai_ctx = self._live_pai_ctx
-        if pai_ctx is None:
-            return AKDRunContext()
-        return AKDRunContext(pai_run_context=pai_ctx)
+        messages = list(pai_ctx.messages) if pai_ctx is not None else None
+        return AKDRunContext(messages=messages, pai_run_context=pai_ctx)
 
     @property
     def last_run_context(self) -> AKDRunContext | None:
