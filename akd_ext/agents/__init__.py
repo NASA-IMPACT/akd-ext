@@ -28,27 +28,45 @@ from akd_ext.agents.gap import (
     GapAgentOutputSchema,
 )
 
-from akd_ext.agents.closed_loop_cm1 import (
-    CapabilityFeasibilityMapperAgent,
-    CapabilityFeasibilityMapperConfig,
+from akd_ext.agents.closed_loop.cm1 import (
+    CM1CapabilityFeasibilityMapperAgent,
+    CM1CapabilityFeasibilityMapperConfig,
+    CM1ExperimentImplementationAgent,
+    CM1ExperimentImplementationConfig,
+    CM1InterpretationPaperAssemblyAgent,
+    CM1InterpretationPaperAssemblyConfig,
+    CM1ResearchReportGeneratorAgent,
+    CM1ResearchReportGeneratorConfig,
+    CM1WorkflowSpecBuilderAgent,
+    CM1WorkflowSpecBuilderConfig,
+)
+
+# Backward-compatible aliases for the old names
+CapabilityFeasibilityMapperAgent = CM1CapabilityFeasibilityMapperAgent
+CapabilityFeasibilityMapperConfig = CM1CapabilityFeasibilityMapperConfig
+WorkflowSpecBuilderAgent = CM1WorkflowSpecBuilderAgent
+WorkflowSpecBuilderConfig = CM1WorkflowSpecBuilderConfig
+ExperimentImplementationAgent = CM1ExperimentImplementationAgent
+ExperimentImplementationConfig = CM1ExperimentImplementationConfig
+ResearchReportGeneratorAgent = CM1ResearchReportGeneratorAgent
+ResearchReportGeneratorConfig = CM1ResearchReportGeneratorConfig
+
+# Re-export input/output schemas from generic modules
+from akd_ext.agents.closed_loop.stages.capability_feasibility_mapper import (  # noqa: E402
     CapabilityFeasibilityMapperInputSchema,
     CapabilityFeasibilityMapperOutputSchema,
-    WorkflowSpecBuilderAgent,
-    WorkflowSpecBuilderConfig,
-    WorkflowSpecBuilderInputSchema,
-    WorkflowSpecBuilderOutputSchema,
-    ExperimentImplementationAgent,
-    ExperimentImplementationConfig,
+)
+from akd_ext.agents.closed_loop.stages.experiment_implementation import (  # noqa: E402
     ExperimentImplementationInputSchema,
     ExperimentImplementationOutputSchema,
-    ResearchReportGeneratorAgent,
-    ResearchReportGeneratorConfig,
+)
+from akd_ext.agents.closed_loop.stages.research_report_generator import (  # noqa: E402
     ResearchReportGeneratorInputSchema,
     ResearchReportGeneratorOutputSchema,
-    # InterpretationPaperAssemblyAgent,
-    # InterpretationPaperAssemblyConfig,
-    # InterpretationPaperAssemblyInputSchema,
-    # InterpretationPaperAssemblyOutputSchema,
+)
+from akd_ext.agents.closed_loop.stages.workflow_spec_builder import (  # noqa: E402
+    WorkflowSpecBuilderInputSchema,
+    WorkflowSpecBuilderOutputSchema,
 )
 
 __all__ = [
@@ -67,6 +85,18 @@ __all__ = [
     "GapAgentConfig",
     "GapAgentInputSchema",
     "GapAgentOutputSchema",
+    # CM1-specialized agents
+    "CM1CapabilityFeasibilityMapperAgent",
+    "CM1CapabilityFeasibilityMapperConfig",
+    "CM1WorkflowSpecBuilderAgent",
+    "CM1WorkflowSpecBuilderConfig",
+    "CM1ExperimentImplementationAgent",
+    "CM1ExperimentImplementationConfig",
+    "CM1ResearchReportGeneratorAgent",
+    "CM1ResearchReportGeneratorConfig",
+    "CM1InterpretationPaperAssemblyAgent",
+    "CM1InterpretationPaperAssemblyConfig",
+    # Backward-compatible aliases
     "CapabilityFeasibilityMapperAgent",
     "CapabilityFeasibilityMapperConfig",
     "CapabilityFeasibilityMapperInputSchema",
@@ -83,10 +113,6 @@ __all__ = [
     "ResearchReportGeneratorConfig",
     "ResearchReportGeneratorInputSchema",
     "ResearchReportGeneratorOutputSchema",
-    # "InterpretationPaperAssemblyAgent",
-    # "InterpretationPaperAssemblyConfig",
-    # "InterpretationPaperAssemblyInputSchema",
-    # "InterpretationPaperAssemblyOutputSchema",
     "PDSSearchAgent",
     "PDSSearchAgentInputSchema",
     "PDSSearchAgentOutputSchema",
