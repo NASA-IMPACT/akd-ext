@@ -1,19 +1,39 @@
-import os
 import asyncio
-from pydantic import Field, model_validator
+import json
+import os
+from typing import Literal
 from urllib.parse import urlparse
-from loguru import logger
 
-from akd.tools.search.code_search import (
-    SDECodeSearchTool,
-    SDECodeSearchToolConfig,
-    CodeSearchToolInputSchema,
-    CodeSearchToolOutputSchema,
-)
+import requests
+from loguru import logger
+from pydantic import Field, computed_field, model_validator
+from tenacity import retry, stop_after_attempt
+
 from akd.structures import SearchResultItem
+from akd.tools.misc import HttpUrlAdapter
+from akd.tools.search import (
+    SearchTool,
+    SearchToolConfig,
+    SearchToolInputSchema,
+    SearchToolOutputSchema,
+)
 
 from akd_ext.mcp import mcp_tool
 from .utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
+
+
+# Schemas (formerly inherited from akd.tools.search.code_search; ported locally
+# after that module was removed upstream — see akd commit 771d7c3.)
+class CodeSearchToolInputSchema(SearchToolInputSchema):
+    """Input schema for code search; exposes ``top_k`` as an alias for ``max_results``."""
+
+    @computed_field
+    def top_k(self) -> int:
+        return self.max_results
+
+
+class CodeSearchToolOutputSchema(SearchToolOutputSchema):
+    """Output schema for code search."""
 
 
 class RepositorySearchResultItem(SearchResultItem):
@@ -63,17 +83,40 @@ class RepositorySearchToolOutputSchema(CodeSearchToolOutputSchema):
 
 
 # Tool config schema
-class RepositorySearchToolConfig(SDECodeSearchToolConfig):
+class RepositorySearchToolConfig(SearchToolConfig):
     """
     Config schema for the repository search tool.
     """
 
-    access_token: str | None = Field(default=os.getenv("GITHUB_ACCESS_TOKEN", None), description="GitHub access token")
+    # SDE search backend (formerly inherited from SDECodeSearchToolConfig).
+    base_url: str = Field(
+        default_factory=lambda: os.getenv("SDE_BASE_URL", "https://d2kqty7z3q8ugg.cloudfront.net/api/code/search"),
+        description="SDE code search REST endpoint.",
+    )
+    page_size: int = Field(default=10, description="Number of results per page from the SDE API.")
+    max_pages: int = Field(default=1, description="Maximum number of pages to fetch per query.")
+    headers: dict = Field(
+        default_factory=lambda: {"Content-Type": "application/json", "Accept": "application/json"},
+        description="HTTP headers sent to the SDE API.",
+    )
+    search_mode: Literal["hybrid", "vector", "keyword"] = Field(default="hybrid", description="SDE search mode.")
+
+    # URL is the only stable identity signal for code repositories, so RRF and
+    # deduplication are restricted to it (vs the upstream default of doi/title/url).
+    rrf_keys: list[str] = Field(default_factory=lambda: ["url"])
+    deduplication_keys: list[str] = Field(default_factory=lambda: ["url"])
+    # SDE results don't carry resolvable DOIs; skip the resolver pass.
+    result_normalization: bool = Field(default=False)
+
+    access_token: str | None = Field(
+        default_factory=lambda: os.getenv("GITHUB_ACCESS_TOKEN", None),
+        description="GitHub access token.",
+    )
 
 
 # Tool implementation
 @mcp_tool
-class RepositorySearchTool(SDECodeSearchTool):
+class RepositorySearchTool(SearchTool):
     """
     Search for relevant code and implementations within specialized science repositories.
 
@@ -98,8 +141,54 @@ class RepositorySearchTool(SDECodeSearchTool):
     output_schema = RepositorySearchToolOutputSchema
     config_schema = RepositorySearchToolConfig
 
+    @retry(stop=stop_after_attempt(2))
+    def _sde_search(self, page: int, query: str) -> list[dict]:
+        """POST a single SDE code-search request and return the ``documents`` list."""
+        payload = {
+            "page": page,
+            "pageSize": self.config.page_size,
+            "search_term": query,
+            "search_type": self.config.search_mode,
+        }
+        if self.debug:
+            logger.debug(f"SDE payload: {payload}")
+        response = requests.post(self.config.base_url, headers=self.config.headers, data=json.dumps(payload))
+        return response.json()["documents"]
+
+    async def _arun_single_query(
+        self,
+        query: str,
+        max_results: int,
+        **kwargs,
+    ) -> SearchToolOutputSchema:
+        """Fetch a single query's worth of results from the SDE code search API."""
+        query_results: list[dict] = []
+        for page in range(1, self.config.max_pages + 1):
+            try:
+                page_results = self._sde_search(page=page, query=query)
+            except Exception as e:
+                logger.error(f"Error during SDE search for '{query}' page {page}: {e}")
+                continue
+            if not page_results:
+                break
+            for result in page_results:
+                result["query"] = query
+            query_results.extend(page_results)
+
+        formatted = [
+            SearchResultItem(
+                title=str(result.get("url", "")).split("/")[-1],
+                url=HttpUrlAdapter.validate_python(result.pop("url", "")),
+                content=result.pop("full_text", ""),
+                query=result.pop("query", ""),
+                extra=result,
+            )
+            for result in query_results[:max_results]
+        ]
+        return SearchToolOutputSchema(results=formatted)
+
     async def _arun(self, params: RepositorySearchToolInputSchema) -> RepositorySearchToolOutputSchema:
-        search_result: CodeSearchToolOutputSchema = await super()._arun(params)
+        search_result: SearchToolOutputSchema = await super()._arun(params)
         tasks: list[asyncio.Task] = [
             self._enrich_code_search_with_metadata(repository_item) for repository_item in search_result.results
         ]
