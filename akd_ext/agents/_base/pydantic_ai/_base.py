@@ -51,9 +51,7 @@ from akd._base.protocols import AKDExecutable, RunContextProtocol
 from akd._base.structures import RunContext as AKDRunContext
 from akd.agents._base import BaseAgentConfig
 from akd.tools._base import BaseTool
-
-from ._event_translator import pai_event_to_akd_event
-from ._tool_adapter import akd_to_pai_tool
+from ._utils import akd_to_pai_tool, pai_event_to_akd_event
 
 # ---------------------------------------------------------------------------
 # Config
@@ -209,10 +207,12 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         **kwargs: Any,
     ) -> OutSchema:
         """AKD entry point. Bridges ``InputSchema`` → ``pydantic_ai.Agent.run`` → ``OutputSchema``."""
-        prompt = self._to_prompt(params)
+        prompt = params.model_dump_json(indent=2)
         result = await self.run(
             prompt,
-            deps=self._deps_from_run_context(run_context),
+            deps=run_context.deps
+            if isinstance(run_context, PAIRunContext)
+            else None,  # AKD run contexts don't carry deps. If a caller passes a ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so tool authors can use pydantic_ai-native dependency injection. Subclasses override to inject their own deps construction.
             message_history=_message_history_from_run_context(run_context),
             usage=_usage_from_run_context(run_context),
             **kwargs,
@@ -233,10 +233,12 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         # should stop passing it, but we strip defensively for backward compat.
         kwargs.pop("token_batch_size", None)
 
-        prompt = self._to_prompt(params)
+        prompt = params.model_dump_json(indent=2)
         async for pai_event in self.run_stream_events(
             prompt,
-            deps=self._deps_from_run_context(run_context),
+            deps=run_context.deps
+            if isinstance(run_context, PAIRunContext)
+            else None,  # AKD run contexts don't carry deps. If a caller passes a ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so tool authors can use pydantic_ai-native dependency injection. Subclasses override to inject their own deps construction.
             message_history=_message_history_from_run_context(run_context),
             usage=_usage_from_run_context(run_context),
             **kwargs,
@@ -246,18 +248,19 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 if pai_event.result.output is not None:
                     yield CompletedEvent(
                         data=CompletedEventData(output=pai_event.result.output),
-                        run_context=self._wrap_pai_ctx(),
+                        run_context=self._wrap_pai_ctx,
                     )
                 continue
             akd_event = pai_event_to_akd_event(
                 pai_event,
-                run_context=self._wrap_pai_ctx(),
+                run_context=self._wrap_pai_ctx,
             )
             if akd_event is not None:
                 yield akd_event
 
     # ── RunContext wrapping ───────────────────────────────────────────────
 
+    @property
     def _wrap_pai_ctx(self) -> AKDRunContext:
         """Wrap ``self._live_pai_ctx`` in an AKD ``RunContext``.
 
@@ -296,31 +299,9 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         """
         if self._live_pai_ctx is None:
             return None
-        return self._wrap_pai_ctx()
-
-    # ── Prompt rendering ──────────────────────────────────────────────────
-
-    def _to_prompt(self, params: InSchema) -> str:
-        """Convert an ``InputSchema`` instance to the prompt string pydantic_ai expects.
-
-        Default: pretty-printed JSON dump. Subclasses override for custom
-        templates or more readable renderings.
-        """
-        return params.model_dump_json(indent=2)
+        return self._wrap_pai_ctx
 
     # ── Run-context helpers ───────────────────────────────────────────────
-
-    def _deps_from_run_context(self, run_context: RunContextProtocol | None) -> Any:
-        """Extract pydantic_ai ``deps`` from the run context, if any.
-
-        AKD run contexts don't carry deps. If a caller passes a
-        ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so
-        tool authors can use pydantic_ai-native dependency injection.
-        Subclasses override to inject their own deps construction.
-        """
-        if isinstance(run_context, PAIRunContext):
-            return run_context.deps
-        return None
 
     # ── Zone 1: scalar-driven capability construction ────────────────────
 
