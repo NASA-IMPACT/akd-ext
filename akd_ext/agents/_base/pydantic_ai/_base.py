@@ -132,14 +132,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     output_schema: type[OutSchema] = OutputSchema
     config_schema: type[PydanticAIBaseAgentConfig] = PydanticAIBaseAgentConfig
 
-    # Opt out of ``ConfigBindingMixin`` auto-exposure for ``system_prompt``:
-    # pydantic_ai's ``system_prompt`` is a decorator method used to register
-    # dynamic system prompts, and we must not shadow it with a config-routing
-    # property. Re-binding here puts ``system_prompt`` in the class dict,
-    # which ``ConfigBindingMixin.__init_subclass__`` treats as "already
-    # defined, skip auto-exposure".
-    system_prompt = PAIAgent.system_prompt
-
     # ── Construction ──────────────────────────────────────────────────────
 
     def __init__(self, config: PydanticAIBaseAgentConfig | None = None) -> None:
@@ -306,7 +298,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
 
     # ── Run-context helpers ───────────────────────────────────────────────
 
-    # ── Zone 1: scalar-driven capability construction ────────────────────
+    # ── scalar-driven capability construction ────────────────────
 
     def _build_capabilities_from_scalars(self) -> list[AbstractCapability]:
         """Derive capabilities from (scalar) AKD config fields.
