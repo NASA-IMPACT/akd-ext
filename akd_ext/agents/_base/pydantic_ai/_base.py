@@ -212,7 +212,9 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         prompt = params.model_dump_json(indent=2)
         result = await self.run(
             prompt,
-            deps=self._deps_from_run_context(run_context),
+            deps=run_context.deps
+            if isinstance(run_context, PAIRunContext)
+            else None,  # AKD run contexts don't carry deps. If a caller passes a ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so tool authors can use pydantic_ai-native dependency injection. Subclasses override to inject their own deps construction.
             message_history=_message_history_from_run_context(run_context),
             usage=_usage_from_run_context(run_context),
             **kwargs,
@@ -236,7 +238,9 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         prompt = params.model_dump_json(indent=2)
         async for pai_event in self.run_stream_events(
             prompt,
-            deps=self._deps_from_run_context(run_context),
+            deps=run_context.deps
+            if isinstance(run_context, PAIRunContext)
+            else None,  # AKD run contexts don't carry deps. If a caller passes a ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so tool authors can use pydantic_ai-native dependency injection. Subclasses override to inject their own deps construction.
             message_history=_message_history_from_run_context(run_context),
             usage=_usage_from_run_context(run_context),
             **kwargs,
@@ -302,18 +306,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         return self._wrap_pai_ctx()
 
     # ── Run-context helpers ───────────────────────────────────────────────
-
-    def _deps_from_run_context(self, run_context: RunContextProtocol | None) -> Any:
-        """Extract pydantic_ai ``deps`` from the run context, if any.
-
-        AKD run contexts don't carry deps. If a caller passes a
-        ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so
-        tool authors can use pydantic_ai-native dependency injection.
-        Subclasses override to inject their own deps construction.
-        """
-        if isinstance(run_context, PAIRunContext):
-            return run_context.deps
-        return None
 
     # ── Zone 1: scalar-driven capability construction ────────────────────
 
