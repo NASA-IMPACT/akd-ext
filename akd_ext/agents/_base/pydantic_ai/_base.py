@@ -250,18 +250,19 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 if pai_event.result.output is not None:
                     yield CompletedEvent(
                         data=CompletedEventData(output=pai_event.result.output),
-                        run_context=self._wrap_pai_ctx(),
+                        run_context=self._wrap_pai_ctx,
                     )
                 continue
             akd_event = pai_event_to_akd_event(
                 pai_event,
-                run_context=self._wrap_pai_ctx(),
+                run_context=self._wrap_pai_ctx,
             )
             if akd_event is not None:
                 yield akd_event
 
     # ── RunContext wrapping ───────────────────────────────────────────────
 
+    @property
     def _wrap_pai_ctx(self) -> AKDRunContext:
         """Wrap ``self._live_pai_ctx`` in an AKD ``RunContext``.
 
@@ -303,7 +304,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         """
         if self._live_pai_ctx is None:
             return None
-        return self._wrap_pai_ctx()
+        return self._wrap_pai_ctx
 
     # ── Run-context helpers ───────────────────────────────────────────────
 
