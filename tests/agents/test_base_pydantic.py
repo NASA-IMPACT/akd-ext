@@ -24,7 +24,7 @@ from akd._base.protocols import (
 from akd.tools._base import BaseTool
 
 from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
-from akd_ext.agents._base.pydantic_ai._tool_adapter import akd_to_pai_tool
+from akd_ext.agents._base.pydantic_ai._utils import akd_to_pai_tool
 
 
 # ---------------------------------------------------------------------------
