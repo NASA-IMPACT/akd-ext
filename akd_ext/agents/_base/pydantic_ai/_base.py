@@ -32,7 +32,7 @@ from typing import Any
 from pydantic import ConfigDict, Field, model_validator
 from pydantic_ai import Agent as PAIAgent
 from pydantic_ai import AgentRunResultEvent, ModelRetry
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, Thinking
 from pydantic_ai.capabilities.hooks import Hooks
 
 from akd._base import (
@@ -95,6 +95,17 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
 
     @model_validator(mode="after")
     def validate_reasoning_params(self):
+        return self
+
+    @model_validator(mode="after")
+    def _wire_thinking_from_reasoning_effort(self):
+        """Auto-append a ``Thinking`` capability when ``reasoning_effort`` is set.
+
+        Skips if the user already supplied a ``Thinking`` capability —
+        their explicit value wins over the scalar default.
+        """
+        if self.reasoning_effort and not any(isinstance(c, Thinking) for c in self.capabilities):
+            self.capabilities.append(Thinking(effort=self.reasoning_effort))
         return self
 
 
