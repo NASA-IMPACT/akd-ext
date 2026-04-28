@@ -27,6 +27,7 @@ pydantic_ai's decorator method so it isn't shadowed by an auto-property).
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from dataclasses import replace
 from typing import Any
 
 from pydantic import ConfigDict, Field, model_validator
@@ -34,6 +35,7 @@ from pydantic_ai import Agent as PAIAgent
 from pydantic_ai import AgentRunResultEvent, ModelRetry
 from pydantic_ai.capabilities import AbstractCapability, Thinking
 from pydantic_ai.capabilities.hooks import Hooks
+from pydantic_ai.usage import UsageLimits
 
 from akd._base import (
     CompletedEvent,
@@ -82,6 +84,15 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
         ),
     )
 
+    max_tool_iterations: int = Field(
+        default=50,
+        ge=1,
+        le=50,
+        description="Max model-request / tool-call iterations per run.",
+    )
+
+    usage_limits: UsageLimits | None = None
+
     # -- Silence AKD-core's litellm-based config validators --------------
     # The following validator help for lookups that expect
     # litellm's bare model names (e.g. ``gpt-5.2``), not the
@@ -106,6 +117,17 @@ class PydanticAIBaseAgentConfig(BaseAgentConfig):
         """
         if self.reasoning_effort and not any(isinstance(c, Thinking) for c in self.capabilities):
             self.capabilities.append(Thinking(effort=self.reasoning_effort))
+        return self
+
+    @model_validator(mode="after")
+    def _wire_usage_limits(self):
+        """Layer AKD's ``max_tool_iterations`` / ``max_tool_calls`` onto ``usage_limits``."""
+        if self.usage_limits is not None:
+            self.usage_limits = replace(
+                self.usage_limits,
+                request_limit=self.max_tool_iterations,
+                tool_calls_limit=self.max_tool_calls,
+            )
         return self
 
 
@@ -232,6 +254,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         )
         kwargs.setdefault("message_history", _message_history_from_run_context(run_context))
         kwargs.setdefault("usage", _usage_from_run_context(run_context))
+        kwargs.setdefault("usage_limits", self.config.usage_limits)
         result = await self.run(prompt, **kwargs)
         return result.output
 
@@ -257,6 +280,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         )
         kwargs.setdefault("message_history", _message_history_from_run_context(run_context))
         kwargs.setdefault("usage", _usage_from_run_context(run_context))
+        kwargs.setdefault("usage_limits", self.config.usage_limits)
         async for pai_event in self.run_stream_events(prompt, **kwargs):
             # Terminal result event → emit AKD CompletedEvent with the output.
             if isinstance(pai_event, AgentRunResultEvent):
