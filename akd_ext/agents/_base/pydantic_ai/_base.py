@@ -32,7 +32,6 @@ from typing import Any
 from pydantic import ConfigDict, Field, model_validator
 from pydantic_ai import Agent as PAIAgent
 from pydantic_ai import AgentRunResultEvent, ModelRetry
-from pydantic_ai import RunContext as PAIRunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.hooks import Hooks
 
@@ -204,17 +203,25 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         run_context: RunContextProtocol | None = None,
         **kwargs: Any,
     ) -> OutSchema:
-        """AKD entry point. Bridges ``InputSchema`` → ``pydantic_ai.Agent.run`` → ``OutputSchema``."""
+        """AKD entry point. Bridges ``InputSchema`` → ``pydantic_ai.Agent.run`` → ``OutputSchema``.
+
+        Any ``pydantic_ai.Agent.run`` kwarg (``deps``, ``message_history``,
+        ``usage``, ``model_settings``, etc.) can be passed directly. For
+        ``deps`` / ``message_history`` / ``usage``, ``run_context`` is used
+        as a fallback when the caller doesn't pass an explicit value.
+        ``deps`` is read via ``getattr(run_context, "deps", None)`` so both
+        ``AKDRunContext`` (extras-stored) and ``pydantic_ai.RunContext``
+        (typed field) work.
+        """
         prompt = params.model_dump_json(indent=2)
-        result = await self.run(
-            prompt,
-            deps=run_context.deps
-            if isinstance(run_context, PAIRunContext)
-            else None,  # AKD run contexts don't carry deps. If a caller passes a ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so tool authors can use pydantic_ai-native dependency injection. Subclasses override to inject their own deps construction.
-            message_history=_message_history_from_run_context(run_context),
-            usage=_usage_from_run_context(run_context),
-            **kwargs,
+        # backfill from run_context
+        kwargs.setdefault(
+            "deps",
+            getattr(run_context, "deps", None) if run_context is not None else None,
         )
+        kwargs.setdefault("message_history", _message_history_from_run_context(run_context))
+        kwargs.setdefault("usage", _usage_from_run_context(run_context))
+        result = await self.run(prompt, **kwargs)
         return result.output
 
     async def astream(
@@ -223,24 +230,23 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         run_context: RunContextProtocol | None = None,
         **kwargs: Any,
     ) -> AsyncIterator[StreamEvent]:
-        """AKD stream entry point. Translates pydantic_ai events → AKD ``StreamEvent``."""
+        """AKD stream entry point. Translates pydantic_ai events → AKD ``StreamEvent``.
 
-        # Drop legacy AKD kwargs that pydantic_ai's run_stream_events doesn't accept.
-        # 1. ``token_batch_size`` was a no-op on the OpenAI SDK runner;
-        # nothing in pydantic_ai batches events by count. Call sites
-        # should stop passing it, but we strip defensively for backward compat.
+        See ``arun`` for the kwargs/run_context interplay — same rules apply
+        to every ``pydantic_ai.Agent.run_stream_events`` kwarg.
+        """
+        # token_batch_size was a no-op on the OpenAI SDK runner; strip for back-compat.
         kwargs.pop("token_batch_size", None)
 
         prompt = params.model_dump_json(indent=2)
-        async for pai_event in self.run_stream_events(
-            prompt,
-            deps=run_context.deps
-            if isinstance(run_context, PAIRunContext)
-            else None,  # AKD run contexts don't carry deps. If a caller passes a ``pydantic_ai.RunContext`` directly, forward its ``deps`` field so tool authors can use pydantic_ai-native dependency injection. Subclasses override to inject their own deps construction.
-            message_history=_message_history_from_run_context(run_context),
-            usage=_usage_from_run_context(run_context),
-            **kwargs,
-        ):
+        # backfill from run_context
+        kwargs.setdefault(
+            "deps",
+            getattr(run_context, "deps", None) if run_context is not None else None,
+        )
+        kwargs.setdefault("message_history", _message_history_from_run_context(run_context))
+        kwargs.setdefault("usage", _usage_from_run_context(run_context))
+        async for pai_event in self.run_stream_events(prompt, **kwargs):
             # Terminal result event → emit AKD CompletedEvent with the output.
             if isinstance(pai_event, AgentRunResultEvent):
                 if pai_event.result.output is not None:
