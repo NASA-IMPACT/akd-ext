@@ -24,6 +24,12 @@ from akd._base.protocols import (
 from akd.tools._base import BaseTool
 
 from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
+from akd_ext.agents._base.pydantic_ai._context_adapter import (
+    _message_history_from_run_context,
+    _pai_messages_to_akd_dicts,
+    _pai_usage_to_akd_usage,
+    _usage_from_run_context,
+)
 from akd_ext.agents._base.pydantic_ai._utils import akd_to_pai_tool
 
 
@@ -324,10 +330,6 @@ def test_pai_messages_to_akd_dicts_collapses_multi_part_response():
         ToolCallPart,
     )
 
-    from akd_ext.agents._base.pydantic_ai._context_adapter import (
-        _pai_messages_to_akd_dicts,
-    )
-
     response = ModelResponse(
         parts=[
             TextPart(content="visible text"),
@@ -364,10 +366,6 @@ def test_pai_usage_to_akd_usage_preserves_overflow():
     overflow fields are suppressed."""
     from pydantic_ai.result import RunUsage as PAIRunUsage
 
-    from akd_ext.agents._base.pydantic_ai._context_adapter import (
-        _pai_usage_to_akd_usage,
-    )
-
     pai_usage = PAIRunUsage(
         input_tokens=100,
         output_tokens=50,
@@ -391,11 +389,6 @@ def test_input_side_reads_pai_run_context():
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.result import RunUsage as PAIRunUsage
 
-    from akd_ext.agents._base.pydantic_ai._context_adapter import (
-        _message_history_from_run_context,
-        _usage_from_run_context,
-    )
-
     pai_messages = [ModelRequest(parts=[UserPromptPart(content="pai-truth")])]
     pai_usage = PAIRunUsage(input_tokens=10, output_tokens=20, requests=3)
     pai_ctx = PAIRunContext(deps=None, model=None, usage=pai_usage)
@@ -417,11 +410,6 @@ def test_input_side_returns_none_without_pai_run_context():
     does not convert AKD-shape typed fields into pai shapes."""
     from akd._base.structures import RunContext as AKDRunContext
     from akd._base.structures import RunUsage as AKDRunUsage
-
-    from akd_ext.agents._base.pydantic_ai._context_adapter import (
-        _message_history_from_run_context,
-        _usage_from_run_context,
-    )
 
     akd_ctx = AKDRunContext(
         messages=[{"role": "user", "content": "hi"}],
