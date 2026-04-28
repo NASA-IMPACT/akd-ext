@@ -20,6 +20,12 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .eie.stac_item_search import (
+    STACItemSearchInputSchema,
+    STACItemSearchToolConfig,
+    STACItemSearchOutputSchema,
+    STACItemSearchTool,
+)
 
 __all__ = [
     "DummyTool",
@@ -38,4 +44,8 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "STACItemSearchInputSchema",
+    "STACItemSearchOutputSchema",
+    "STACItemSearchTool",
+    "STACItemSearchToolConfig",
 ]
