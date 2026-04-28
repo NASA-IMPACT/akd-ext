@@ -84,7 +84,7 @@ def test_agent_instantiates_with_custom_config():
 
 def test_metaclass_auto_exposes_config_fields():
     """agent.model_name / agent.description route to self.config.* without hand-written properties."""
-    cfg = _EchoConfig(model_name="test", description="hello")
+    cfg = _EchoConfig(model_name="test", description="hello", io_hints=False)
     agent = _EchoAgent(cfg)
     assert agent.model_name == "test"
     assert agent.description == "hello"
