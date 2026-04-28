@@ -20,6 +20,12 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .eie import (
+    GetPlaceTool,
+    GetPlaceToolConfig,
+    GetPlaceInputSchema,
+    GetPlaceOutputSchema,
+)
 
 __all__ = [
     "DummyTool",
@@ -38,4 +44,8 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "GetPlaceTool",
+    "GetPlaceToolConfig",
+    "GetPlaceInputSchema",
+    "GetPlaceOutputSchema",
 ]
