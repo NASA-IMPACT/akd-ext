@@ -20,6 +20,13 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .eie import (
+    VizTool,
+    VizToolConfig,
+    VizInputSchema,
+    VizOutputSchema,
+    VizItem,
+)
 
 __all__ = [
     "DummyTool",
@@ -38,4 +45,9 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "VizTool",
+    "VizToolConfig",
+    "VizInputSchema",
+    "VizOutputSchema",
+    "VizItem",
 ]
