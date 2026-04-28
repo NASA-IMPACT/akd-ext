@@ -24,6 +24,12 @@ from akd._base.protocols import (
 from akd.tools._base import BaseTool
 
 from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
+from akd_ext.agents._base.pydantic_ai._context_adapter import (
+    _message_history_from_run_context,
+    _pai_messages_to_akd_dicts,
+    _pai_usage_to_akd_usage,
+    _usage_from_run_context,
+)
 from akd_ext.agents._base.pydantic_ai._utils import akd_to_pai_tool
 
 
@@ -257,6 +263,124 @@ async def test_multi_turn_via_last_run_context():
     assert len(ctx_after_turn_2.pai_run_context.messages) > turn_1_message_count
 
 
+# ---------------------------------------------------------------------------
+# reflect pai state onto AKD RunContext typed fields
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_astream_reflects_pai_state_onto_akd_fields():
+    """Terminal ``CompletedEvent.run_context`` must expose pai state on the
+    AKD typed fields (``messages`` / ``usage`` / ``run_id``) *and* keep the
+    lossless ``pai_run_context`` extra."""
+    from akd._base import CompletedEvent
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _EchoAgent()
+    with agent.override(model=TestModel()):
+        events = [ev async for ev in agent.astream(_EchoInput(query="hello"))]
+
+    completed = [ev for ev in events if isinstance(ev, CompletedEvent)]
+    assert completed
+    ctx = completed[-1].run_context
+
+    # Reflected typed fields on the AKD RunContext:
+    assert isinstance(ctx.messages, list) and ctx.messages
+    for msg in ctx.messages:
+        assert isinstance(msg, dict)
+        assert "role" in msg
+    assert ctx.usage.requests >= 1
+    assert ctx.run_id is not None
+
+    # Lossless pai extra still attached alongside the reflected view:
+    assert isinstance(ctx.pai_run_context, PAIRunContext)
+
+
+@pytest.mark.asyncio
+async def test_arun_last_run_context_property():
+    """``agent.last_run_context`` returns ``None`` before any run and a
+    populated AKD ``RunContext`` (typed fields + pai extra) after ``arun``."""
+    from pydantic_ai import RunContext as PAIRunContext
+
+    agent = _EchoAgent()
+    assert agent.last_run_context is None
+
+    with agent.override(model=TestModel()):
+        out = await agent.arun(_EchoInput(query="hello"))
+    assert isinstance(out, (_EchoOutput, TextOutput))
+
+    ctx = agent.last_run_context
+    assert ctx is not None
+    assert ctx.messages  # non-empty list of dicts
+    assert all(isinstance(m, dict) and "role" in m for m in ctx.messages)
+    assert ctx.usage.requests >= 1
+    assert ctx.run_id is not None
+    assert isinstance(ctx.pai_run_context, PAIRunContext)
+
+
+def test_pai_messages_to_akd_dicts_collapses_multi_part_response():
+    """A ``ModelResponse`` with text + thinking + a tool call must collapse
+    into a single assistant dict: text joined with ``\\n``, thinking prefixed
+    with ``[thinking] ``, and one ``tool_calls`` entry with the expected
+    ``function.name`` / ``function.arguments``."""
+    from pydantic_ai.messages import (
+        ModelResponse,
+        TextPart,
+        ThinkingPart,
+        ToolCallPart,
+    )
+
+    response = ModelResponse(
+        parts=[
+            TextPart(content="visible text"),
+            ThinkingPart(content="internal thought"),
+            ToolCallPart(
+                tool_call_id="call_1",
+                tool_name="search",
+                args={"query": "arctic sea ice"},
+            ),
+        ],
+    )
+
+    dicts = _pai_messages_to_akd_dicts([response])
+    assert len(dicts) == 1
+    assistant = dicts[0]
+    assert assistant["role"] == "assistant"
+    assert "visible text" in assistant["content"]
+    assert "[thinking] internal thought" in assistant["content"]
+    assert assistant["tool_calls"] == [
+        {
+            "id": "call_1",
+            "type": "function",
+            "function": {
+                "name": "search",
+                "arguments": '{"query":"arctic sea ice"}',
+            },
+        },
+    ]
+
+
+def test_pai_usage_to_akd_usage_preserves_overflow():
+    """The three structural fields round-trip exactly and pai overflow
+    (non-zero cache / tool-calls fields) lands in AKD's ``details``. Zero
+    overflow fields are suppressed."""
+    from pydantic_ai.result import RunUsage as PAIRunUsage
+
+    pai_usage = PAIRunUsage(
+        input_tokens=100,
+        output_tokens=50,
+        requests=2,
+        cache_read_tokens=5,
+        tool_calls=2,
+    )
+
+    akd_usage = _pai_usage_to_akd_usage(pai_usage)
+    assert akd_usage.input_tokens == 100
+    assert akd_usage.output_tokens == 50
+    assert akd_usage.requests == 2
+    assert akd_usage.details == {"cache_read_tokens": 5, "tool_calls": 2}
+
+
 def test_input_side_reads_pai_run_context():
     """Message history and usage are pulled verbatim from
     ``run_context.pai_run_context`` — no conversion, no fallback branches."""
@@ -264,11 +388,6 @@ def test_input_side_reads_pai_run_context():
     from pydantic_ai import RunContext as PAIRunContext
     from pydantic_ai.messages import ModelRequest, UserPromptPart
     from pydantic_ai.result import RunUsage as PAIRunUsage
-
-    from akd_ext.agents._base.pydantic_ai._base import (
-        _message_history_from_run_context,
-        _usage_from_run_context,
-    )
 
     pai_messages = [ModelRequest(parts=[UserPromptPart(content="pai-truth")])]
     pai_usage = PAIRunUsage(input_tokens=10, output_tokens=20, requests=3)
@@ -288,14 +407,9 @@ def test_input_side_reads_pai_run_context():
 
 def test_input_side_returns_none_without_pai_run_context():
     """AKD ``RunContext`` with no ``pai_run_context`` extra yields ``None`` —
-    Phase 1 does not convert AKD-shape typed fields into pai shapes."""
+    does not convert AKD-shape typed fields into pai shapes."""
     from akd._base.structures import RunContext as AKDRunContext
     from akd._base.structures import RunUsage as AKDRunUsage
-
-    from akd_ext.agents._base.pydantic_ai._base import (
-        _message_history_from_run_context,
-        _usage_from_run_context,
-    )
 
     akd_ctx = AKDRunContext(
         messages=[{"role": "user", "content": "hi"}],

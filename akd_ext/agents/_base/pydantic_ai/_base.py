@@ -35,8 +35,6 @@ from pydantic_ai import AgentRunResultEvent, ModelRetry
 from pydantic_ai import RunContext as PAIRunContext
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.hooks import Hooks
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.result import RunUsage as PAIRunUsage
 
 from akd._base import (
     CompletedEvent,
@@ -49,8 +47,16 @@ from akd._base import (
 )
 from akd._base.protocols import AKDExecutable, RunContextProtocol
 from akd._base.structures import RunContext as AKDRunContext
+from akd._base.structures import RunUsage as AKDRunUsage
 from akd.agents._base import BaseAgentConfig
 from akd.tools._base import BaseTool
+
+from ._context_adapter import (
+    _message_history_from_run_context,
+    _pai_messages_to_akd_dicts,
+    _pai_usage_to_akd_usage,
+    _usage_from_run_context,
+)
 from ._utils import akd_to_pai_tool, pai_event_to_akd_event
 
 # ---------------------------------------------------------------------------
@@ -256,14 +262,35 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     def _wrap_pai_ctx(self) -> AKDRunContext:
         """Wrap ``self._live_pai_ctx`` in an AKD ``RunContext``.
 
-        Mirrors pai's message history onto ``RunContext.messages`` so backend
-        serializers and downstream consumers see the conversation directly,
-        and keeps the live pai ``RunContext`` under the ``pai_run_context``
-        extra for lossless round-trip continuation (usage, deps, etc.).
+        Populates all three AKD typed fields so consumers who only read
+        ``run_context.messages`` / ``.usage`` / ``.run_id`` see useful values:
+
+        - ``messages`` — best-effort OpenAI-style ``list[dict]`` produced from
+          the pai ``ModelMessage`` list via
+          :func:`_pai_messages_to_akd_dicts`. Lossy for multi-part responses
+          (text + thinking + tool calls collapse into one assistant dict);
+          the lossless path lives on the ``pai_run_context`` extra below.
+        - ``usage`` — AKD ``RunUsage`` with the three structural fields mapped
+          exactly and pai overflow (cache / audio / tool_calls tokens)
+          preserved in ``details`` via :func:`_pai_usage_to_akd_usage`.
+        - ``run_id`` — verbatim from the pai ctx.
+        - ``pai_run_context`` extra — the live pai ``RunContext`` itself.
+          The input-side helpers (``_message_history_from_run_context`` /
+          ``_usage_from_run_context``) consult only this extra when the
+          caller feeds a prior ``event.run_context`` back in for
+          continuation, so round-trip stays lossless.
         """
         pai_ctx = self._live_pai_ctx
-        messages = list(pai_ctx.messages) if pai_ctx is not None else None
-        return AKDRunContext(messages=messages, pai_run_context=pai_ctx)
+        if pai_ctx is None:
+            return AKDRunContext()
+        pai_messages = getattr(pai_ctx, "messages", None)
+        pai_usage = getattr(pai_ctx, "usage", None)
+        return AKDRunContext(
+            messages=_pai_messages_to_akd_dicts(pai_messages) if pai_messages else None,
+            usage=_pai_usage_to_akd_usage(pai_usage) if pai_usage is not None else AKDRunUsage(),
+            run_id=getattr(pai_ctx, "run_id", None),
+            pai_run_context=pai_ctx,
+        )
 
     @property
     def last_run_context(self) -> AKDRunContext | None:
@@ -365,37 +392,6 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 "Output is empty. Provide a complete structured answer with meaningful content in all required fields."
             )
         return None
-
-
-# ---------------------------------------------------------------------------
-# Input-side run-context helpers
-#
-# Only the ``pai_run_context`` extra is consulted. Callers who want to drive
-# multi-turn continuation feed back ``agent.last_run_context`` (or any event's
-# ``run_context``) — both carry the live pai ``RunContext`` under the extra,
-# so message history / usage come across losslessly with no conversion.
-# ---------------------------------------------------------------------------
-
-
-def _message_history_from_run_context(run_context: Any | None) -> list[ModelMessage] | None:
-    """Return the pai message history from ``run_context.pai_run_context``, or ``None``."""
-    if run_context is None:
-        return None
-    pai_ctx = getattr(run_context, "pai_run_context", None)
-    if pai_ctx is None:
-        return None
-    messages = getattr(pai_ctx, "messages", None)
-    return list(messages) if messages else None
-
-
-def _usage_from_run_context(run_context: Any | None) -> PAIRunUsage | None:
-    """Return the pai ``RunUsage`` from ``run_context.pai_run_context``, or ``None``."""
-    if run_context is None:
-        return None
-    pai_ctx = getattr(run_context, "pai_run_context", None)
-    if pai_ctx is None:
-        return None
-    return getattr(pai_ctx, "usage", None)
 
 
 __all__ = [
