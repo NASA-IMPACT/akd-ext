@@ -1,41 +1,46 @@
-"""Research Partner agents module."""
+"""Generic closed-loop workflow stage agents.
 
-from akd_ext.agents.closed_loop_cm1.capability_feasibility_mapper import (
+This package provides parameterized base classes for each stage of a
+closed-loop scientific workflow. Specialize them for a domain (CM1, FM, etc.)
+by subclassing with domain-specific system prompts, context files, and tools.
+
+Layout:
+
+- ``_base``: shared config + helper (``ClosedLoopStageConfig``, ``append_context_to_agent``)
+- ``stages/``: generic stage classes (schemas + logic), no domain references
+- ``cm1/``: CM1 specialization (prompts, context, tools)
+
+See ``akd_ext.agents.closed_loop.cm1`` for the CM1 specialization.
+"""
+
+from akd_ext.agents.closed_loop._base import ClosedLoopStageConfig
+from akd_ext.agents.closed_loop.stages import (
     CapabilityFeasibilityMapperAgent,
     CapabilityFeasibilityMapperConfig,
     CapabilityFeasibilityMapperInputSchema,
     CapabilityFeasibilityMapperOutputSchema,
-)
-
-from akd_ext.agents.closed_loop_cm1.workflow_spec_builder import (
+    ExperimentImplementationAgent,
+    ExperimentImplementationConfig,
+    ExperimentImplementationInputSchema,
+    ExperimentImplementationOutputSchema,
+    ExperimentSpec,
+    FileEdit,
+    InterpretationPaperAssemblyAgent,
+    InterpretationPaperAssemblyConfig,
+    InterpretationPaperAssemblyInputSchema,
+    InterpretationPaperAssemblyOutputSchema,
+    ResearchReportGeneratorAgent,
+    ResearchReportGeneratorConfig,
+    ResearchReportGeneratorInputSchema,
+    ResearchReportGeneratorOutputSchema,
     WorkflowSpecBuilderAgent,
     WorkflowSpecBuilderConfig,
     WorkflowSpecBuilderInputSchema,
     WorkflowSpecBuilderOutputSchema,
 )
 
-from akd_ext.agents.closed_loop_cm1.experiment_implementation import (
-    ExperimentImplementationAgent,
-    ExperimentImplementationConfig,
-    ExperimentImplementationInputSchema,
-    ExperimentImplementationOutputSchema,
-)
-
-from akd_ext.agents.closed_loop_cm1.research_report_generator import (
-    ResearchReportGeneratorAgent,
-    ResearchReportGeneratorConfig,
-    ResearchReportGeneratorInputSchema,
-    ResearchReportGeneratorOutputSchema,
-)
-
-from akd_ext.agents.closed_loop_cm1.interpretation_paper_assembly import (
-    InterpretationPaperAssemblyAgent,
-    InterpretationPaperAssemblyConfig,
-    InterpretationPaperAssemblyInputSchema,
-    InterpretationPaperAssemblyOutputSchema,
-)
-
 __all__ = [
+    "ClosedLoopStageConfig",
     "CapabilityFeasibilityMapperAgent",
     "CapabilityFeasibilityMapperConfig",
     "CapabilityFeasibilityMapperInputSchema",
@@ -48,6 +53,8 @@ __all__ = [
     "ExperimentImplementationConfig",
     "ExperimentImplementationInputSchema",
     "ExperimentImplementationOutputSchema",
+    "FileEdit",
+    "ExperimentSpec",
     "ResearchReportGeneratorAgent",
     "ResearchReportGeneratorConfig",
     "ResearchReportGeneratorInputSchema",
