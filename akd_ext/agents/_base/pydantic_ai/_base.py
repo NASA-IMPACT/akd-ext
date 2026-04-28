@@ -174,6 +174,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
 
     def __init__(self, config: PydanticAIBaseAgentConfig | None = None) -> None:
         self.config = config or self.config_schema()
+        self._bind_metadata()
 
         # Forward-compat: any unknown fields the caller put on the config
         # (via ``extra="allow"``) pass straight through to pydantic_ai.
@@ -186,9 +187,14 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         self._live_pai_ctx: Any = None
         ctx_capture = self._build_run_context_capture()
 
+        # merge description into prompt
+        prompts: tuple[str, ...] = (self.config.system_prompt,)
+        if self.config.description:
+            prompts += (f"AGENT DESCRIPTION:\n{self.config.description}",)
+
         super().__init__(
             model=self.config.model_name,
-            system_prompt=self.config.system_prompt,
+            system_prompt=prompts,
             name=self.config.name,
             description=self.config.description,
             retries=self.config.num_retries,
