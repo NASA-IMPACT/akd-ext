@@ -256,7 +256,10 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         kwargs.setdefault("usage", _usage_from_run_context(run_context))
         kwargs.setdefault("usage_limits", self.config.usage_limits)
         result = await self.run(prompt, **kwargs)
-        return result.output
+        out = result.output
+        if hasattr(out, "_run_context"):
+            out._run_context = self._wrap_pai_ctx
+        return out
 
     async def astream(
         self,
@@ -284,10 +287,14 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         async for pai_event in self.run_stream_events(prompt, **kwargs):
             # Terminal result event → emit AKD CompletedEvent with the output.
             if isinstance(pai_event, AgentRunResultEvent):
-                if pai_event.result.output is not None:
+                output = pai_event.result.output
+                if output is not None:
+                    ctx = self._wrap_pai_ctx
+                    if hasattr(output, "_run_context"):
+                        output._run_context = ctx
                     yield CompletedEvent(
-                        data=CompletedEventData(output=pai_event.result.output),
-                        run_context=self._wrap_pai_ctx,
+                        data=CompletedEventData(output=output),
+                        run_context=ctx,
                     )
                 continue
             akd_event = pai_event_to_akd_event(
