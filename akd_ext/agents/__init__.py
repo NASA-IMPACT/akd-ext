@@ -28,6 +28,14 @@ from akd_ext.agents.gap import (
     GapAgentOutputSchema,
 )
 
+from akd_ext.agents.image_analyzer import (
+    FigureAnalysis,
+    ImageAnalyzerAgent,
+    ImageAnalyzerConfig,
+    ImageAnalyzerInputSchema,
+    ImageAnalyzerOutputSchema,
+)
+
 from akd_ext.agents.closed_loop.cm1 import (
     CM1CapabilityFeasibilityMapperAgent,
     CM1CapabilityFeasibilityMapperConfig,
@@ -85,6 +93,12 @@ __all__ = [
     "GapAgentConfig",
     "GapAgentInputSchema",
     "GapAgentOutputSchema",
+    # Generic image analyzer
+    "ImageAnalyzerAgent",
+    "ImageAnalyzerConfig",
+    "ImageAnalyzerInputSchema",
+    "ImageAnalyzerOutputSchema",
+    "FigureAnalysis",
     # CM1-specialized agents
     "CM1CapabilityFeasibilityMapperAgent",
     "CM1CapabilityFeasibilityMapperConfig",
