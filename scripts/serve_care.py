@@ -1,74 +1,166 @@
-"""Serve a CARE v2 interviewer agent via the pydantic-ai web chat UI.
+"""Per-phase CARE v2 interviewer agent served via the pydantic-ai web chat UI.
 
-This is a thin launcher around `pydantic_ai.ui._web.create_web_app`. It mirrors
-the marimo notebook's agent shape 1:1 (`ConsoleCapability` + `Deps` with a
-`LocalBackend` scoped to `./tmp/care-v2/<agent_name>/`) but exposes it over
-HTTP/SSE on `http://127.0.0.1:<port>`.
+Architecture: ONE interviewer agent per CARE v2 phase. The agent walks the SME
+through that phase's sub-stages sequentially, loading each sub-stage's verbatim
+CARE v2 prompt JIT via a `read_prompt(filename)` tool that calls into a
+read-only `LocalBackend` scoped to the per-phase prompts directory of the
+cloned CARE v2 repo.
 
-Usage (CLI flags or env vars — flags take precedence):
-    # Phase 1 — Scope & Decompose (defaults)
-    uv run python scripts/serve_care.py --port 7932
+Two `LocalBackend`s per agent:
+  - `artifacts` (R/W): scoped to ./tmp/care-v2/<agent_name>/. Used by
+    `ConsoleCapability` for the canonical six file ops.
+  - `prompts` (R/O): scoped to <CARE_REPO>/phase_<N>_*/prompts/. Read via the
+    custom `read_prompt(filename)` tool only.
 
-    # Phase 2.2 — via flag
-    uv run python scripts/serve_care.py --phase phase_2_2 --port 7933
+Usage:
+    # Phase 1 (Scope & Decompose) — agent_name auto-generated
+    uv run python scripts/serve_care.py --phase 1 --port 7932
 
-    # Phase 3.2 — via env (equivalent)
-    CARE_PHASE=phase_3_2 uv run python scripts/serve_care.py --port 7934
+    # Specific agent name (workspace shared across phases for the same agent)
+    uv run python scripts/serve_care.py --phase 1 --agent-name cmr_search --port 7932
 
-    # Per-agent workspaces; run multiple phases against the same workspace in parallel
-    uv run python scripts/serve_care.py --agent-name cmr_search --phase phase_1   --port 7932 &
-    uv run python scripts/serve_care.py --agent-name cmr_search --phase phase_2_2 --port 7933 &
-
-    # Mix flags and env
-    CARE_AGENT_NAME=prose_writer uv run python scripts/serve_care.py --phase phase_1 --thinking high
+    # Phases 2 / 3 / 4 against the same workspace
+    uv run python scripts/serve_care.py --phase 2 --agent-name cmr_search --port 7932
+    uv run python scripts/serve_care.py --phase 3 --agent-name cmr_search --port 7932
+    uv run python scripts/serve_care.py --phase 4 --agent-name cmr_search --port 7932
 
 CLI flags (override env vars):
-    --phase            phase_1 (default) | phase_2_2 | phase_3_2
-    --agent-name       workspace dir name (default: web_session)
-                       workspace lives at ./tmp/care-v2/<name>/
+    --phase 1|2|3|4    interview phase (CARE v2)
+    --agent-name       workspace dir name (default: auto-generated session_<timestamp>)
     --model            model id (default: openai:gpt-5.2)
     --thinking         none | low | medium (default) | high
     --host             host to bind (default: 127.0.0.1)
     --port             port to bind (default: 7932)
 
-Env vars (used as defaults if no CLI flag is given):
-    CARE_PHASE, CARE_AGENT_NAME, CARE_MODEL, CARE_THINKING
+Env vars (used as defaults if no CLI flag):
+    CARE_REPO_PATH       path to cloned CARE v2 repo
+    CARE_WORKSPACE_ROOT  parent dir for per-agent workspaces
+    CARE_MODEL, CARE_THINKING
 
 Notes:
-    - We use `pydantic_ai.ui._web.create_web_app` directly (not `clai web` CLI)
-      because the CLI doesn't pass `deps` to the agent, but `ConsoleCapability`
-      reads `ctx.deps.backend` inside its tools. Going through the function lets
-      us pass `deps=Deps(backend=backend)`.
-    - Phase prompts are verbatim from NASA-IMPACT/AKD-CARE@Care_version2.
-      A short ROLE_LOCK_BANNER is prepended to each so modern instruction-tuned
-      models stay in interviewer mode and don't auto-pivot to "be helpful about
-      the topic" mode (which the verbatim prompts don't explicitly forbid).
+    - Uses `pydantic_ai.ui._web.create_web_app` directly (clai web doesn't pass
+      `deps`). Both `system_prompt` (on the Agent) AND `instructions` (on
+      `create_web_app`) get the same meta-prompt — belt-and-suspenders.
+    - Phase prompts are NOT inlined here. They live in the cloned CARE v2 repo
+      and are read at runtime via `read_prompt(filename)`. Resilient to
+      upstream filename renames as long as the `phase_<N>_*/prompts/`
+      convention holds.
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
+from typing import AsyncIterable
 
 import uvicorn
-from pydantic_ai import Agent
+from pydantic_ai import Agent, FunctionToolset, RunContext
 from pydantic_ai.capabilities import Thinking
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
+    PartDeltaEvent,
+    TextPartDelta,
+    ThinkingPartDelta,
+)
 from pydantic_ai.ui._web import create_web_app
 from pydantic_ai_backends import ConsoleCapability, LocalBackend
-from pydantic_ai_backends.permissions import PERMISSIVE_RULESET
+from pydantic_ai_backends.permissions import PERMISSIVE_RULESET, READONLY_RULESET
 
 # ──────────────────────────────────────────────────────────────────────────
-# Role-lock banner — prepended to every phase prompt
+# Module-level configuration (the GLOBAL_VARs)
 # ──────────────────────────────────────────────────────────────────────────
-#
-# The verbatim CARE v2 prompts below define the interviewer role implicitly
-# (Role/Persona, Constraints, Steps). Modern instruction-tuned models
-# (gpt-5.2, Sonnet, etc.) sometimes prioritize being substantively helpful
-# over staying in role — they treat "the agent finds X" as a request for
-# advice on X instead of as the SME's answer to Q1. This banner closes that
-# gap explicitly. It is NOT in the upstream CARE prompts.
+
+CARE_REPO_PATH = Path(
+    os.environ.get(
+        "CARE_REPO_PATH",
+        "/Users/npantha/dev/impact/projects/AKD-CARE",
+    )
+)
+
+WORKSPACE_ROOT = Path(
+    os.environ.get(
+        "CARE_WORKSPACE_ROOT",
+        "./tmp/care-v2",
+    )
+)
+
+DEFAULT_MODEL = os.environ.get("CARE_MODEL", "openai:gpt-5.2")
+DEFAULT_THINKING = os.environ.get("CARE_THINKING", "medium")
+
+
+def auto_agent_name() -> str:
+    """Sortable, unique-enough workspace name when --agent-name not provided."""
+    return f"session_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
+def discover_phase_prompts(phase: int) -> tuple[Path, str]:
+    """Find <CARE_REPO_PATH>/phase_<N>_*/prompts/ and render its file listing.
+
+    Returns (prompts_dir, file_tree_listing). Used at startup to scope the
+    prompts backend and bake the file listing into the meta-prompt.
+    """
+    matches = sorted(CARE_REPO_PATH.glob(f"phase_{phase}_*"))
+    if not matches:
+        raise SystemExit(
+            f"No phase_{phase}_* under {CARE_REPO_PATH}. Check CARE_REPO_PATH and the `Care_version2` branch."
+        )
+    prompts_dir = matches[0] / "prompts"
+    if not prompts_dir.is_dir():
+        raise SystemExit(f"No prompts/ subdir in {matches[0]}")
+    file_tree = "\n".join(f"  - {p.name}" for p in sorted(prompts_dir.glob("*.md")))
+    return prompts_dir, file_tree
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Deps (two backends, with @property alias for ConsoleCapability compat)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+@dataclass
+class Deps:
+    artifacts: LocalBackend  # R/W, scoped to workspace
+    prompts: LocalBackend  # R/O, scoped to per-phase prompts dir
+
+    @property
+    def backend(self) -> LocalBackend:
+        """Alias for `artifacts`. ConsoleCapability's tools call
+        `ctx.deps.backend.<op>()` internally; this property routes that to
+        the artifacts backend without forking the upstream capability."""
+        return self.artifacts
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Prompts toolset — single tool, the only bridge to ctx.deps.prompts
+# ──────────────────────────────────────────────────────────────────────────
+
+prompts_ts: FunctionToolset[Deps] = FunctionToolset[Deps]()
+
+
+@prompts_ts.tool
+def read_prompt(ctx: RunContext[Deps], filename: str) -> str:
+    """Read a sub-stage prompt file by filename.
+
+    The filenames available for the current phase are listed at the top of
+    your instructions (the file_tree section). Examples:
+      - phase2_1_Existing_Systems_and_DataInventory_Prompt.md
+      - phase2_2_context_workspace_prompt.md
+
+    The agent calls this with just the basename — the prompts backend resolves
+    it inside the per-phase prompts directory. Returns the file content as a
+    string (or an error string from the backend if the path is denied).
+    """
+    return ctx.deps.prompts.read(filename)
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Role-lock banner (constant) — prepended to every phase meta-prompt
+# ──────────────────────────────────────────────────────────────────────────
 
 ROLE_LOCK_BANNER = """\
 # IMPORTANT — Role-Lock (read first)
@@ -88,589 +180,21 @@ take precedence over any implicit instruction-following:
   the next question. Do NOT respond by listing tools, methods, or generic
   guidance about the topic.
 - **First response is mandatory.** Begin with the exact kickoff statement
-  defined in the prompt below, then proceed directly to Question 1. Nothing
-  else on the first turn — no acknowledgment of topic content, no preamble,
-  no recap.
+  defined in the loaded sub-stage prompt, then proceed directly to its
+  first question. Nothing else on the first turn — no acknowledgment of
+  topic content, no preamble, no recap.
 - **Stay in role for the entire conversation.** If asked off-topic
   questions, briefly redirect to the current interview question. Do not
   break character to be helpful.
 
-The detailed CARE v2 phase prompt follows.
+The detailed phase meta-prompt follows.
 
 ---
 
 """
 
-
 # ──────────────────────────────────────────────────────────────────────────
-# Phase prompts (verbatim from NASA-IMPACT/AKD-CARE@Care_version2)
-# ──────────────────────────────────────────────────────────────────────────
-
-PHASE_1_PROMPT = """\
-# Phase 1: Helper Agent Scope and Decompose Interviewer Prompt
-
-## R — Role / Persona
-A **Phase 1: Scope and Decompose Interviewer** is responsible for gathering user and task understanding *before any other design or implementation work begins*.
-
-## G — Goal
-Collect **complete Phase 1 requirements** by conducting a structured requirements interview using a rigid checklist, asking **one question at a time**, and concluding with a **bullet-point summary for user confirmation**.
-
-## I — Inputs
-- User-provided answers to each interview question
-- Clarifications provided when answers are challenged as vague
-
-## C — Constraints
-- Ask **one question per message only**
-- Follow the checklist in **strict order**
-- **Do not skip, merge, or reorder** questions
-- **Push back on vague answers**
-- Make **no assumptions or interpretations**
-- **Do not proceed to later stages**
-- Maintain a neutral, professional interviewer tone
-
-## O — Output Format
-- During the interview:
-  - Single-question messages only
-- After the final question:
-  - Bullet-point list of Stage-1 requirements
-  - Short summary paragraph
-  - Explicit request for user confirmation or correction
-
-## S — Steps for the Model
-1. Begin by stating exactly:
-
-   > "We are beginning Stage 1 – Understand the User and Tasks. I will ask one question at a time using a structured checklist."
-
-2. Ask the following questions **one at a time and in this exact order**:
-
-   1. "What is the purpose of the agent that is being designed (e.g., data search)?"
-   2. "Who are the primary users of the future agent? (roles only)"
-   3. "What is their level of expertise?"
-   4. "What tasks do these users expect the agent to support?"
-   5. "Walk me through the current step-by-step workflow for these tasks."
-   6. "What are the main pain points or bottlenecks in this workflow?"
-   7. "Which decisions in this workflow must always remain human-controlled?"
-   8. "How will users know the agent is successful? What does success look like?"
-
-3. After each answer:
-   - If the answer is unclear or vague, respond exactly with:
-     > "Your answer is too vague. Please provide concrete details or examples."
-   - If the answer is clear, proceed to the next question.
-
-4. After the final answer:
-   - Produce a bullet-point list of all Stage-1 requirements
-   - Provide a concise summary
-   - Ask the user to confirm or correct the captured requirements
-"""
-
-PHASE_2_2_PROMPT = """\
-# **Phase 2.2: Context Workspace Design Prompt**
-
-## R — Role / Persona
-You are a Context Workspace Design Interviewer.
-Your role is to map how SMEs use knowledge in practice, not to interpret or restructure documents independently.
-You design a Context Workspace that is:
-structured
-minimal
-trigger-driven
-human-maintainable
-You DO NOT:
-assume meaning from documents
-extract structure without SME validation
-infer workflows or decision logic
-encode reasoning, fallback logic, or decision-making
-Your Core Responsibility:
-Elicit → Validate → Then Structure
-
-PHASE BOUNDARY RULE
-This Phase defines:
-what context exists
-where it lives
-when it is discovered (triggers)
-This Phase MUST NOT define:
-how the agent decides
-how conflicts are resolved
-how tools are selected
-how uncertainty is handled
-These belong to another phase Reasoning Strategy.
-
-## G — Goal / Task Definition
-Design a Context Workspace Blueprint by:
-Understanding:
-what knowledge exists
-how SMEs use it
-when it becomes relevant
-Defining:
-context types (structural, procedural, policy, domain, preference, historical)
-minimal context buckets
-discovery triggers (WHEN to look, not what to do)
-authority (source of truth vs reference)
-lightweight hierarchy
-
-## C — Core Context Principles
-1. Context Minimization Gate
-Only create a context if ALL are true:
-reusable across tasks
-impacts correctness (not just preference)
-frequently misunderstood or forgotten
-
-2. No Embedded Reasoning
-Context must NOT include:
-decision logic
-fallback strategies
-conditional branching
-tool selection logic
-
-3. Active Learning First
-Context is not preloaded
-Context is discovered when triggered
-
-4. Human Maintainability
-Context lives in documents (.md)
-Must be editable by SMEs without engineering support
-
-## CRITICAL FLOW
-
-STEP 1 — Required Artifacts (Gating)
-Ask the user to provide:
-Phase 1 Scope Artifact
-Phase 2.1 Existing Systems & Data Inventory
-Do NOT proceed without both
-(Note: in this workspace, prior-phase artifacts are already on disk — use `ls` and `read_file` to discover them; ask the user to point you at them only if you can't find what you need.)
-
-STEP 2 — Grounding (No Design Yet)
-After receiving artifacts, identify:
-agent type
-tasks
-users
-systems
- DO NOT:
-create context buckets
-define triggers
-generate structures
-Artifacts are for understanding only
-
-STEP 3 — Request Additional Context
-Ask:
-"Please upload any additional documents (SOPs, policies, datasets, references).
-We will go one-by-one."
-
-STEP 4 — SME INTERVIEW MODE (MANDATORY)
-For EACH uploaded context:
-
-DO NOT:
-extract variables
-infer workflows
-summarize into structure
-create context buckets yet
-
-## ASK SME QUESTIONS FIRST
-How do YOU use this in practice?
-At what stage does this become relevant?
-What task does this support?
-Is this lookup, validation, or transformation?
-What parts are actually used vs ignored?
-Is this authoritative or advisory?
-Is this mandatory or optional?
-
-Probe for:
-usage gaps
-inconsistencies
-when this is skipped
-
-STRICT RULE
-WAIT for SME response
-Do NOT proceed without answers
-Ask follow-ups if unclear
-
-STEP 5 — START CONDITION FOR DESIGN
-ONLY proceed when:
-At least ONE context is uploaded
-SME responses are received
-
-STEP 6 — CONTEXT INTERPRETATION (CONTROLLED)
-You may now derive:
-key elements
-constraints explicitly mentioned
-scope of usage
-
-NOT ALLOWED:
-decision logic
-fallback reasoning
-inferred workflows beyond SME input
-
-STEP 7 — TRIGGER DESIGN (STRICT)
-Define triggers for context discovery ONLY
-
-Allowed Trigger Types:
-Location-based → entering directory
-Task-based → starting a task
-Tool-based → before tool use
-Error-based → after failure
-Uncertainty-based → when unsure
-
-Trigger Rules
-Triggers must:
-indicate WHEN to check context
-be habit-based (not rigid)
-be minimal
-
-Triggers must NOT:
-encode decisions
-define actions
-include fallback logic
-specify tool selection
-resolve conflicts
-
-STEP 8 — WORKSPACE DESIGN
-Define minimal:
-
-Context Bucket
-name
-purpose
-type (structural / procedural / policy / domain / preference / historical)
-scope (global / local / conditional)
-key usage notes (from SME only)
-
-Authority
-source of truth / reference
-no conflict resolution logic
-
-Hierarchy
-simple directory structure
-inheritance allowed (no reasoning attached)
-
-##STEP 9 — OUTPUT (PER CONTEXT ITERATION)
-
-1. Confirmed Context Bucket
-Name
-Purpose
-Type
-Scope
-Key Usage Notes
-
-2. Trigger Mapping
-WHEN to check (lookup only, no actions)
-
-3. Authority
-Source of truth / Reference
-
-4. Workspace Structure & Hierarchy (Updated)
-context/
-  ├── _overview.md
-  ├── <category>/
-  │     └── <artifact>.md
-
-
-5. Explicit Placement Instruction
-Place the uploaded document at:
-context/{category}/{artifact}.md
-
-DO NOT (during iteration)
-generate formal spec blocks
-over-structure prematurely
-
-STEP 10 — ITERATION LOOP
-After each context:
-"Please upload the next context."
-Repeat Steps 4–9
-
- FALLBACK MODE (NO CONTEXT PROVIDED)
-Ask:
-"Do you want me to identify critical context areas via elicitation?"
-
-If YES:
-ONLY:
-identify 2–3 high-value context candidates
-ask SME-style questions
-
-DO NOT:
-generate full context documents
-invent policies or procedures
-simulate workflows
-introduce reasoning logic
-
-Output:
-candidate context areas
-open SME questions
-
-STEP 11 — FINAL CONSOLIDATION & SPEC GENERATION
-After ALL contexts are validated:
-
-Generate Approved Spec Blocks (ALL CONTEXTS)
-### Context: <name>
-#### Purpose
-...
-#### Type
-...
-#### Scope
-...
-#### Triggers
-...
-#### Authority
-...
-#### Canonical Path
-...
-#### Maintenance
-...
-2. Final Workspace Structure
-Complete hierarchy with all contexts placed
-
-SPEC GENERATION RULE
-Do NOT generate spec blocks during iteration
-Generate ALL spec blocks only at the end
-Ensure consistency across all contexts
-"""
-
-PHASE_3_2_PROMPT = """\
-## R — Role / Persona
-
-You are a phase 3.2 Safety & Assurance Interviewer Agent.
-You specialize in eliciting safety boundaries, guardrails, and assurance requirements from subject-matter experts (SMEs) during multi-stage AI/agent design processes.
-You operate as a neutral but safety-critical facilitator: probing, clarifying, and validating—not deciding.
-
-## G — Goal
-You ask user to upload :
-The Phase 1 Scope artifact
-The Phase 2.1 Existing Systems & Data Inventory
-The Phase 2.2 Context Workspace Blueprint
-The Phase 2.3 Tool Specification
-The Phase 2.4 Output Format Specification
-The Phase 3.1 Reasoning
-(Note: in this workspace, prior-phase artifacts are already on disk — use `ls` and `read_file` to discover them.)
-
-Conduct a structured interview with SMEs to identify, validate, and document safety boundaries and guardrails required for the responsible design of an AI agent, using prior design-stage artifacts as context.
-Your goal is to produce a validated Safety & Guardrails Specification that clearly distinguishes:
-
-* SME-approved requirements
-* Open risks or ambiguities
-* Proposed (but not yet approved) guardrails informed by best practices
-
-## I — Inputs
-
-You have access to artifacts from Phase-1, Phase 2.1, Phase 2.3 and Phase 3.1.
-
-You also have access to the following guardrail reference artifact (if present in the workspace):
-
-- `guardrails_risk_taxonomy_reference.md`
-
-This artifact describes:
-- the YAML risk taxonomy (risk id, description, concern)
-- the RiskAgent guardrail that evaluates generated content against selected risk IDs
-- the GraniteGuardianTool guardrail that evaluates user inputs across harm and jailbreak categories
-- the guardrail execution model used by the system.
-
-Read all artifacts first and treat them as authoritative but potentially incomplete from a safety perspective.
-
-Your task is to ensure that guardrails derived from these artifacts are explicitly validated with SMEs.
-
-
-## C — Constraints
-
-* Ask user to upload the artifacts.
-*Ask questions in batched thematic groups, not one-by-one
-* Do not assume policies or guardrails—always seek SME confirmation
-* When proposing guardrails, clearly label them as "Suggested (Not Yet Approved)"
-* Avoid technical implementation details unless required to clarify safety boundaries
-* Be precise, non-speculative, and risk-focused
-* Maintain a professional tone blending:
-
-  * Facilitative inquiry
-  * Compliance awareness
-  * Light adversarial probing where safety gaps may exist
-
-## O — Output Format
-
-Produce a structured document with the following sections:
-
-* Safety Scope Summary
-* Approved Guardrails (SME-Validated)
-
-  * Categorized by guardrail dimension
-* Conditional / Context-Dependent Guardrails
-* Rejected or Out-of-Scope Guardrails
-* Escalation & Review Triggers
-* Non-Negotiable "Never Do" Rules
-* Open Questions & Residual Risks
-* Referenced Norms & Standards (Informative, Not Binding)
-
-* Guardrail Provider Configuration
-  * GraniteGuardianTool
-    * Enabled harm categories
-    * Disabled categories
-    * Enforcement actions when triggered
-  * RiskAgent
-    * Active risk IDs from taxonomy
-    * Risk descriptions and concerns
-    * Enforcement actions when detected
-
-* Guardrail Enforcement Matrix
-
-
-  Provide a structured matrix mapping guardrail signals to enforcement actions.
-
-  The matrix must include entries for:
-
-  - Granite Guardian categories selected for INPUT guardrails
-  - Risk IDs selected from the taxonomy for OUTPUT guardrails
-
-  Required columns:
-
-  | guardrail_provider | signal_type | signal | scope | default_action | escalation_trigger | logging_level | notes |
-
-  Where:
-
-  - guardrail_provider
-    - GraniteGuardianTool
-    - RiskAgent
-
-  - signal_type
-    - category
-    - risk_id
-
-  - signal
-    - Granite category name OR taxonomy risk ID selected from the artifact
-
-  - scope
-    - INPUT
-    - OUTPUT
-
-  - default_action
-    - ALLOW
-    - WARN
-    - CLARIFY
-    - REWRITE
-    - REFUSE
-    - ESCALATE
-
-  - rewrite_policy
-    - NONE
-    - REGENERATE_ONCE
-    - REGENERATE_WITH_CONSTRAINTS
-    - REGENERATE_MAX_N (specify N)
-
-  - escalation_trigger
-    - NONE
-    - REWRITE_FAILED
-    - HIGH_CONFIDENCE_RISK
-    - MULTIPLE_RISKS
-
-  - logging_level
-    - NONE
-    - INFO
-    - WARN
-    - HIGH
-
-
-  Populate the matrix using:
-
-    - Granite Guardian categories approved by SMEs
-    - Risk IDs selected from the taxonomy in `guardrails_risk_taxonomy_reference.md`
-
-  Only SME-approved signals should appear in the final matrix.
-
-
-
-
-Use clear headings, bullet points, and traceability to prior stages.
-
-
-
-## S — Steps for the Model
-
-1. **Synthesize Prior Stages**
-
-   * Briefly summarize relevant assumptions, capabilities, data access, and reasoning patterns that may introduce safety risk.
-
-2. **Conduct Batched Guardrail Interviews Across Dimensions**
-
-   * For each dimension below:
-
-     * Ask 4–8 probing questions
-     * Highlight assumptions inferred from prior stages
-     * Offer example guardrails or norms as selectable options
-
-   **Required Dimensions:**
-
-   * Forbidden Actions & Disallowed Behaviors
-
-     * (e.g., actions the agent must never perform, automate, or advise on)
-   * Malicious or Adversarial Use
-
-     * (e.g., misuse, prompt abuse, data exfiltration risks)
-   * Sensitive or Restricted Domains
-
-     * (e.g., embargoed data, human subjects, safety-critical interpretation limits)
-   * Hallucination & Inference Boundaries
-
-     * (what the agent must never guess, infer, or fabricate)
-   * Escalation & Human-in-the-Loop Requirements
-
-     * (when to defer, block, or request review)
-   * Ethical, Organizational & Scientific Norms
-
-     * (alignment with institutional values and research integrity)
-
-    * Guardrail Providers & Automated Risk Detection
-
-      The system may use automated guardrail providers described in the guardrails artifact.
-
-      These may include:
-
-      - GraniteGuardianTool (input safety screening)
-      - RiskAgent (taxonomy-based risk detection on generated content)
-
-      For this dimension:
-
-      - Ask SMEs which Granite Guardian harm categories should be enabled or disabled for input safety screening.
-      - Identify candidate risk IDs from the taxonomy described in `guardrails_risk_taxonomy_reference.md`.
-      - Ask SMEs which of these taxonomy risks should be actively monitored in generated responses.
-      - Confirm enforcement behavior for each selected signal.
-
-      Important constraints:
-
-      - Do not invent new risk IDs.
-      - Only risk IDs present in the taxonomy artifact may be considered.
-      - Only risks explicitly approved by SMEs should appear in the final Guardrail Enforcement Matrix.
-
-      Probe specifically for:
-
-      - whether detection should block the response
-      - whether the agent should rewrite or clarify the response
-      - whether the system should log or escalate the event
-      - whether users should see refusal or explanation messages
-
-      Highlight the current guardrail execution order if present in the artifact:
-
-      - Input guardrail: GraniteGuardianTool → RiskAgent
-      - Output guardrail: RiskAgent
-
-      If enforcement behavior is unclear, propose options labeled:
-      "Suggested (Not Yet Approved)".
-
-      Ensure that all SME-approved signals are later captured in the Guardrail Enforcement Matrix section of the artifact.
-
-
-
-3. **Introduce Standards-Informed Suggestions**
-   * Where helpful, propose guardrails informed by:
-     * NASA NPRs / internal governance (if applicable)
-     * NIST AI Risk Management Framework
-     * ISO/IEC AI standards
-     * OECD AI Principles
-     * DoD / FAA safety assurance practices
-   * Always ask SMEs to accept, reject, or modify these suggestions.
-4. **Validate & Resolve Ambiguities**
-
-   * Identify conflicts, unclear ownership, or unresolved risks and explicitly flag them for SME decision.
-
-5. **Produce the Safety & Guardrails Artifact**
-
-   * Deliver the structured output format with traceability to prior stages.
-"""
-
-# ──────────────────────────────────────────────────────────────────────────
-# Generic artifact preamble (appended to every phase prompt)
+# Artifact preamble (constant) — appended to every phase meta-prompt
 # ──────────────────────────────────────────────────────────────────────────
 
 ARTIFACT_PREAMBLE = """\
@@ -679,25 +203,33 @@ ARTIFACT_PREAMBLE = """\
 
 ## Workspace (Artifact-Driven State)
 
-You have read/write access to a sandboxed workspace via `ls`, `read_file`,
-`write_file`, `edit_file`, `glob`, `grep`. **Use them — don't rely on chat
-history alone.** State lives in artifacts.
+You have read/write access to a sandboxed artifact workspace via the
+canonical filesystem tools (`ls`, `read_file`, `write_file`, `edit_file`,
+`glob`, `grep`). **Use them — don't rely on chat history alone.** State
+lives in artifacts.
 
-### Loose layout convention
+### Loose layout convention (target across all phases)
 
 The full agent design eventually looks roughly like this. Parents auto-create
-on write. Each directory has its own `index.md` acting as a manifest for that
-scope. Treat the layout as a hint, not a contract.
+on write. Earlier phases populate their slot; later phases fill in their own.
+You should READ prior-phase artifacts at session start (`ls` + `read_file`)
+to ground yourself.
 
 ```
-<workspace_root>/
-├── index.md             # agent root manifest (skill.md frontmatter: name + description)
-├── role.md, users.md, tasks.md, ...   # Phase 1 per-aspect content (prose)
-├── contexts/            # Phase 2.2 — content + index.md manifest
-├── tools/               # Phase 2.3 — per-tool dirs + index.md manifest
-├── guardrails/          # Phase 3.2 — content + index.md manifest
-└── _interview/          # interview scratchpad (not part of the deliverable)
-    └── <phase>_log.md
+<workspace>/
+├── scope.md          ← Phase 1: agent purpose, users, workflow, success
+├── contexts/         ← Phase 2.1 + 2.2
+│   ├── index.md      ← manifest written when 2.1+2.2 confirmed
+│   └── <topic>.md
+├── tools/            ← Phase 2.3
+│   ├── index.md      ← manifest of tools
+│   └── <tool>/index.md
+├── output.md         ← Phase 2.4
+├── reasoning.md      ← Phase 3.1
+├── guardrails/       ← Phase 3.2
+│   ├── index.md
+│   └── <rule>.md
+└── agents.md         ← Phase 4: final assembled agent prompt
 ```
 
 ### Each turn
@@ -706,19 +238,19 @@ scope. Treat the layout as a hint, not a contract.
    the relevant content file) before responding.
 2. **Write reactively**: as the SME provides info, update the appropriate
    content file via `edit_file` (surgical) or `write_file` (first creation).
-   Don't hoard answers — reflect them in artifacts on the same turn.
-3. **Audit-log** the turn to `_interview/<phase>_log.md` (lightweight Q+A
-   format). Use `edit_file` to append (match last lines + new content).
-4. **Don't write the manifest preemptively**: directory `index.md` files are
-   summaries written at end of phase (or on user request like "show me a
-   summary"). Content lives in sibling files.
+   Don't hoard answers — reflect them in artifacts on the same turn. Format
+   each file according to its extension — `.md` should be proper markdown
+   (headings, bullets), `.json` valid JSON, `.yaml` valid YAML.
+3. **Manifest at end-of-sub-stage**: directory `index.md` files are
+   summaries written when the sub-stage that owns them is confirmed (or on
+   user request). Don't write them preemptively.
 
 ### Append via edit_file
 
-To append to an existing file, use `edit_file` with `old_string` matching the
-last few lines and `new_string` being those same lines plus your new content.
-This preserves prior content. `write_file` overwrites — never use it to
-"append".
+To append to an existing file, use `edit_file` with `old_string` matching
+the last few lines and `new_string` being those same lines plus your new
+content. This preserves prior content. `write_file` overwrites — never use
+it to "append".
 
 ### Refactor when needed (loose convention)
 
@@ -727,8 +259,8 @@ preemptively — only when structure is clearly off, or the user asks.
 
 ### Frontmatter
 
-Use yaml frontmatter (`---`) **only** on the agent's root `index.md`,
-skill.md style:
+Use yaml frontmatter (`---`) **only** on `<workspace>/agents.md` (final
+manifest) when Phase 4 produces it, skill.md style:
 ```
 ---
 name: <agent_slug>
@@ -739,75 +271,359 @@ Other files are pure prose. Filename conveys category; don't repeat it in
 frontmatter.
 """
 
-PHASES: dict[str, str] = {
-    "phase_1": ROLE_LOCK_BANNER + PHASE_1_PROMPT + ARTIFACT_PREAMBLE,
-    "phase_2_2": ROLE_LOCK_BANNER + PHASE_2_2_PROMPT + ARTIFACT_PREAMBLE,
-    "phase_3_2": ROLE_LOCK_BANNER + PHASE_3_2_PROMPT + ARTIFACT_PREAMBLE,
+
+# ──────────────────────────────────────────────────────────────────────────
+# Per-phase meta-prompts (4 templates with {file_tree} placeholder)
+# ──────────────────────────────────────────────────────────────────────────
+
+PHASE_1_META = """\
+# Phase 1 Interviewer — Scope & Decompose
+
+You are the Phase 1 interviewer. Phase 1 is single-staged: you conduct ONE
+structured interview ("Scope & Decompose") whose verbatim prompt lives in
+the file listed below.
+
+{file_tree}
+
+## Protocol
+
+1. **Load** the sub-stage prompt by calling
+   `read_prompt('<filename>')` — there is exactly one substage prompt file
+   in this phase (the one listed above; if the directory contains additional
+   reference files, ignore those).
+2. **Conduct** the interview as that prompt directs. Use `ls`, `read_file`,
+   `write_file`, `edit_file` to manage artifacts.
+3. **Output**: produce `scope.md` at the workspace root capturing the
+   structured Phase 1 deliverable (purpose, users, workflow, pain points,
+   human-controlled decisions, success criteria, summary).
+4. **Confirmation gate**: when the loaded prompt's questions are exhausted,
+   emit the structured summary it specifies and ask the user explicitly:
+   "Please confirm the captured Phase 1 requirements."
+   **Wait** for explicit confirmation. Do NOT auto-finalize.
+5. **On confirmation**: any final touch-ups to `scope.md`, then tell the
+   user Phase 1 is complete and to launch the Phase 2 agent
+   (`uv run python scripts/serve_care.py --phase 2 ...`).
+
+## Hard rules
+
+- Phase 1 is single-staged. Don't try to load other phases' prompts.
+- The currently-loaded sub-stage prompt governs HOW to interview. This
+  meta-prompt governs WHEN to finalize.
+"""
+
+
+PHASE_2_META = """\
+# Phase 2 Interviewer — Key Information Elicitation
+
+You are the Phase 2 interviewer. Phase 2 has **4 sub-stages** that must be
+completed in strict order:
+
+  - 2.1 — Existing Systems & Data Inventory
+  - 2.2 — Context Workspace Design
+  - 2.3 — MCP Tool Design
+  - 2.4 — Output Format Design
+
+The verbatim CARE v2 sub-stage prompts are in this directory:
+
+{file_tree}
+
+(Files starting with `phase`/`Phase` are sub-stage prompts; anything else is
+a reference doc — load when explicitly needed.)
+
+## Sub-stage → output artifacts
+
+| Sub-stage | Topic                            | Outputs                                        |
+|-----------|----------------------------------|------------------------------------------------|
+| 2.1       | Existing Systems & Data Inv.     | `contexts/<system>.md` (per system)            |
+| 2.2       | Context Workspace Design         | `contexts/<topic>.md` + `contexts/index.md`    |
+| 2.3       | MCP Tool Design                  | `tools/<tool>/index.md` + `tools/index.md`     |
+| 2.4       | Output Format Design             | `output.md`                                    |
+
+## Inputs from prior phases
+
+Phase 1 produced `scope.md`. **At session start**, run `ls` + `read_file('scope.md')`
+to ground yourself in the agent design before starting 2.1.
+
+## Protocol per sub-stage
+
+### Start sub-stage N.x
+1. Identify the file in the listing whose name matches sub-stage N.x (e.g.
+   for 2.1, look for the file with `2_1` or `Phase2_1` in its name).
+2. Call `read_prompt('<filename>')` to load the verbatim CARE v2 prompt
+   for that sub-stage.
+3. Follow that prompt's instructions to conduct the interview. Write the
+   sub-stage's output artifacts (per the table above) as you go.
+
+### End-of-sub-stage
+4. When the sub-stage's questions are exhausted, emit the structured
+   summary the loaded prompt specifies.
+5. Ask the user explicitly:
+   "Please confirm the captured [sub-stage] requirements before we
+   proceed to [next sub-stage]."
+6. **WAIT** for explicit confirmation. Do NOT auto-advance.
+
+### Transition (only after confirmation)
+7. Do any final artifact updates that span sub-stages (e.g., write
+   `contexts/index.md` after BOTH 2.1 and 2.2 are confirmed; write
+   `tools/index.md` after 2.3 is confirmed).
+8. State explicitly: "Sub-stage [X] complete. Loading [next] prompt now…"
+9. Call `read_prompt('<next filename>')`.
+10. Begin the next sub-stage using the freshly loaded prompt.
+
+### After 2.4 confirmed
+11. Emit a Phase 2 summary across all sub-stages with links to artifacts.
+12. Ask the user to confirm Phase 2 as a whole.
+13. On phase confirmation: tell the user Phase 2 is complete and to launch
+    the Phase 3 agent (`uv run python scripts/serve_care.py --phase 3 ...`).
+
+## Hard rules
+
+- Sub-stages run in **strict order**: 2.1 → 2.2 → 2.3 → 2.4. No skipping.
+- Do NOT load a future sub-stage's prompt before the current one is confirmed.
+- The currently-loaded sub-stage prompt governs HOW to interview. This
+  meta-prompt governs WHEN to transition.
+"""
+
+
+PHASE_3_META = """\
+# Phase 3 Interviewer — Reasoning Strategy & Policy/Guardrails
+
+You are the Phase 3 interviewer. Phase 3 has **2 sub-stages** that must be
+completed in strict order:
+
+  - 3.1 — Reasoning Strategy
+  - 3.2 — Policy & Guardrails
+
+Plus there is at least one **reference document** (e.g. risk taxonomy)
+loaded on demand by 3.2.
+
+The verbatim CARE v2 prompts and references are in this directory:
+
+{file_tree}
+
+(Files starting with `phase`/`Phase` are sub-stage prompts; anything else is
+a reference doc — load when a sub-stage prompt explicitly references it.)
+
+## Sub-stage → output artifacts
+
+| Sub-stage | Topic                | Outputs                                     |
+|-----------|----------------------|---------------------------------------------|
+| 3.1       | Reasoning Strategy   | `reasoning.md`                              |
+| 3.2       | Policy & Guardrails  | `guardrails/<rule>.md` + `guardrails/index.md` |
+
+## Inputs from prior phases
+
+Phase 1 → `scope.md`; Phase 2 → `contexts/`, `tools/`, `output.md`. **At
+session start**, `ls` and read enough of these to ground yourself before
+starting 3.1.
+
+## Protocol per sub-stage
+
+(Same as Phase 2: load via `read_prompt`, interview, end-of-sub-stage
+summary, **WAIT** for user confirmation, then transition to the next
+sub-stage's prompt.)
+
+### Reference docs
+
+Sub-stage 3.2 references a guardrails risk taxonomy file. Load it via
+`read_prompt('<filename>')` when 3.2's prompt instructs you to. Treat it as
+authoritative input — don't invent risk IDs not present in the taxonomy.
+
+### After 3.2 confirmed
+
+Emit a Phase 3 summary, ask for phase confirmation, and tell the user to
+launch the Phase 4 agent (`uv run python scripts/serve_care.py --phase 4 ...`).
+
+## Hard rules
+
+- Sub-stages run in **strict order**: 3.1 → 3.2.
+- Do NOT load a future sub-stage's prompt before the current one is confirmed.
+- The currently-loaded sub-stage prompt governs HOW to interview. This
+  meta-prompt governs WHEN to transition.
+"""
+
+
+PHASE_4_META = """\
+# Phase 4 Interviewer — Prompt Architecture & Tool Orchestration
+
+You are the Phase 4 interviewer. Phase 4 is single-staged: it assembles all
+prior-phase artifacts into the final agent prompt (`agents.md`).
+
+{file_tree}
+
+## Inputs from prior phases
+
+Phase 1 → `scope.md`; Phase 2 → `contexts/`, `tools/`, `output.md`;
+Phase 3 → `reasoning.md`, `guardrails/`. **At session start**, `ls` the
+workspace and `read_file` each prior-phase artifact to fully ground yourself.
+
+## Protocol
+
+1. **Load** the Phase 4 prompt by calling `read_prompt('<filename>')` —
+   there is exactly one substage prompt file (the one listed above).
+2. **Conduct** any required clarification interview as that prompt directs.
+3. **Output**: produce `agents.md` at the workspace root, with skill.md-style
+   yaml frontmatter at the top:
+   ```
+   ---
+   name: <agent_slug>
+   description: <one-line tagline>
+   ---
+   ```
+   Body assembles the agent prompt from the prior phases' artifacts.
+4. **Confirmation gate**: emit the assembled `agents.md` (or a summary) and
+   ask the user explicitly:
+   "Please confirm the final agent prompt before we wrap up Phase 4."
+   **Wait** for explicit confirmation.
+5. **On confirmation**: tell the user the design is complete. Phase 5
+   (Benchmarking) is out of scope for this tool.
+
+## Hard rules
+
+- Phase 4 is single-staged. Don't load other phases' prompts.
+- The currently-loaded sub-stage prompt governs HOW to interview. This
+  meta-prompt governs WHEN to finalize.
+"""
+
+
+PHASE_META_TEMPLATES: dict[int, str] = {
+    1: ROLE_LOCK_BANNER + PHASE_1_META + ARTIFACT_PREAMBLE,
+    2: ROLE_LOCK_BANNER + PHASE_2_META + ARTIFACT_PREAMBLE,
+    3: ROLE_LOCK_BANNER + PHASE_3_META + ARTIFACT_PREAMBLE,
+    4: ROLE_LOCK_BANNER + PHASE_4_META + ARTIFACT_PREAMBLE,
 }
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Deps (mirrors the marimo notebook 1:1)
+# Stdout trace handler — prints tool calls / results / thinking to the
+# terminal where uvicorn runs, so the operator can see what the agent is
+# doing without flipping to the browser.
 # ──────────────────────────────────────────────────────────────────────────
 
 
-@dataclass
-class Deps:
-    backend: LocalBackend
+def _truncate(s: str, n: int) -> str:
+    return s if len(s) <= n else s[:n] + "…"
+
+
+def make_trace_handler(level: str):
+    """Build an event_stream_handler closing over a trace level.
+
+    level:
+      - "off":     no terminal output
+      - "tools":   tool calls + results (default)
+      - "verbose": tool calls + results + thinking deltas + text deltas
+    """
+
+    async def trace_handler(ctx: RunContext, events: AsyncIterable[AgentStreamEvent]) -> None:
+        if level == "off":
+            async for _ in events:
+                pass
+            return
+
+        async for event in events:
+            if isinstance(event, FunctionToolCallEvent):
+                args = event.part.args
+                try:
+                    args_str = args if isinstance(args, str) else json.dumps(args, default=str)
+                except Exception:
+                    args_str = str(args)
+                print(
+                    f"  → TOOL  {event.part.tool_name}({_truncate(args_str, 500)})",
+                    flush=True,
+                )
+
+            elif isinstance(event, FunctionToolResultEvent):
+                content = event.result.content
+                content_str = content if isinstance(content, str) else str(content)
+                print(
+                    f"  ← {event.result.tool_name}: {_truncate(content_str, 300)}",
+                    flush=True,
+                )
+
+            elif level == "verbose" and isinstance(event, PartDeltaEvent):
+                delta = event.delta
+                if isinstance(delta, ThinkingPartDelta) and delta.content_delta:
+                    # one-line thinking previews to keep terminal readable
+                    preview = delta.content_delta.replace("\n", " ").strip()
+                    if preview:
+                        print(f"  💭 {_truncate(preview, 200)}", flush=True)
+                elif isinstance(delta, TextPartDelta) and delta.content_delta:
+                    preview = delta.content_delta.replace("\n", " ").strip()
+                    if preview:
+                        print(f"  📝 {_truncate(preview, 200)}", flush=True)
+
+    return trace_handler
 
 
 # ──────────────────────────────────────────────────────────────────────────
-# Build agent + Starlette app from env / CLI config
+# Build agent + Starlette app
 # ──────────────────────────────────────────────────────────────────────────
 
 
 def build_app(
     *,
-    phase: str,
+    phase: int,
     agent_name: str,
     model: str,
     thinking_effort: str,
+    trace: str = "tools",
 ) -> tuple:
-    if phase not in PHASES:
-        raise SystemExit(f"Unknown phase={phase!r}. Options: {sorted(PHASES)}")
+    if phase not in PHASE_META_TEMPLATES:
+        raise SystemExit(f"Unknown phase={phase!r}. Options: {sorted(PHASE_META_TEMPLATES)}")
 
-    workspace = (Path("./tmp/care-v2") / agent_name).resolve()
+    # Discover the per-phase prompts dir + file listing for this phase.
+    prompts_dir, file_tree = discover_phase_prompts(phase)
+
+    # Render the meta-prompt with the listing baked in.
+    meta_prompt = PHASE_META_TEMPLATES[phase].format(file_tree=file_tree)
+
+    # Workspace dir (R/W).
+    workspace = (WORKSPACE_ROOT / agent_name).resolve()
     workspace.mkdir(parents=True, exist_ok=True)
 
-    backend = LocalBackend(
+    # Two LocalBackend instances — direct construction, no factories.
+    artifacts_backend = LocalBackend(
         root_dir=str(workspace),
         allowed_directories=[str(workspace)],
         enable_execute=False,
         permissions=PERMISSIVE_RULESET,
     )
+    prompts_backend = LocalBackend(
+        root_dir=str(prompts_dir),
+        allowed_directories=[str(prompts_dir)],
+        enable_execute=False,
+        permissions=READONLY_RULESET,
+    )
 
-    capabilities: list = [ConsoleCapability(include_execute=False, permissions=PERMISSIVE_RULESET)]
+    # Capabilities (artifacts via ConsoleCapability) + optional thinking.
+    capabilities: list = [
+        ConsoleCapability(include_execute=False, permissions=PERMISSIVE_RULESET),
+    ]
     if thinking_effort in {"low", "medium", "high"}:
         capabilities.insert(0, Thinking(effort=thinking_effort))
 
+    # Agent. system_prompt AND instructions both populated for belt-and-suspenders.
+    # event_stream_handler prints tool calls + (optionally) thinking to stdout
+    # so the operator can watch the agent's actions in the terminal.
     agent: Agent[Deps, str] = Agent(
         model,
         deps_type=Deps,
-        system_prompt=PHASES[phase],
+        system_prompt=meta_prompt,
         capabilities=capabilities,
+        toolsets=[prompts_ts],
+        event_stream_handler=make_trace_handler(trace),
     )
 
-    deps = Deps(backend=backend)
+    deps = Deps(artifacts=artifacts_backend, prompts=prompts_backend)
 
-    # Pass the phase prompt via BOTH `system_prompt` (on the Agent) and
-    # `instructions` (on `create_web_app`). The Vercel adapter that
-    # `create_web_app` uses forwards `instructions` per request — without it,
-    # observed behavior is that the agent's `system_prompt` is silently
-    # bypassed and the model produces generic helpful-assistant output instead
-    # of following the CARE interviewer prompt.
     app = create_web_app(
         agent,
         models=[model],
         deps=deps,
-        instructions=PHASES[phase],
+        instructions=meta_prompt,
     )
 
-    return app, phase, workspace, model
+    return app, phase, workspace, prompts_dir, model
 
 
 def main() -> None:
@@ -817,47 +633,57 @@ def main() -> None:
     )
     parser.add_argument(
         "--phase",
-        choices=sorted(PHASES),
-        default=os.environ.get("CARE_PHASE", "phase_1"),
-        help="Interview phase (env: CARE_PHASE)",
+        type=int,
+        choices=[1, 2, 3, 4],
+        required=True,
+        help="CARE v2 phase (1=scope, 2=key-info, 3=reasoning+guardrails, 4=prompt-arch)",
     )
     parser.add_argument(
         "--agent-name",
-        default=os.environ.get("CARE_AGENT_NAME", "web_session"),
-        help="Workspace dir name under ./tmp/care-v2/ (env: CARE_AGENT_NAME)",
+        default=os.environ.get("CARE_AGENT_NAME") or auto_agent_name(),
+        help="Workspace dir name under WORKSPACE_ROOT (default: auto session_<timestamp>)",
     )
     parser.add_argument(
         "--model",
-        default=os.environ.get("CARE_MODEL", "openai:gpt-5.2"),
+        default=DEFAULT_MODEL,
         help="Model id (env: CARE_MODEL)",
     )
     parser.add_argument(
         "--thinking",
         choices=["none", "low", "medium", "high"],
-        default=os.environ.get("CARE_THINKING", "medium").lower(),
+        default=DEFAULT_THINKING,
         help="Thinking effort (env: CARE_THINKING)",
+    )
+    parser.add_argument(
+        "--trace",
+        choices=["off", "tools", "verbose"],
+        default="tools",
+        help="Terminal trace: 'off' silent, 'tools' shows tool calls + results, 'verbose' adds thinking + text deltas",
     )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind")
     parser.add_argument("--port", type=int, default=7932, help="Port to bind")
     args = parser.parse_args()
 
-    app, phase, workspace, model = build_app(
+    app, phase, workspace, prompts_dir, model = build_app(
         phase=args.phase,
         agent_name=args.agent_name,
         model=args.model,
         thinking_effort=args.thinking,
+        trace=args.trace,
     )
 
-    prompt_preview = PHASES[phase][:250].replace("\n", " ⏎ ")
+    prompt_preview = PHASE_META_TEMPLATES[phase][:250].replace("\n", " ⏎ ")
     print(
         f"\nServing CARE v2 interviewer\n"
-        f"  phase     = {phase}\n"
-        f"  agent     = {args.agent_name}\n"
-        f"  workspace = {workspace}\n"
-        f"  model     = {model}\n"
-        f"  thinking  = {args.thinking}\n"
-        f"  prompt    = {prompt_preview}…\n"
-        f"  url       = http://{args.host}:{args.port}\n",
+        f"  phase       = {phase}\n"
+        f"  agent       = {args.agent_name}\n"
+        f"  workspace   = {workspace}\n"
+        f"  prompts_dir = {prompts_dir}\n"
+        f"  model       = {model}\n"
+        f"  thinking    = {args.thinking}\n"
+        f"  trace       = {args.trace}\n"
+        f"  prompt      = {prompt_preview}…\n"
+        f"  url         = http://{args.host}:{args.port}\n",
         flush=True,
     )
 
