@@ -241,9 +241,10 @@ to ground yourself.
    Don't hoard answers — reflect them in artifacts on the same turn. Format
    each file according to its extension — `.md` should be proper markdown
    (headings, bullets), `.json` valid JSON, `.yaml` valid YAML.
-3. **Manifest at end-of-sub-stage**: directory `index.md` files are
-   summaries written when the sub-stage that owns them is confirmed (or on
-   user request). Don't write them preemptively.
+3. **Manifest at end-of-sub-stage**: each directory's `index.md` is a brief
+   manifest — directory summary plus a one-liner per file. Substage roll-ups
+   live in `<subdir>/index.md`, not as separate files. Write `index.md`
+   when the substage that owns it is confirmed (or on user request).
 
 ### Append via edit_file
 
