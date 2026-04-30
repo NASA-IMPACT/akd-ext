@@ -1,7 +1,7 @@
 """IESO CARE Agent for NASA Worldview visualization.
 
-This module implements the IESO CARE (Clarify, Analyze, Rank, Explain) Agent
-for guided, reproducible discovery of NASA Worldview visualizations.
+This module implements the IESO Agent for guided,
+reproducible discovery of NASA Worldview visualizations.
 
 Public API:
     IESOAgent, IESOAgentInputSchema, IESOAgentOutputSchema, IESOAgentConfig
@@ -303,8 +303,8 @@ class IESOAgentOutputSchema(OutputSchema):
             "Full sectioned response: INTENT, DATASET_OPTIONS, "
             "SELECTED_DATASET, WORLDVIEW_URL, PARAMETERS_USED, PROVENANCE, "
             "UNCERTAINTY, LIMITATIONS, MISSING_FIELDS, USER NARRATIVE "
-            "(beginner/intermediate/advanced), OPTIONAL ACTIONS, and the "
-            "REQUIRED DISCLAIMER. Format defined by the system prompt."
+            "OPTIONAL ACTIONS, and the REQUIRED DISCLAIMER"
+            "Format is defined by the system prompt."
         ),
     )
     url: str = Field(
@@ -321,9 +321,7 @@ class IESOAgentOutputSchema(OutputSchema):
 class IESOAgent(PydanticAIBaseAgent[IESOAgentInputSchema, IESOAgentOutputSchema]):
     """Earth science Worldview-visualization agent.
 
-    Resolves an Earth science query into a NASA Worldview permalink via a
-    CARE-driven (Clarify, Analyze, Rank, Explain) loop with explicit user
-    confirmation before dataset selection.
+    Resolves an Earth science query into a NASA Worldview permalink.
     """
 
     input_schema = IESOAgentInputSchema
