@@ -4,7 +4,7 @@ This module implements the IESO Agent for guided,
 reproducible discovery of NASA Worldview visualizations.
 
 Public API:
-    IESOAgent, IESOAgentInputSchema, IESOAgentOutputSchema, IESOAgentConfig
+    IESOWorldviewAgent, IESOWorldviewAgentInputSchema, IESOWorldviewAgentOutputSchema, IESOWorldviewAgentConfig
 """
 
 from __future__ import annotations
@@ -28,7 +28,7 @@ from akd_ext.agents._base import (
 # System Prompts
 # -----------------------------------------------------------------------------
 
-IESO_SYSTEM_PROMPT = """
+IESO_WORLDVIEW_AGENT_SYSTEM_PROMPT = """
   ## **ROLE**
 
   You are a **NASA Worldview Scientific Data Assistant Agent**.
@@ -260,7 +260,7 @@ IESO_SYSTEM_PROMPT = """
 # -----------------------------------------------------------------------------
 
 
-class IESOAgentConfig(PydanticAIBaseAgentConfig):
+class IESOWorldviewAgentConfig(PydanticAIBaseAgentConfig):
     """Configuration for IESO CARE Agent."""
 
     description: str = Field(
@@ -273,7 +273,7 @@ class IESOAgentConfig(PydanticAIBaseAgentConfig):
             user for clarification, dataset selection, approval gates, and disclaimers."""
         )
     )
-    system_prompt: str = Field(default=IESO_SYSTEM_PROMPT)
+    system_prompt: str = Field(default=IESO_WORLDVIEW_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="openai:gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
 
@@ -283,13 +283,13 @@ class IESOAgentConfig(PydanticAIBaseAgentConfig):
 # -----------------------------------------------------------------------------
 
 
-class IESOAgentInputSchema(InputSchema):
+class IESOWorldviewAgentInputSchema(InputSchema):
     """Input schema for the IESO Worldview-discovery agent."""
 
     query: str = Field(..., description="Earth science query to interact with worldview visualization")
 
 
-class IESOAgentOutputSchema(OutputSchema):
+class IESOWorldviewAgentOutputSchema(OutputSchema):
     """Structured Worldview-discovery response. Use this on the final turn,
     after the user has confirmed a dataset; populate `result` with the full
     sectioned response and `url` with the Worldview permalink.
@@ -318,18 +318,18 @@ class IESOAgentOutputSchema(OutputSchema):
 # -----------------------------------------------------------------------------
 
 
-class IESOAgent(PydanticAIBaseAgent[IESOAgentInputSchema, IESOAgentOutputSchema]):
+class IESOWorldviewAgent(PydanticAIBaseAgent[IESOWorldviewAgentInputSchema, IESOWorldviewAgentOutputSchema]):
     """Earth science Worldview-visualization agent.
 
     Resolves an Earth science query into a NASA Worldview permalink.
     """
 
-    input_schema = IESOAgentInputSchema
-    output_schema = IESOAgentOutputSchema | TextOutput
-    config_schema = IESOAgentConfig
+    input_schema = IESOWorldviewAgentInputSchema
+    output_schema = IESOWorldviewAgentOutputSchema | TextOutput
+    config_schema = IESOWorldviewAgentConfig
 
     def check_output(self, output) -> str | None:
-        if isinstance(output, IESOAgentOutputSchema):
+        if isinstance(output, IESOWorldviewAgentOutputSchema):
             if not output.result.strip():
                 return "Result is empty. Provide the structured Worldview-discovery response."
             if not output.url.strip():
