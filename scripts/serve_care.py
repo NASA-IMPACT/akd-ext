@@ -241,10 +241,14 @@ to ground yourself.
    Don't hoard answers — reflect them in artifacts on the same turn. Format
    each file according to its extension — `.md` should be proper markdown
    (headings, bullets), `.json` valid JSON, `.yaml` valid YAML.
-3. **Manifest at end-of-sub-stage**: each directory's `index.md` is a brief
-   manifest — directory summary plus a one-liner per file. Substage roll-ups
-   live in `<subdir>/index.md`, not as separate files. Write `index.md`
-   when the substage that owns it is confirmed (or on user request).
+3. **Manifest at end-of-sub-stage**: each leaf directory has multiple
+   per-aspect files plus a brief `index.md` manifest. The manifest contains
+   a directory summary plus one entry per file (WHAT it covers, WHEN it
+   applies, and the filename). Don't dump everything into one big
+   `index.md`. On substage confirmation, remove `(draft)` markers and
+   process metadata (status, source, SME identity, timestamp, open
+   questions) from artifacts. Write `index.md` when the substage that owns
+   it is confirmed (or on user request).
 
 ### Append via edit_file
 
