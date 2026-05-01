@@ -52,10 +52,16 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
 from typing import AsyncIterable
+
+# Make sibling `postgres_backend` importable whether this script is run as
+# `python3 scripts/serve_care.py` (cwd=repo root) or `python3 serve_care.py`
+# (cwd=scripts/). Prepending the script's directory covers both.
+sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 import uvicorn
 from pydantic_ai import Agent, FunctionToolset, RunContext
@@ -71,6 +77,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.ui._web import create_web_app
 from pydantic_ai_backends import ConsoleCapability, LocalBackend
 from pydantic_ai_backends.permissions import PERMISSIVE_RULESET, READONLY_RULESET
+from pydantic_ai_backends.protocol import BackendProtocol
+
+from postgres_backend import DEFAULT_CONNINFO, PostgresBackend, redact_dsn
 
 # ──────────────────────────────────────────────────────────────────────────
 # Module-level configuration (the GLOBAL_VARs)
@@ -79,7 +88,7 @@ from pydantic_ai_backends.permissions import PERMISSIVE_RULESET, READONLY_RULESE
 CARE_REPO_PATH = Path(
     os.environ.get(
         "CARE_REPO_PATH",
-        "/Users/npantha/dev/impact/projects/AKD-CARE",
+        "/Users/gpanthee/i/AKD-CARE",
     )
 )
 
@@ -124,11 +133,11 @@ def discover_phase_prompts(phase: int) -> tuple[Path, str]:
 
 @dataclass
 class Deps:
-    artifacts: LocalBackend  # R/W, scoped to workspace
+    artifacts: BackendProtocol  # R/W; LocalBackend or PostgresBackend
     prompts: LocalBackend  # R/O, scoped to per-phase prompts dir
 
     @property
-    def backend(self) -> LocalBackend:
+    def backend(self) -> BackendProtocol:
         """Alias for `artifacts`. ConsoleCapability's tools call
         `ctx.deps.backend.<op>()` internally; this property routes that to
         the artifacts backend without forking the upstream capability."""
@@ -572,6 +581,7 @@ def build_app(
     model: str,
     thinking_effort: str,
     trace: str = "tools",
+    storage: str = "postgres",
 ) -> tuple:
     if phase not in PHASE_META_TEMPLATES:
         raise SystemExit(f"Unknown phase={phase!r}. Options: {sorted(PHASE_META_TEMPLATES)}")
@@ -582,17 +592,24 @@ def build_app(
     # Render the meta-prompt with the listing baked in.
     meta_prompt = PHASE_META_TEMPLATES[phase].format(file_tree=file_tree)
 
-    # Workspace dir (R/W).
-    workspace = (WORKSPACE_ROOT / agent_name).resolve()
-    workspace.mkdir(parents=True, exist_ok=True)
+    # Artifacts backend: postgres (default) or local-disk fallback.
+    artifacts_backend: BackendProtocol
+    workspace_descr: str
+    if storage == "postgres":
+        artifacts_backend = PostgresBackend(workspace=agent_name)
+        conninfo = artifacts_backend.conninfo
+        workspace_descr = f"db={redact_dsn(conninfo)} workspace={agent_name}"
+    else:
+        workspace_dir = (WORKSPACE_ROOT / agent_name).resolve()
+        workspace_dir.mkdir(parents=True, exist_ok=True)
+        artifacts_backend = LocalBackend(
+            root_dir=str(workspace_dir),
+            allowed_directories=[str(workspace_dir)],
+            enable_execute=False,
+            permissions=PERMISSIVE_RULESET,
+        )
+        workspace_descr = str(workspace_dir)
 
-    # Two LocalBackend instances — direct construction, no factories.
-    artifacts_backend = LocalBackend(
-        root_dir=str(workspace),
-        allowed_directories=[str(workspace)],
-        enable_execute=False,
-        permissions=PERMISSIVE_RULESET,
-    )
     prompts_backend = LocalBackend(
         root_dir=str(prompts_dir),
         allowed_directories=[str(prompts_dir)],
@@ -628,7 +645,7 @@ def build_app(
         instructions=meta_prompt,
     )
 
-    return app, phase, workspace, prompts_dir, model
+    return app, phase, workspace_descr, prompts_dir, model, storage
 
 
 def main() -> None:
@@ -665,16 +682,24 @@ def main() -> None:
         default="tools",
         help="Terminal trace: 'off' silent, 'tools' shows tool calls + results, 'verbose' adds thinking + text deltas",
     )
+    parser.add_argument(
+        "--storage",
+        choices=["local", "postgres"],
+        default=os.environ.get("CARE_STORAGE", "postgres"),
+        help="Artifact backend (env: CARE_STORAGE). 'postgres' uses CARE_POSTGRES_URL "
+        f"(default {DEFAULT_CONNINFO}); 'local' writes to ./tmp/care-v2/<agent_name>/.",
+    )
     parser.add_argument("--host", default="127.0.0.1", help="Host to bind")
     parser.add_argument("--port", type=int, default=7932, help="Port to bind")
     args = parser.parse_args()
 
-    app, phase, workspace, prompts_dir, model = build_app(
+    app, phase, workspace_descr, prompts_dir, model, storage = build_app(
         phase=args.phase,
         agent_name=args.agent_name,
         model=args.model,
         thinking_effort=args.thinking,
         trace=args.trace,
+        storage=args.storage,
     )
 
     prompt_preview = PHASE_META_TEMPLATES[phase][:250].replace("\n", " ⏎ ")
@@ -682,7 +707,8 @@ def main() -> None:
         f"\nServing CARE v2 interviewer\n"
         f"  phase       = {phase}\n"
         f"  agent       = {args.agent_name}\n"
-        f"  workspace   = {workspace}\n"
+        f"  storage     = {storage}\n"
+        f"  workspace   = {workspace_descr}\n"
         f"  prompts_dir = {prompts_dir}\n"
         f"  model       = {model}\n"
         f"  thinking    = {args.thinking}\n"

@@ -22,6 +22,8 @@ dependencies = [
     "griffe>=1.0.0,<2",
     "openai-agents>=0.6.7",
     "pydantic-ai>=1.81.0",
+    "pydantic-ai-backend[console]>=0.2.5",
+    "psycopg[binary]>=3.2",
     "PyGithub>=2.1.1",
 ]
 
