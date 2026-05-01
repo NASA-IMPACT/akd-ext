@@ -6,6 +6,45 @@ artifact workspaces to Postgres instead of the local filesystem.
 Implements `pydantic_ai_backends.protocol.BackendProtocol`:
 `ls_info`, `_read_bytes`, `read`, `write`, `edit`, `glob_info`, `grep_raw`.
 
+## Self-contained — drop in and go
+
+You don't need to manage a schema file in your own project; you don't need
+migrations; you don't need any Python boilerplate. Just import the class:
+
+```python
+from postgres_backend import PostgresBackend
+
+be = PostgresBackend(workspace="my_agent")     # connects + creates table on first run
+be.write("/scope.md", "# Scope\n\nhello")
+print(be.read("/scope.md"))
+```
+
+What happens on construction:
+
+1. Opens a `psycopg` connection (DSN from `conninfo=`, env `CARE_POSTGRES_URL`,
+   or the default `postgresql://postgres:postgres@localhost:5432/care_dev`).
+2. Runs the bundled [`schema.sql`](./schema.sql) — `CREATE TABLE IF NOT EXISTS`,
+   so it's safe on every start. No alembic, no separate migration step.
+3. Returns a ready-to-use object that conforms to `BackendProtocol`, so anywhere
+   `LocalBackend` works (e.g. `pydantic_ai_backends.ConsoleCapability`),
+   `PostgresBackend` works too.
+
+To use it from another Python program in this repo, the package directory
+(`scripts/postgres_backend/`) needs to be importable. Either:
+
+```python
+# Option A — add scripts/ to sys.path
+import sys, pathlib
+sys.path.insert(0, str(pathlib.Path("/path/to/akd-ext/scripts")))
+from postgres_backend import PostgresBackend
+
+# Option B — copy the postgres_backend/ folder into your project, then
+from postgres_backend import PostgresBackend
+```
+
+Disable auto-init (e.g. in tests where the schema is bootstrapped once at
+session level) with `PostgresBackend(workspace="x", auto_init=False)`.
+
 ## Schema
 
 Single table, multi-tenant via the `workspace` column. See [`schema.sql`](./schema.sql).
@@ -45,15 +84,32 @@ export CARE_POSTGRES_TEST_URL=postgresql://postgres:postgres@localhost:5432/care
 
 `auto_init=True` (default) runs `schema.sql` at construction — no manual setup.
 
-## Usage
+## Constructor
 
 ```python
-from scripts.postgres_backend import PostgresBackend
-
-backend = PostgresBackend(workspace="my_agent")
-backend.write("/scope.md", "# Scope\n\n…")
-print(backend.read("/scope.md"))
+PostgresBackend(
+    workspace: str,                # tenant key (= agent_name)
+    *,
+    conninfo: str | None = None,   # libpq DSN; falls back to CARE_POSTGRES_URL or default
+    auto_init: bool = True,        # CREATE TABLE IF NOT EXISTS at construction
+)
 ```
+
+## Methods (BackendProtocol)
+
+```
+ls_info(path)                   → list[FileInfo]
+read(path, offset=0, limit=2000) → str          # line-numbered or "Error: …"
+_read_bytes(path)               → bytes
+write(path, content)            → WriteResult
+edit(path, old, new, replace_all=False) → EditResult
+glob_info(pattern, path="/")    → list[FileInfo]
+grep_raw(pattern, path=None, glob=None, ignore_hidden=True) → list[GrepMatch] | str
+```
+
+Path semantics: absolute-style normalized internally — `"."`, `"./"`, `""` all
+mean root (`"/"`); `"contexts/x.md"` and `"./contexts/x.md"` both become
+`"/contexts/x.md"`. `..` and `~` are rejected.
 
 ## Tests
 
