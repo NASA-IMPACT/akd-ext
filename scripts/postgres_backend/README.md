@@ -120,3 +120,71 @@ mean root (`"/"`); `"contexts/x.md"` and `"./contexts/x.md"` both become
 export CARE_POSTGRES_TEST_URL=postgresql://localhost/care_test
 uv run pytest tests/test_postgres_backend.py -v
 ```
+
+## Running `serve_care.py` against this backend
+
+If you're a tester picking up the `care-v2-script-postgres-backend` branch,
+here's the minimum you need to configure.
+
+### Prerequisites
+
+1. **Clone the CARE v2 prompts repo** on the `Care_version2` branch:
+   ```bash
+   git clone git@github.com:NASA-IMPACT/AKD-CARE.git
+   cd AKD-CARE && git checkout Care_version2
+   ```
+2. **Have a Postgres reachable.** Easiest: the akd-labs docker-compose
+   (`postgres:postgres@localhost:5432`) — the default DSN already targets it.
+   Otherwise spin up your own and set `CARE_POSTGRES_URL`.
+3. **Create the dev DB once** (the table inside it is auto-created):
+   ```bash
+   PGPASSWORD=postgres psql -h localhost -U postgres -d postgres \
+     -c "CREATE DATABASE care_dev;"
+   ```
+4. **OpenAI key** for the default `openai:gpt-5.2` model (or override the
+   model with `--model`/`CARE_MODEL`).
+
+### Environment variables
+
+| Var | Required? | Purpose |
+|---|---|---|
+| `CARE_REPO_PATH` | **yes** — default is hardcoded to `/Users/gpanthee/i/AKD-CARE`, override it | absolute path to your `AKD-CARE` clone |
+| `OPENAI_API_KEY` | yes (unless you override the model) | model auth |
+| `CARE_POSTGRES_URL` | only if NOT using the akd-labs docker-compose default | libpq DSN |
+| `CARE_MODEL` | optional | model id override |
+| `CARE_THINKING` | optional | `none\|low\|medium\|high` (default `medium`) |
+| `CARE_STORAGE` | optional | `postgres` (default) or `local` |
+| `CARE_AGENT_NAME` | optional | sets `--agent-name` default |
+
+### Minimum command sequence
+
+```bash
+uv sync
+export CARE_REPO_PATH=/path/to/your/AKD-CARE
+export OPENAI_API_KEY=sk-...
+PGPASSWORD=postgres psql -h localhost -U postgres -d postgres \
+  -c "CREATE DATABASE care_dev;"
+
+uv run python3 scripts/serve_care.py --phase 1 --agent-name pg_smoke --port 7932
+```
+
+Open `http://127.0.0.1:7932` and start the interview.
+
+### Verify artifacts land in Postgres
+
+```bash
+PGPASSWORD=postgres psql -h localhost -U postgres -d care_dev \
+  -c "SELECT path, length(content), modified_at
+      FROM care_artifacts WHERE workspace='pg_smoke' ORDER BY path;"
+```
+
+### Common gotcha
+
+If `CARE_REPO_PATH` isn't overridden, you get:
+
+```
+SystemExit: No phase_1_* under /Users/gpanthee/i/AKD-CARE.
+            Check CARE_REPO_PATH and the `Care_version2` branch.
+```
+
+Set the env var to your local AKD-CARE clone and re-run.
