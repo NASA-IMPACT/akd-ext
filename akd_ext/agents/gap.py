@@ -10,8 +10,11 @@ from typing import Literal
 
 from pydantic import Field
 
+from agents import Agent
+
 from akd._base import InputSchema, OutputSchema, TextOutput
 from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
+from akd_ext.agents.closed_loop._base import append_context_to_agent
 
 
 # -----------------------------------------------------------------------------
@@ -179,11 +182,25 @@ class GapAgentConfig(OpenAIBaseAgentConfig):
     system_prompt: str = Field(default=GAP_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
+    context_files: dict[str, str] = Field(
+        default_factory=dict,
+        description="Mapping of context label to content string. Each entry is appended to the "
+        "agent's instructions as a named section. Used by domain specializations (e.g. FM_Prithvi) "
+        "to inject pipeline-capability documents.",
+    )
 
 
 class GapAgent(OpenAIBaseAgent[GapAgentInputSchema, GapAgentOutputSchema]):
-    """Agent that identifies gaps in research, data coverage, or capabilities."""
+    """Agent that identifies gaps in research, data coverage, or capabilities.
+
+    Subclass and override ``system_prompt`` and ``context_files`` on the config
+    to specialize for a specific domain (see ``akd_ext.agents.closed_loop.prithvi``).
+    """
 
     input_schema = GapAgentInputSchema
     output_schema = GapAgentOutputSchema | TextOutput
     config_schema = GapAgentConfig
+
+    def _create_agent(self) -> Agent:
+        agent = super()._create_agent()
+        return append_context_to_agent(agent, self.config.context_files)
