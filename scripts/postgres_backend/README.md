@@ -21,12 +21,15 @@ print(be.read("/scope.md"))
 
 What happens on construction:
 
-1. Opens a `psycopg` connection (DSN from `conninfo=`, env `CARE_POSTGRES_URL`,
-   or the default `postgresql://postgres:postgres@localhost:5432/care_dev`).
-2. Runs the bundled [`schema.sql`](./schema.sql) — `CREATE TABLE IF NOT EXISTS`,
-   so it's safe on every start. No alembic, no separate migration step.
-3. Returns a ready-to-use object that conforms to `BackendProtocol`, so anywhere
-   `LocalBackend` works (e.g. `pydantic_ai_backends.ConsoleCapability`),
+1. Acquires (or creates) a process-wide `psycopg_pool.ConnectionPool` for
+   the DSN (from `conninfo=`, env `CARE_POSTGRES_URL`, or the default
+   `postgresql://postgres:postgres@localhost:5432/care_dev`).
+2. Runs the bundled [`schema.sql`](./schema.sql) — `CREATE TABLE IF NOT EXISTS`
+   plus an idempotent `ALTER TABLE ... DROP COLUMN IF EXISTS size_bytes`
+   migration — at most **once per DSN per process**, regardless of how
+   many `PostgresBackend` instances are constructed.
+3. Returns a ready-to-use object that conforms to `BackendProtocol`, so
+   anywhere `LocalBackend` works (e.g. `pydantic_ai_backends.ConsoleCapability`),
    `PostgresBackend` works too.
 
 To use it from another Python program in this repo, the package directory
@@ -45,6 +48,23 @@ from postgres_backend import PostgresBackend
 Disable auto-init (e.g. in tests where the schema is bootstrapped once at
 session level) with `PostgresBackend(workspace="x", auto_init=False)`.
 
+## Concurrency
+
+Every operation grabs a connection out of the shared pool, runs its query,
+and returns the connection — so multiple threads (e.g. concurrent uvicorn
+requests against the same agent workspace) and multiple `PostgresBackend`
+instances can coexist safely against the same DSN.
+
+Pool sizing is configurable via env:
+
+| Var | Default | Purpose |
+|---|---|---|
+| `CARE_POSTGRES_POOL_MIN` | `1` | Minimum idle pool connections |
+| `CARE_POSTGRES_POOL_MAX` | `10` | Maximum pool size |
+
+Tests that need to release pool resources between runs can call
+`postgres_backend.close_all_pools()` (production code does not need to).
+
 ## Schema
 
 Single table, multi-tenant via the `workspace` column. See [`schema.sql`](./schema.sql).
@@ -54,7 +74,6 @@ CREATE TABLE IF NOT EXISTS care_artifacts (
     workspace    TEXT        NOT NULL,
     path         TEXT        NOT NULL,           -- normalized "/scope.md"
     content      TEXT        NOT NULL,
-    size_bytes   INTEGER     NOT NULL,
     created_at   TIMESTAMPTZ NOT NULL DEFAULT now(),
     modified_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (workspace, path)
@@ -62,6 +81,9 @@ CREATE TABLE IF NOT EXISTS care_artifacts (
 ```
 
 Directories are implicit — derived from path prefix grouping in `ls_info`.
+The `size` field on `FileInfo` is computed from `content` (codepoint count
+excluding `\n`) to match StateBackend semantics, so no separate column is
+stored.
 
 ## Connection
 
@@ -88,7 +110,7 @@ export CARE_POSTGRES_TEST_URL=postgresql://postgres:postgres@localhost:5432/care
 
 ```python
 PostgresBackend(
-    workspace: str,                # tenant key (= agent_name)
+    workspace: str,                # tenant key (= agent_name); non-empty, no NUL
     *,
     conninfo: str | None = None,   # libpq DSN; falls back to CARE_POSTGRES_URL or default
     auto_init: bool = True,        # CREATE TABLE IF NOT EXISTS at construction
@@ -109,7 +131,7 @@ grep_raw(pattern, path=None, glob=None, ignore_hidden=True) → list[GrepMatch] 
 
 Path semantics: absolute-style normalized internally — `"."`, `"./"`, `""` all
 mean root (`"/"`); `"contexts/x.md"` and `"./contexts/x.md"` both become
-`"/contexts/x.md"`. `..` and `~` are rejected.
+`"/contexts/x.md"`. `..`, `~`, and embedded NUL bytes are rejected.
 
 ## Tests
 
@@ -148,9 +170,11 @@ here's the minimum you need to configure.
 
 | Var | Required? | Purpose |
 |---|---|---|
-| `CARE_REPO_PATH` | **yes** — default is hardcoded to `/Users/gpanthee/i/AKD-CARE`, override it | absolute path to your `AKD-CARE` clone |
+| `CARE_REPO_PATH` | **yes** — no default | absolute path to your `AKD-CARE` clone |
 | `OPENAI_API_KEY` | yes (unless you override the model) | model auth |
 | `CARE_POSTGRES_URL` | only if NOT using the akd-labs docker-compose default | libpq DSN |
+| `CARE_POSTGRES_POOL_MIN` | optional | min idle pool connections (default `1`) |
+| `CARE_POSTGRES_POOL_MAX` | optional | max pool connections (default `10`) |
 | `CARE_MODEL` | optional | model id override |
 | `CARE_THINKING` | optional | `none\|low\|medium\|high` (default `medium`) |
 | `CARE_STORAGE` | optional | `postgres` (default) or `local` |
@@ -177,14 +201,3 @@ PGPASSWORD=postgres psql -h localhost -U postgres -d care_dev \
   -c "SELECT path, length(content), modified_at
       FROM care_artifacts WHERE workspace='pg_smoke' ORDER BY path;"
 ```
-
-### Common gotcha
-
-If `CARE_REPO_PATH` isn't overridden, you get:
-
-```
-SystemExit: No phase_1_* under /Users/gpanthee/i/AKD-CARE.
-            Check CARE_REPO_PATH and the `Care_version2` branch.
-```
-
-Set the env var to your local AKD-CARE clone and re-run.

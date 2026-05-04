@@ -11,6 +11,7 @@ Run:
 from __future__ import annotations
 
 import os
+import threading
 import time
 import uuid
 
@@ -24,7 +25,7 @@ pytestmark = pytest.mark.skipif(
     reason="CARE_POSTGRES_TEST_URL not set; integration tests require a real Postgres",
 )
 
-from scripts.postgres_backend import PostgresBackend  # noqa: E402
+from scripts.postgres_backend import PostgresBackend, close_all_pools  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -81,8 +82,7 @@ def test_write_overwrite_updates_modified_at(backend: PostgresBackend, workspace
     with psycopg.connect(CARE_POSTGRES_TEST_URL, autocommit=True) as conn:
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT created_at, modified_at, content FROM care_artifacts "
-                "WHERE workspace=%s AND path=%s",
+                "SELECT created_at, modified_at, content FROM care_artifacts WHERE workspace=%s AND path=%s",
                 (workspace, "/a.md"),
             )
             created_at, modified_at, content = cur.fetchone()
@@ -128,9 +128,7 @@ def test_ls_dot_is_root(backend: PostgresBackend) -> None:
     backend.write("/scope.md", "x")
     backend.write("/contexts/index.md", "y")
 
-    expected = sorted(
-        (e["name"], e["is_dir"]) for e in backend.ls_info("/")
-    )
+    expected = sorted((e["name"], e["is_dir"]) for e in backend.ls_info("/"))
     for alias in (".", "./", ""):
         got = sorted((e["name"], e["is_dir"]) for e in backend.ls_info(alias))
         assert got == expected, f"ls_info({alias!r}) diverged from ls_info('/')"
@@ -245,3 +243,290 @@ def test_write_path_validation(backend: PostgresBackend) -> None:
     res = backend.write("../etc/passwd", "pwn")
     assert res.path is None
     assert res.error == "Path cannot contain '..'"
+
+
+def test_path_validation_rejects_null_byte(backend: PostgresBackend) -> None:
+    out = backend.read("foo\x00bar")
+    assert out == "Error: Path cannot contain null bytes"
+
+
+def test_workspace_rejects_empty_string() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        PostgresBackend(workspace="", conninfo=CARE_POSTGRES_TEST_URL)
+
+
+def test_workspace_rejects_null_byte() -> None:
+    with pytest.raises(ValueError, match="null"):
+        PostgresBackend(workspace="abc\x00def", conninfo=CARE_POSTGRES_TEST_URL)
+
+
+# ── size semantics (StateBackend parity) ──────────────────────────────────
+
+
+def test_ls_size_matches_state_backend_semantics(backend: PostgresBackend) -> None:
+    """size = sum(len(line) for line in content.split('\\n')) — matches StateBackend.
+
+    For "abc\\ndef" that's 3+3=6, NOT 7 (utf-8 byte length including newline).
+    """
+    backend.write("/a.md", "abc\ndef")
+    entries = backend.ls_info("/")
+    by_name = {e["name"]: e for e in entries}
+    assert by_name["a.md"]["size"] == 6
+
+
+def test_ls_size_unicode_codepoints(backend: PostgresBackend) -> None:
+    """``é`` is 1 codepoint but 2 utf-8 bytes; we report codepoints (= len(str))."""
+    backend.write("/a.md", "é")
+    entries = backend.ls_info("/")
+    by_name = {e["name"]: e for e in entries}
+    assert by_name["a.md"]["size"] == 1
+
+
+def test_ls_size_empty_and_only_newlines(backend: PostgresBackend) -> None:
+    backend.write("/empty.md", "")
+    backend.write("/newlines.md", "\n\n\n")
+    entries = backend.ls_info("/")
+    by_name = {e["name"]: e for e in entries}
+    assert by_name["empty.md"]["size"] == 0
+    assert by_name["newlines.md"]["size"] == 0
+
+
+def test_glob_size_matches_state_backend_semantics(backend: PostgresBackend) -> None:
+    backend.write("/a.md", "abc\ndef")
+    [hit] = backend.glob_info("**/*.md")
+    assert hit["size"] == 6
+
+
+# ── empty / round-trip edges ──────────────────────────────────────────────
+
+
+def test_write_empty_string_round_trips(backend: PostgresBackend) -> None:
+    backend.write("/empty.md", "")
+    # An empty file has 1 line (the empty string), so read() returns the
+    # numbered single line.
+    out = backend.read("/empty.md")
+    assert out == "     1\t"
+
+
+def test_read_offset_at_or_past_end(backend: PostgresBackend) -> None:
+    backend.write("/a.md", "one\ntwo")
+    out = backend.read("/a.md", offset=5)
+    assert out.startswith("Error: Offset 5 exceeds")
+
+
+def test_read_with_limit_truncates(backend: PostgresBackend) -> None:
+    backend.write("/a.md", "one\ntwo\nthree\nfour")
+    out = backend.read("/a.md", offset=0, limit=2)
+    assert "1\tone" in out
+    assert "2\ttwo" in out
+    assert "three" not in out
+    assert "(2 more lines)" in out
+
+
+def test_edit_no_op_when_old_equals_new_bumps_modified_at(backend: PostgresBackend, workspace: str) -> None:
+    """``old==new`` is a degenerate no-op rewrite. We still touch modified_at —
+    same as StateBackend, which calls ``_get_timestamp()`` unconditionally.
+    """
+    backend.write("/a.md", "hello")
+    time.sleep(0.05)
+    res = backend.edit("/a.md", "hello", "hello")
+    assert res.error is None
+    assert res.occurrences == 1
+
+    with psycopg.connect(CARE_POSTGRES_TEST_URL, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT created_at, modified_at FROM care_artifacts WHERE workspace=%s AND path=%s",
+                (workspace, "/a.md"),
+            )
+            created_at, modified_at = cur.fetchone()
+    assert modified_at > created_at
+
+
+def test_read_bytes_round_trip(backend: PostgresBackend) -> None:
+    backend.write("/a.md", "héllo")
+    assert backend._read_bytes("/a.md") == "héllo".encode("utf-8")
+
+
+def test_read_bytes_missing_returns_empty(backend: PostgresBackend) -> None:
+    assert backend._read_bytes("/missing.md") == b""
+
+
+def test_read_bytes_validation_error(backend: PostgresBackend) -> None:
+    out = backend._read_bytes("../etc/passwd")
+    assert out.decode().startswith("Error: Path cannot contain")
+
+
+def test_ls_on_a_file_path_returns_that_file(backend: PostgresBackend) -> None:
+    backend.write("/scope.md", "content")
+    entries = backend.ls_info("/scope.md")
+    assert len(entries) == 1
+    assert entries[0]["name"] == "scope.md"
+    assert entries[0]["is_dir"] is False
+
+
+# ── grep edges ────────────────────────────────────────────────────────────
+
+
+def test_grep_with_path_filter_to_specific_file(backend: PostgresBackend) -> None:
+    backend.write("/a.md", "match me\nnope")
+    backend.write("/b.md", "match me too")
+    matches = backend.grep_raw("match", path="/a.md")
+    assert isinstance(matches, list)
+    assert {m["path"] for m in matches} == {"/a.md"}
+
+
+def test_grep_with_directory_path(backend: PostgresBackend) -> None:
+    backend.write("/sub/a.md", "match")
+    backend.write("/sub/b.md", "match")
+    backend.write("/other.md", "match")
+    matches = backend.grep_raw("match", path="/sub")
+    assert isinstance(matches, list)
+    assert {m["path"] for m in matches} == {"/sub/a.md", "/sub/b.md"}
+
+
+def test_grep_glob_filter(backend: PostgresBackend) -> None:
+    backend.write("/a.md", "match")
+    backend.write("/a.txt", "match")
+    matches = backend.grep_raw("match", glob="**/*.md")
+    assert isinstance(matches, list)
+    assert {m["path"] for m in matches} == {"/a.md"}
+
+
+def test_grep_ignore_hidden(backend: PostgresBackend) -> None:
+    backend.write("/visible.md", "needle")
+    # Note: leading-dot path components live under "/.../" — emulate by
+    # writing into a "hidden" subdir.
+    backend.write("/.hidden/secret.md", "needle")
+    visible = backend.grep_raw("needle", ignore_hidden=True)
+    all_files = backend.grep_raw("needle", ignore_hidden=False)
+    assert isinstance(visible, list) and isinstance(all_files, list)
+    assert {m["path"] for m in visible} == {"/visible.md"}
+    assert {m["path"] for m in all_files} == {"/visible.md", "/.hidden/secret.md"}
+
+
+def test_grep_invalid_path(backend: PostgresBackend) -> None:
+    out = backend.grep_raw("foo", path="../etc")
+    assert isinstance(out, str)
+    assert out.startswith("Error: Path cannot contain")
+
+
+# ── concurrency (proves the ConnectionPool works) ─────────────────────────
+
+
+def test_concurrent_writes_distinct_paths(backend: PostgresBackend) -> None:
+    """Spawn many threads writing distinct files. Pool must serialize on
+    distinct connections without garbling cursor state.
+    """
+    n = 20
+    errors: list[BaseException] = []
+
+    def write_one(i: int) -> None:
+        try:
+            backend.write(f"/concurrent_{i}.md", f"content {i}")
+        except BaseException as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=write_one, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    entries = backend.ls_info("/")
+    written = {e["name"] for e in entries if e["name"].startswith("concurrent_")}
+    assert written == {f"concurrent_{i}.md" for i in range(n)}
+
+
+def test_concurrent_read_after_write(backend: PostgresBackend) -> None:
+    """Many threads reading the same file simultaneously should all succeed."""
+    backend.write("/shared.md", "shared content")
+    results: list[str] = []
+    lock = threading.Lock()
+
+    def read_one() -> None:
+        out = backend.read("/shared.md")
+        with lock:
+            results.append(out)
+
+    threads = [threading.Thread(target=read_one) for _ in range(20)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(results) == 20
+    assert all("shared content" in r for r in results)
+
+
+def test_concurrent_writes_same_path_last_writer_wins(backend: PostgresBackend) -> None:
+    """N threads writing the same key — final value should be one of the
+    written values; no exceptions; no missing row.
+    """
+    n = 10
+    errors: list[BaseException] = []
+
+    def write_one(i: int) -> None:
+        try:
+            backend.write("/contended.md", f"value_{i}")
+        except BaseException as e:  # noqa: BLE001
+            errors.append(e)
+
+    threads = [threading.Thread(target=write_one, args=(i,)) for i in range(n)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert errors == []
+    final = backend.read("/contended.md")
+    assert any(f"value_{i}" in final for i in range(n))
+
+
+# ── schema bootstrap idempotency ──────────────────────────────────────────
+
+
+def test_repeated_construction_does_not_error() -> None:
+    """``auto_init=True`` must be safe to call repeatedly (cached per DSN)."""
+    ws = f"test_repeat_{uuid.uuid4().hex[:8]}"
+    for _ in range(5):
+        be = PostgresBackend(workspace=ws, conninfo=CARE_POSTGRES_TEST_URL)
+        be.write("/a.md", "x")
+        assert "x" in be.read("/a.md")
+    with psycopg.connect(CARE_POSTGRES_TEST_URL, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM care_artifacts WHERE workspace=%s", (ws,))
+
+
+def test_close_all_pools_then_reuse() -> None:
+    """``close_all_pools`` must leave the module reusable — re-constructing a
+    backend afterwards should re-bootstrap the pool transparently.
+    """
+    ws = f"test_pool_{uuid.uuid4().hex[:8]}"
+    a = PostgresBackend(workspace=ws, conninfo=CARE_POSTGRES_TEST_URL)
+    a.write("/before.md", "before")
+
+    close_all_pools()
+
+    b = PostgresBackend(workspace=ws, conninfo=CARE_POSTGRES_TEST_URL)
+    b.write("/after.md", "after")
+    assert "before" in b.read("/before.md")
+    assert "after" in b.read("/after.md")
+
+    with psycopg.connect(CARE_POSTGRES_TEST_URL, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM care_artifacts WHERE workspace=%s", (ws,))
+
+
+def test_auto_init_false_skips_schema_but_pool_still_works() -> None:
+    """``auto_init=False`` opens the pool but doesn't run schema. The schema
+    is already there from the session-level fixture, so writes still work.
+    """
+    ws = f"test_noinit_{uuid.uuid4().hex[:8]}"
+    be = PostgresBackend(workspace=ws, conninfo=CARE_POSTGRES_TEST_URL, auto_init=False)
+    be.write("/x.md", "y")
+    assert "y" in be.read("/x.md")
+    with psycopg.connect(CARE_POSTGRES_TEST_URL, autocommit=True) as conn:
+        with conn.cursor() as cur:
+            cur.execute("DELETE FROM care_artifacts WHERE workspace=%s", (ws,))

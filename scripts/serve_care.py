@@ -85,12 +85,21 @@ from postgres_backend import DEFAULT_CONNINFO, PostgresBackend, redact_dsn
 # Module-level configuration (the GLOBAL_VARs)
 # ──────────────────────────────────────────────────────────────────────────
 
-CARE_REPO_PATH = Path(
-    os.environ.get(
-        "CARE_REPO_PATH",
-        "/Users/gpanthee/i/AKD-CARE",
-    )
-)
+
+def _care_repo_path() -> Path:
+    """Resolve CARE_REPO_PATH lazily. Required; no fallback default.
+
+    Deferred so that importing this module (e.g. in tests) doesn't error if
+    the env var is unset.
+    """
+    raw = os.environ.get("CARE_REPO_PATH")
+    if not raw:
+        raise SystemExit(
+            "CARE_REPO_PATH is not set. Export it to your local AKD-CARE clone, e.g.\n"
+            "  export CARE_REPO_PATH=/path/to/AKD-CARE"
+        )
+    return Path(raw)
+
 
 WORKSPACE_ROOT = Path(
     os.environ.get(
@@ -114,11 +123,10 @@ def discover_phase_prompts(phase: int) -> tuple[Path, str]:
     Returns (prompts_dir, file_tree_listing). Used at startup to scope the
     prompts backend and bake the file listing into the meta-prompt.
     """
-    matches = sorted(CARE_REPO_PATH.glob(f"phase_{phase}_*"))
+    care_repo = _care_repo_path()
+    matches = sorted(care_repo.glob(f"phase_{phase}_*"))
     if not matches:
-        raise SystemExit(
-            f"No phase_{phase}_* under {CARE_REPO_PATH}. Check CARE_REPO_PATH and the `Care_version2` branch."
-        )
+        raise SystemExit(f"No phase_{phase}_* under {care_repo}. Check CARE_REPO_PATH and the `Care_version2` branch.")
     prompts_dir = matches[0] / "prompts"
     if not prompts_dir.is_dir():
         raise SystemExit(f"No prompts/ subdir in {matches[0]}")
