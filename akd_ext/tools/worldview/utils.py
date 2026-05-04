@@ -130,6 +130,9 @@ def build_worldview_permalink(
     layer configuration, time, viewport, and (optionally) compare or charting
     state. Pure URL string assembly — no I/O.
 
+    Every URL is emitted in embed mode (`em=true`), which strips Worldview's
+    side panels and header chrome for clean rendering in chat/iframe contexts.
+
     This function is the underlying implementation for a future
     WorldviewPermalinkTool; parameter descriptions here are written as
     agent-facing guidance and will map 1:1 to Pydantic Field descriptions on
@@ -290,6 +293,8 @@ def build_worldview_permalink(
         if (formatted := _format_time(chart_time_end)) is not None:
             params["cht2"] = formatted
         params["chch"] = "true" if chart_autoload else "false"
+
+    params["em"] = "true"
 
     return f"{base_url}?{urlencode(params, safe=',()=:')}"
 

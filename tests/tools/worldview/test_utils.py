@@ -156,6 +156,12 @@ class TestCoreParams:
         url = build_worldview_permalink(layers=[LayerSpec(id="L")])
         assert "r=" not in query_string(url)
 
+    def test_embed_mode_always_emitted(self):
+        # Embed mode is unconditional — em=true must appear on every URL so
+        # the link renders cleanly in chat / iframe contexts.
+        url = build_worldview_permalink(layers=[LayerSpec(id="L")])
+        assert "em=true" in url
+
 
 class TestCompareMode:
     """compare_active gate behaviour."""
