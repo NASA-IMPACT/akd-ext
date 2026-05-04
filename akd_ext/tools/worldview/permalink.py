@@ -51,9 +51,12 @@ class WorldviewPermalinkInputSchema(InputSchema):
             "Map time. Accepts a date (daily resolution), a datetime (subdaily, "
             "normalised to UTC), or a string in any reasonable date/datetime format — "
             "ISO 8601, 'Sep 15, 2025', '2025/09/15', TZ-aware forms, etc. (parsed via "
-            "dateutil). If None, Worldview defaults to today. Note: ambiguous "
-            "slash-separated strings like '01/02/2025' are interpreted as month/day/year "
-            "by default; pass an unambiguous form ('2025-01-02') if the order matters."
+            "dateutil). If None, defaults to yesterday (UTC) — Worldview's own 'today' "
+            "default can show partially-rendered scenes because daily MODIS/VIIRS data "
+            "is still being ingested into GIBS; yesterday guarantees a fully-rendered "
+            "scene. Note: ambiguous slash-separated strings like '01/02/2025' are "
+            "interpreted as month/day/year by default; pass an unambiguous form "
+            "('2025-01-02') if the order matters."
         ),
     )
     bbox: tuple[float, float, float, float] | None = Field(

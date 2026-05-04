@@ -121,9 +121,12 @@ class TestTimeFormatting:
         with pytest.raises(ValueError, match="banana"):
             build_worldview_permalink(layers=[LayerSpec(id="L")], time="banana")
 
-    def test_none_omits_param(self):
+    def test_none_defaults_to_yesterday_utc(self):
+        # Function defaults `time` to yesterday (UTC) to avoid Worldview's
+        # partially-rendered "today" scenes.
         url = build_worldview_permalink(layers=[LayerSpec(id="L")])
-        assert "&t=" not in url and not url.endswith("?t=")
+        yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
+        assert f"t={yesterday}" in url
 
 
 class TestCoreParams:
