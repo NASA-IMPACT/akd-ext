@@ -44,7 +44,8 @@ class TestWorldviewPermalinkTool:
         assert "ca=true" in result.url
         assert "cm=spy" in result.url
         assert "cv=70" in result.url
-        assert "l1=L_B" in result.url
+        # B-state list is pre-processed: base prepended, refs appended.
+        assert ",L_B," in result.url
         assert "t1=2025-09-14" in result.url
 
     async def test_arun_chart_block(self):

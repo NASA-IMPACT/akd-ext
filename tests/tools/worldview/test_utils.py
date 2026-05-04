@@ -24,33 +24,36 @@ class TestLayerFormatting:
             LayerSpec(opacity=0.5)  # type: ignore[call-arg]
 
     def test_all_defaults_renders_bare_id(self):
+        # LAYER_X is a non-base id, so pre-processing prepends a base and appends
+        # default reference overlays. LAYER_X itself still renders bare (no parens).
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X")])
-        assert "l=LAYER_X" in url
+        assert ",LAYER_X," in query_string(url)
+        # No layer in the resulting list has modifiers, so no parens anywhere.
         assert "(" not in query_string(url)
 
     def test_hidden(self):
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", hidden=True)])
-        assert "l=LAYER_X(hidden)" in url
+        assert "LAYER_X(hidden)" in url
 
     def test_opacity(self):
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", opacity=0.7)])
-        assert "l=LAYER_X(opacity=0.7)" in url
+        assert "LAYER_X(opacity=0.7)" in url
 
     def test_palettes(self):
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", palettes=["red", "blue"])])
-        assert "l=LAYER_X(palettes=red,blue)" in url
+        assert "LAYER_X(palettes=red,blue)" in url
 
     def test_style(self):
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", style="vector_style")])
-        assert "l=LAYER_X(style=vector_style)" in url
+        assert "LAYER_X(style=vector_style)" in url
 
     def test_min_max(self):
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", min=0, max=100)])
-        assert "l=LAYER_X(min=0,max=100)" in url
+        assert "LAYER_X(min=0,max=100)" in url
 
     def test_squash(self):
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", squash=True)])
-        assert "l=LAYER_X(squash)" in url
+        assert "LAYER_X(squash)" in url
 
     def test_multiple_modifiers_use_documented_token_order(self):
         # _format_layer order: hidden, opacity, palettes, style, min, max, squash
@@ -65,11 +68,13 @@ class TestLayerFormatting:
                 )
             ]
         )
-        assert "l=LAYER_X(hidden,opacity=0.5,palettes=red,squash)" in url
+        assert "LAYER_X(hidden,opacity=0.5,palettes=red,squash)" in url
 
     def test_multiple_layers_comma_joined(self):
+        # Both LAYER_A and LAYER_B are non-base; canonical reorder keeps user-supplied
+        # order within the overlay partition.
         url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_A"), LayerSpec(id="LAYER_B", opacity=0.5)])
-        assert "l=LAYER_A,LAYER_B(opacity=0.5)" in url
+        assert "LAYER_A,LAYER_B(opacity=0.5)" in url
 
 
 class TestTimeFormatting:
@@ -176,7 +181,8 @@ class TestCompareMode:
             compare_mode="swipe",
             compare_value=50,
         )
-        assert "l1=L_B" in url
+        # B-state list is also pre-processed: base prepended, refs appended.
+        assert ",L_B," in url
         assert "t1=2025-09-14" in url
         assert "ca=true" in url
         assert "cm=swipe" in url
@@ -189,7 +195,7 @@ class TestCompareMode:
             compare_layers=[LayerSpec(id="L_B")],
         )
         assert "ca=false" in url
-        assert "l1=L_B" in url
+        assert ",L_B," in url
 
     def test_gate_off_short_circuits_stray_args(self):
         url = build_worldview_permalink(
@@ -222,7 +228,7 @@ class TestCompareMode:
             compare_layers=[LayerSpec(id="L_B")],
         )
         assert "ca=true" in url
-        assert "l1=L_B" in url
+        assert ",L_B," in url
         assert "t1=" not in query_string(url)
 
 
@@ -278,3 +284,89 @@ class TestChartingMode:
             chart_layer="L_CHART",
         )
         assert "chch=false" in url
+
+
+class TestLayerPreprocessing:
+    """Unconditional pre-processing: auto-add base, auto-append default reference
+    overlays, canonical reorder. Same logic applies to compare_layers."""
+
+    def _layer_list(self, url: str, key: str = "l") -> list[str]:
+        """Extract the comma-separated layer ids from `?<key>=...&...`."""
+        return url.split(f"{key}=")[1].split("&")[0].split(",")
+
+    @pytest.mark.parametrize(
+        "base_id",
+        [
+            "MODIS_Terra_CorrectedReflectance_TrueColor",
+            "MODIS_Aqua_CorrectedReflectance_TrueColor",
+            "VIIRS_SNPP_CorrectedReflectance_TrueColor",
+            "VIIRS_NOAA20_CorrectedReflectance_TrueColor",
+            "VIIRS_NOAA21_CorrectedReflectance_TrueColor",
+        ],
+    )
+    def test_known_base_layer_is_recognised(self, base_id):
+        # When the user supplies any known base, no second base is auto-prepended.
+        url = build_worldview_permalink(layers=[LayerSpec(id=base_id)])
+        ids = self._layer_list(url)
+        bases_in_url = [
+            i
+            for i in ids
+            if i.split("(")[0]
+            in {
+                "MODIS_Terra_CorrectedReflectance_TrueColor",
+                "MODIS_Aqua_CorrectedReflectance_TrueColor",
+                "VIIRS_SNPP_CorrectedReflectance_TrueColor",
+                "VIIRS_NOAA20_CorrectedReflectance_TrueColor",
+                "VIIRS_NOAA21_CorrectedReflectance_TrueColor",
+            }
+        ]
+        assert bases_in_url == [base_id]
+
+    def test_auto_add_base_when_missing(self):
+        # MODIS_Aqua_AOD is an overlay — pre-processor must prepend the default base.
+        url = build_worldview_permalink(layers=[LayerSpec(id="MODIS_Aqua_AOD")])
+        ids = self._layer_list(url)
+        assert ids[0] == "MODIS_Terra_CorrectedReflectance_TrueColor"
+        assert "MODIS_Aqua_AOD" in ids
+
+    def test_auto_append_default_reference_overlays(self):
+        url = build_worldview_permalink(layers=[LayerSpec(id="MODIS_Aqua_AOD")])
+        assert "Coastlines_15m" in url
+        assert "Reference_Features_15m" in url
+
+    def test_partial_reference_overlay_already_present_only_missing_appended(self):
+        # User supplies Coastlines_15m themselves; pre-processor must not duplicate it,
+        # but must still append the missing Reference_Features_15m.
+        url = build_worldview_permalink(layers=[LayerSpec(id="MODIS_Aqua_AOD"), LayerSpec(id="Coastlines_15m")])
+        ids = self._layer_list(url)
+        assert ids.count("Coastlines_15m") == 1
+        assert "Reference_Features_15m" in ids
+
+    def test_canonical_reorder_baselayers_first(self):
+        # User supplies overlay before base; pre-processor moves base to front and
+        # preserves user-supplied order within the overlay partition.
+        url = build_worldview_permalink(
+            layers=[
+                LayerSpec(id="MODIS_Aqua_AOD"),  # overlay
+                LayerSpec(id="VIIRS_NOAA21_CorrectedReflectance_TrueColor"),  # base
+                LayerSpec(id="MODIS_Terra_AOD"),  # overlay
+            ]
+        )
+        ids = self._layer_list(url)
+        assert ids[0] == "VIIRS_NOAA21_CorrectedReflectance_TrueColor"
+        assert ids.index("MODIS_Aqua_AOD") < ids.index("MODIS_Terra_AOD")
+        assert "Coastlines_15m" in ids
+        assert "Reference_Features_15m" in ids
+
+    def test_compare_layers_also_get_pre_processing(self):
+        # compare_layers (B-state) gets the same pre-processing as `layers`.
+        url = build_worldview_permalink(
+            layers=[LayerSpec(id="L_A")],
+            compare_active=True,
+            compare_layers=[LayerSpec(id="L_B")],
+        )
+        b_ids = self._layer_list(url, key="l1")
+        assert b_ids[0] == "MODIS_Terra_CorrectedReflectance_TrueColor"
+        assert "L_B" in b_ids
+        assert "Coastlines_15m" in b_ids
+        assert "Reference_Features_15m" in b_ids

@@ -5,6 +5,18 @@ from urllib.parse import urlencode
 from dateutil import parser as date_parser
 from pydantic import BaseModel, Field
 
+BASE_LAYERS: frozenset[str] = frozenset(
+    {
+        "MODIS_Terra_CorrectedReflectance_TrueColor",
+        "MODIS_Aqua_CorrectedReflectance_TrueColor",
+        "VIIRS_SNPP_CorrectedReflectance_TrueColor",
+        "VIIRS_NOAA20_CorrectedReflectance_TrueColor",
+        "VIIRS_NOAA21_CorrectedReflectance_TrueColor",
+    }
+)
+DEFAULT_BASE_LAYER: str = "MODIS_Terra_CorrectedReflectance_TrueColor"
+DEFAULT_REFERENCE_OVERLAYS: tuple[str, ...] = ("Coastlines_15m", "Reference_Features_15m")
+
 
 class LayerSpec(BaseModel):
     """A single Worldview layer, optionally with rendering modifiers.
@@ -85,6 +97,35 @@ def _format_layer(spec: LayerSpec) -> str:
     return f"{spec.id}({','.join(tokens)})"
 
 
+def _apply_layer_preprocessing(layers: list[LayerSpec]) -> list[LayerSpec]:
+    """Pre-process a layer list before URL emission. Applied unconditionally.
+
+    Three steps:
+      1. Prepend the default base layer if none of the supplied layers' ids are in
+         BASE_LAYERS. Load-bearing — Worldview shows a black background when
+         l= contains only overlays.
+      2. Append default reference overlays (Coastlines_15m, Reference_Features_15m)
+         that aren't already present. Provides land/water clarity + political borders.
+      3. Canonical reorder: baselayers first, overlays after; user-supplied order
+         preserved within each partition.
+
+    Returns a new list; the input is not mutated.
+    """
+    result = list(layers)
+
+    if not any(layer.id in BASE_LAYERS for layer in result):
+        result = [LayerSpec(id=DEFAULT_BASE_LAYER), *result]
+
+    existing_ids = {layer.id for layer in result}
+    for ref_id in DEFAULT_REFERENCE_OVERLAYS:
+        if ref_id not in existing_ids:
+            result.append(LayerSpec(id=ref_id))
+
+    baselayers = [layer for layer in result if layer.id in BASE_LAYERS]
+    overlays = [layer for layer in result if layer.id not in BASE_LAYERS]
+    return [*baselayers, *overlays]
+
+
 def _format_time(t: str | date | datetime | None) -> str | None:
     if t is None:
         return None
@@ -139,10 +180,19 @@ def build_worldview_permalink(
     the tool's input schema.
 
     Args:
-        layers: One or more LayerSpec instances, in render order (top of
-            stack last). Each LayerSpec carries a GIBS layer ID plus
-            optional per-layer modifiers (hidden, opacity, palettes, style,
-            min/max, squash). REQUIRED — at least one layer must be supplied.
+        layers: One or more LayerSpec instances. Each LayerSpec carries a
+            GIBS layer ID plus optional per-layer modifiers (hidden, opacity,
+            palettes, style, min/max, squash). REQUIRED — at least one layer
+            must be supplied. Always pre-processed before URL emission:
+            (1) a default base layer (MODIS Terra True Color) is prepended
+            if none of the supplied layers' ids are in BASE_LAYERS — this
+            is load-bearing because Worldview shows a black background
+            otherwise; (2) the default reference overlays Coastlines_15m
+            and Reference_Features_15m are appended if not already present;
+            (3) the final list is canonically reordered (baselayers first,
+            overlays after) with user-supplied order preserved within each
+            partition. Pre-processing also applies to compare_layers when
+            compare is active.
         projection: Map projection. Use 'geographic' for global Mercator (the
             default), 'arctic' for north polar stereographic, or 'antarctic'
             for south polar stereographic.
@@ -176,7 +226,9 @@ def build_worldview_permalink(
             → ca=false).
         compare_layers: LayerSpec instances for the B state, same shape as
             `layers`. REQUIRED when compare_active is not None; raises
-            ValueError if missing.
+            ValueError if missing. Subject to the same layer pre-processing
+            described under `layers` (default base + reference overlays
+            auto-added; canonical reorder).
         compare_time: Time for the B state, same accepted forms as `time`.
             Optional even when compare is on; if omitted, the B state uses
             the same time as the A state.
@@ -247,6 +299,7 @@ def build_worldview_permalink(
     """
     params: dict[str, str] = {}
 
+    layers = _apply_layer_preprocessing(layers)
     params["l"] = ",".join(_format_layer(s) for s in layers)
 
     if compare_active is not None:
@@ -255,6 +308,7 @@ def build_worldview_permalink(
                 "compare_active is set, so compare_layers is required "
                 "(cannot enable compare mode without a B-state layer list)"
             )
+        compare_layers = _apply_layer_preprocessing(compare_layers)
         params["l1"] = ",".join(_format_layer(s) for s in compare_layers)
 
     if time is None:
