@@ -34,6 +34,8 @@ from akd_ext.agents.image_analyzer import (
     ImageAnalyzerConfig,
     ImageAnalyzerInputSchema,
     ImageAnalyzerOutputSchema,
+    analyze_image_urls,
+    render_markdown,
 )
 
 from akd_ext.agents.closed_loop.cm1 import (
@@ -99,6 +101,8 @@ __all__ = [
     "ImageAnalyzerInputSchema",
     "ImageAnalyzerOutputSchema",
     "FigureAnalysis",
+    "analyze_image_urls",
+    "render_markdown",
     # CM1-specialized agents
     "CM1CapabilityFeasibilityMapperAgent",
     "CM1CapabilityFeasibilityMapperConfig",
