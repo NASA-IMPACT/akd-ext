@@ -28,6 +28,13 @@ from akd_ext.agents.gap import (
     GapAgentOutputSchema,
 )
 
+from akd_ext.agents.ieso.worldview import (
+    IESOWorldviewAgent,
+    IESOWorldviewAgentConfig,
+    IESOWorldviewAgentInputSchema,
+    IESOWorldviewAgentOutputSchema,
+)
+
 from akd_ext.agents.closed_loop.cm1 import (
     CM1CapabilityFeasibilityMapperAgent,
     CM1CapabilityFeasibilityMapperConfig,
@@ -85,6 +92,10 @@ __all__ = [
     "GapAgentConfig",
     "GapAgentInputSchema",
     "GapAgentOutputSchema",
+    "IESOWorldviewAgent",
+    "IESOWorldviewAgentConfig",
+    "IESOWorldviewAgentInputSchema",
+    "IESOWorldviewAgentOutputSchema",
     # CM1-specialized agents
     "CM1CapabilityFeasibilityMapperAgent",
     "CM1CapabilityFeasibilityMapperConfig",
