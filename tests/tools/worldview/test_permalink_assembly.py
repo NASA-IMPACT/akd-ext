@@ -1,14 +1,26 @@
-"""Unit tests for worldview utils module."""
+"""Unit tests for `WorldviewPermalinkTool.build_url` URL-string assembly.
+
+Schema-level validation (gate constraints, range constraints) is covered in
+`test_permalink.py`. Tests here exercise the pure URL-assembly path: pass a
+validated `WorldviewPermalinkInputSchema` into `build_url` and assert on the
+resulting URL.
+"""
 
 from datetime import date, datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
 
-from akd_ext.tools.worldview.utils import (
+from akd_ext.tools.worldview.permalink import (
     LayerSpec,
-    build_worldview_permalink,
+    WorldviewPermalinkInputSchema,
+    WorldviewPermalinkTool,
 )
+
+
+def _build(**kwargs) -> str:
+    """Construct schema + build URL — the standard test-side call pattern."""
+    return WorldviewPermalinkTool.build_url(WorldviewPermalinkInputSchema(**kwargs))
 
 
 def query_string(url: str) -> str:
@@ -26,38 +38,38 @@ class TestLayerFormatting:
     def test_all_defaults_renders_bare_id(self):
         # LAYER_X is a non-base id, so pre-processing prepends a base and appends
         # default reference overlays. LAYER_X itself still renders bare (no parens).
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X")])
+        url = _build(layers=[LayerSpec(id="LAYER_X")])
         assert ",LAYER_X," in query_string(url)
         # No layer in the resulting list has modifiers, so no parens anywhere.
         assert "(" not in query_string(url)
 
     def test_hidden(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", hidden=True)])
+        url = _build(layers=[LayerSpec(id="LAYER_X", hidden=True)])
         assert "LAYER_X(hidden)" in url
 
     def test_opacity(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", opacity=0.7)])
+        url = _build(layers=[LayerSpec(id="LAYER_X", opacity=0.7)])
         assert "LAYER_X(opacity=0.7)" in url
 
     def test_palettes(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", palettes=["red", "blue"])])
+        url = _build(layers=[LayerSpec(id="LAYER_X", palettes=["red", "blue"])])
         assert "LAYER_X(palettes=red,blue)" in url
 
     def test_style(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", style="vector_style")])
+        url = _build(layers=[LayerSpec(id="LAYER_X", style="vector_style")])
         assert "LAYER_X(style=vector_style)" in url
 
     def test_min_max(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", min=0, max=100)])
+        url = _build(layers=[LayerSpec(id="LAYER_X", min=0, max=100)])
         assert "LAYER_X(min=0,max=100)" in url
 
     def test_squash(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_X", squash=True)])
+        url = _build(layers=[LayerSpec(id="LAYER_X", squash=True)])
         assert "LAYER_X(squash)" in url
 
     def test_multiple_modifiers_use_documented_token_order(self):
         # _format_layer order: hidden, opacity, palettes, style, min, max, squash
-        url = build_worldview_permalink(
+        url = _build(
             layers=[
                 LayerSpec(
                     id="LAYER_X",
@@ -73,7 +85,7 @@ class TestLayerFormatting:
     def test_multiple_layers_comma_joined(self):
         # Both LAYER_A and LAYER_B are non-base; canonical reorder keeps user-supplied
         # order within the overlay partition.
-        url = build_worldview_permalink(layers=[LayerSpec(id="LAYER_A"), LayerSpec(id="LAYER_B", opacity=0.5)])
+        url = _build(layers=[LayerSpec(id="LAYER_A"), LayerSpec(id="LAYER_B", opacity=0.5)])
         assert "LAYER_A,LAYER_B(opacity=0.5)" in url
 
 
@@ -81,19 +93,19 @@ class TestTimeFormatting:
     """Time conversion behaviour via the `time` param."""
 
     def test_date_emits_daily_form(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")], time=date(2025, 9, 15))
+        url = _build(layers=[LayerSpec(id="L")], time=date(2025, 9, 15))
         assert "t=2025-09-15" in url
         assert "T" not in url.split("t=")[1].split("&")[0]
 
     def test_datetime_with_time_emits_subdaily(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L")],
             time=datetime(2025, 9, 15, 12, 30, 45),
         )
         assert "t=2025-09-15T12:30:45Z" in url
 
     def test_datetime_at_midnight_emits_daily(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L")],
             time=datetime(2025, 9, 15, 0, 0, 0),
         )
@@ -103,33 +115,33 @@ class TestTimeFormatting:
     def test_tz_aware_datetime_normalised_to_utc(self):
         est = timezone(timedelta(hours=-5))
         dt = datetime(2025, 9, 15, 12, 0, 0, tzinfo=est)
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")], time=dt)
+        url = _build(layers=[LayerSpec(id="L")], time=dt)
         assert "t=2025-09-15T17:00:00Z" in url
 
     def test_string_iso_date(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")], time="2025-09-15")
+        url = _build(layers=[LayerSpec(id="L")], time="2025-09-15")
         assert "t=2025-09-15" in url
 
     def test_string_human_readable(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")], time="September 15, 2025")
+        url = _build(layers=[LayerSpec(id="L")], time="September 15, 2025")
         assert "t=2025-09-15" in url
 
     def test_string_slash_form(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")], time="2025/09/15")
+        url = _build(layers=[LayerSpec(id="L")], time="2025/09/15")
         assert "t=2025-09-15" in url
 
     def test_string_tz_aware_iso_normalises_to_utc(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")], time="2025-09-15T12:00:00-05:00")
+        url = _build(layers=[LayerSpec(id="L")], time="2025-09-15T12:00:00-05:00")
         assert "t=2025-09-15T17:00:00Z" in url
 
     def test_unparseable_string_raises(self):
         with pytest.raises(ValueError, match="banana"):
-            build_worldview_permalink(layers=[LayerSpec(id="L")], time="banana")
+            _build(layers=[LayerSpec(id="L")], time="banana")
 
     def test_none_defaults_to_yesterday_utc(self):
-        # Function defaults `time` to yesterday (UTC) to avoid Worldview's
+        # build_url defaults `time` to yesterday (UTC) to avoid Worldview's
         # partially-rendered "today" scenes.
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")])
+        url = _build(layers=[LayerSpec(id="L")])
         yesterday = (datetime.now(timezone.utc) - timedelta(days=1)).date().isoformat()
         assert f"t={yesterday}" in url
 
@@ -138,18 +150,18 @@ class TestCoreParams:
     """bbox, projection, rotation."""
 
     def test_bbox_round_trip(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L")],
             bbox=(-125, 32, -114, 42),
         )
         assert "v=-125,32,-114,42" in url
 
     def test_projection_default_is_geographic(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")])
+        url = _build(layers=[LayerSpec(id="L")])
         assert "p=geographic" in url
 
     def test_projection_arctic_with_rotation(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L")],
             projection="arctic",
             rotation=45,
@@ -158,13 +170,13 @@ class TestCoreParams:
         assert "r=45" in url
 
     def test_no_rotation_omits_param(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")])
+        url = _build(layers=[LayerSpec(id="L")])
         assert "r=" not in query_string(url)
 
     def test_embed_mode_always_emitted(self):
         # Embed mode is unconditional — em=true must appear on every URL so
         # the link renders cleanly in chat / iframe contexts.
-        url = build_worldview_permalink(layers=[LayerSpec(id="L")])
+        url = _build(layers=[LayerSpec(id="L")])
         assert "em=true" in url
 
 
@@ -172,7 +184,7 @@ class TestCompareMode:
     """compare_active gate behaviour."""
 
     def test_gate_on_a_side_emits_full_block(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L_A")],
             time="2025-09-15",
             compare_active=True,
@@ -189,7 +201,7 @@ class TestCompareMode:
         assert "cv=50" in url
 
     def test_gate_on_b_side_emits_ca_false(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L_A")],
             compare_active=False,
             compare_layers=[LayerSpec(id="L_B")],
@@ -198,7 +210,7 @@ class TestCompareMode:
         assert ",L_B," in url
 
     def test_gate_off_short_circuits_stray_args(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L_A")],
             compare_active=None,
             compare_layers=[LayerSpec(id="L_B")],
@@ -213,16 +225,8 @@ class TestCompareMode:
         assert "cm=" not in qs
         assert "cv=" not in qs
 
-    def test_gate_on_without_compare_layers_raises(self):
-        with pytest.raises(ValueError, match="compare_layers is required"):
-            build_worldview_permalink(
-                layers=[LayerSpec(id="L_A")],
-                compare_active=True,
-                compare_layers=None,
-            )
-
     def test_compare_time_is_optional_when_gate_on(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L_A")],
             compare_active=True,
             compare_layers=[LayerSpec(id="L_B")],
@@ -236,7 +240,7 @@ class TestChartingMode:
     """chart_active gate behaviour."""
 
     def test_gate_on_emits_full_block(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L")],
             chart_active=True,
             chart_layer="L_CHART",
@@ -253,7 +257,7 @@ class TestChartingMode:
         assert "chch=true" in url
 
     def test_gate_off_short_circuits_stray_args(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L")],
             chart_active=False,
             chart_layer="L_CHART",
@@ -269,16 +273,8 @@ class TestChartingMode:
         assert "cht2=" not in qs
         assert "chch=" not in qs
 
-    def test_gate_on_without_chart_layer_raises(self):
-        with pytest.raises(ValueError, match="chart_layer is required"):
-            build_worldview_permalink(
-                layers=[LayerSpec(id="L")],
-                chart_active=True,
-                chart_layer=None,
-            )
-
     def test_chart_autoload_default_false(self):
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L")],
             chart_active=True,
             chart_layer="L_CHART",
@@ -306,7 +302,7 @@ class TestLayerPreprocessing:
     )
     def test_known_base_layer_is_recognised(self, base_id):
         # When the user supplies any known base, no second base is auto-prepended.
-        url = build_worldview_permalink(layers=[LayerSpec(id=base_id)])
+        url = _build(layers=[LayerSpec(id=base_id)])
         ids = self._layer_list(url)
         bases_in_url = [
             i
@@ -324,20 +320,20 @@ class TestLayerPreprocessing:
 
     def test_auto_add_base_when_missing(self):
         # MODIS_Aqua_AOD is an overlay — pre-processor must prepend the default base.
-        url = build_worldview_permalink(layers=[LayerSpec(id="MODIS_Aqua_AOD")])
+        url = _build(layers=[LayerSpec(id="MODIS_Aqua_AOD")])
         ids = self._layer_list(url)
         assert ids[0] == "MODIS_Terra_CorrectedReflectance_TrueColor"
         assert "MODIS_Aqua_AOD" in ids
 
     def test_auto_append_default_reference_overlays(self):
-        url = build_worldview_permalink(layers=[LayerSpec(id="MODIS_Aqua_AOD")])
+        url = _build(layers=[LayerSpec(id="MODIS_Aqua_AOD")])
         assert "Coastlines_15m" in url
         assert "Reference_Features_15m" in url
 
     def test_partial_reference_overlay_already_present_only_missing_appended(self):
         # User supplies Coastlines_15m themselves; pre-processor must not duplicate it,
         # but must still append the missing Reference_Features_15m.
-        url = build_worldview_permalink(layers=[LayerSpec(id="MODIS_Aqua_AOD"), LayerSpec(id="Coastlines_15m")])
+        url = _build(layers=[LayerSpec(id="MODIS_Aqua_AOD"), LayerSpec(id="Coastlines_15m")])
         ids = self._layer_list(url)
         assert ids.count("Coastlines_15m") == 1
         assert "Reference_Features_15m" in ids
@@ -345,7 +341,7 @@ class TestLayerPreprocessing:
     def test_canonical_reorder_baselayers_first(self):
         # User supplies overlay before base; pre-processor moves base to front and
         # preserves user-supplied order within the overlay partition.
-        url = build_worldview_permalink(
+        url = _build(
             layers=[
                 LayerSpec(id="MODIS_Aqua_AOD"),  # overlay
                 LayerSpec(id="VIIRS_NOAA21_CorrectedReflectance_TrueColor"),  # base
@@ -360,7 +356,7 @@ class TestLayerPreprocessing:
 
     def test_compare_layers_also_get_pre_processing(self):
         # compare_layers (B-state) gets the same pre-processing as `layers`.
-        url = build_worldview_permalink(
+        url = _build(
             layers=[LayerSpec(id="L_A")],
             compare_active=True,
             compare_layers=[LayerSpec(id="L_B")],

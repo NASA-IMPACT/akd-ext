@@ -1,27 +1,92 @@
 """AKD Tool for the NASA Worldview permalink builder.
 
-Wraps `build_worldview_permalink` from `utils.py` as a `BaseTool`. Field descriptions on the input
-schema are written as agent-facing guidance and mirror the docstring of the
-underlying function.
+URL-assembly helpers and the public `build_url` live as static/classmethods on the tool class.
+Field descriptions on the input schema are written as agent-facing guidance.
 """
 
 import os
-from datetime import date, datetime
+from datetime import date, datetime, timedelta, timezone
 from typing import Literal, Self
+from urllib.parse import urlencode
 
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
-from pydantic import Field, model_validator
+from dateutil import parser as date_parser
+from pydantic import BaseModel, Field, model_validator
 
 from akd_ext.mcp import mcp_tool
-from akd_ext.tools.worldview.utils import LayerSpec, build_worldview_permalink
+
+DEFAULT_BASE_URL = "https://worldview.earthdata.nasa.gov/"
+
+BASE_LAYERS: tuple[str, ...] = (
+    "MODIS_Terra_CorrectedReflectance_TrueColor",
+    "MODIS_Aqua_CorrectedReflectance_TrueColor",
+    "VIIRS_SNPP_CorrectedReflectance_TrueColor",
+    "VIIRS_NOAA20_CorrectedReflectance_TrueColor",
+    "VIIRS_NOAA21_CorrectedReflectance_TrueColor",
+)
+BASE_LAYERS_SET: frozenset[str] = frozenset(BASE_LAYERS)
+DEFAULT_BASE_LAYER: str = BASE_LAYERS[0]
+DEFAULT_REFERENCE_OVERLAYS: tuple[str, ...] = ("Coastlines_15m", "Reference_Features_15m")
+
+
+class LayerSpec(BaseModel):
+    """A single Worldview layer, optionally with rendering modifiers.
+
+    Field defaults match Worldview's own defaults; omitted fields are not
+    emitted into the URL.
+    """
+
+    id: str = Field(
+        ...,
+        description=(
+            "GIBS layer identifier (e.g. 'MODIS_Terra_CorrectedReflectance_TrueColor', "
+            "'VIIRS_SNPP_AOD'). Stable strings published by NASA's GIBS service."
+        ),
+    )
+    hidden: bool = Field(
+        default=False,
+        description=(
+            "If True, the layer is included in the layer stack but rendered invisibly. "
+            "Useful for pre-loading toggleable layers without rebuilding the link."
+        ),
+    )
+    opacity: float | None = Field(
+        default=None,
+        description="Layer opacity, 0.0 (fully transparent) to 1.0 (fully opaque). None for full opacity.",
+    )
+    palettes: list[str] | None = Field(
+        default=None,
+        description=(
+            "Custom palette IDs to apply, in order. Only meaningful for raster layers that support palette swapping."
+        ),
+    )
+    style: str | None = Field(
+        default=None,
+        description="Vector style ID. Only meaningful for vector layers.",
+    )
+    min: float | None = Field(
+        default=None,
+        description="Lower bound of the palette/data range. Set together with `max` to clamp the visible range.",
+    )
+    max: float | None = Field(
+        default=None,
+        description="Upper bound of the palette/data range.",
+    )
+    squash: bool = Field(
+        default=False,
+        description=(
+            "If True, the palette is squashed to the designated min/max values "
+            "rather than spanning the layer's full data range."
+        ),
+    )
 
 
 class WorldviewPermalinkToolConfig(BaseToolConfig):
     """Configuration for the WorldviewPermalinkTool Tool."""
 
     base_url: str = Field(
-        default=os.getenv("WORLDVIEW_BASE_URL", "https://worldview.earthdata.nasa.gov/"),
+        default=os.getenv("WORLDVIEW_BASE_URL", DEFAULT_BASE_URL),
         description="Base URL for the NASA WORLDVIEW",
     )
 
@@ -186,8 +251,9 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
     string assembly.
 
     Use this tool after a dataset has been confirmed with the user, to produce
-    the visualization link the user will open. The IESO Worldview agent calls
-    this in its "Visualization Construction" and "Analysis Support" steps.
+    the visualization link the user will open.
+    p.s. The IESO Worldview agent calls this in its "Visualization Construction" and
+    "Analysis Support" steps.
 
     Required:
     - layers: at least one LayerSpec (GIBS layer ID + optional rendering modifiers)
@@ -199,7 +265,7 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
     block is silently ignored when the gate is off):
     - Comparison: set compare_active=True (A side) or False (B side) and
       provide compare_layers; optionally compare_time / compare_mode /
-      compare_value. TODO: make this a boolean on and off.
+      compare_value.
     - Charting: set chart_active=True and provide chart_layer; optionally
       chart_area / chart_time_start / chart_time_end / chart_autoload.
     """
@@ -209,24 +275,167 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
     config_schema = WorldviewPermalinkToolConfig
 
     async def _arun(self, params: WorldviewPermalinkInputSchema) -> WorldviewPermalinkOutputSchema:
-        url = build_worldview_permalink(
-            base_url=self.config.base_url,
-            layers=params.layers,
-            projection=params.projection,
-            time=params.time,
-            bbox=params.bbox,
-            rotation=params.rotation,
-            compare_active=params.compare_active,
-            compare_layers=params.compare_layers,
-            compare_time=params.compare_time,
-            compare_mode=params.compare_mode,
-            compare_value=params.compare_value,
-            chart_active=params.chart_active,
-            chart_layer=params.chart_layer,
-            chart_area=params.chart_area,
-            chart_time_start=params.chart_time_start,
-            chart_time_end=params.chart_time_end,
-            chart_autoload=params.chart_autoload,
+        return WorldviewPermalinkOutputSchema(url=self.build_url(params, self.config.base_url))
+
+    @classmethod
+    def build_url(cls, params: WorldviewPermalinkInputSchema, base_url: str = DEFAULT_BASE_URL) -> str:
+        """Pure URL-string assembly from a validated input schema. No I/O.
+
+        The schema's `_enforce_feature_gates` validator guarantees the
+        compare/chart not-None invariants before this method runs, so the body
+        does not re-check them.
+        """
+        out: dict[str, str] = {}
+
+        layers = cls._apply_layer_preprocessing(params.layers)
+        out["l"] = ",".join(cls._format_layer(s) for s in layers)
+
+        if params.compare_active is not None:
+            assert params.compare_layers is not None
+            compare_layers = cls._apply_layer_preprocessing(params.compare_layers)
+            out["l1"] = ",".join(cls._format_layer(s) for s in compare_layers)
+
+        time_value = params.time if params.time is not None else (datetime.now(timezone.utc) - timedelta(days=1)).date()
+        if (formatted := cls._format_time(time_value)) is not None:
+            out["t"] = formatted
+
+        if params.compare_active is not None and (formatted := cls._format_time(params.compare_time)) is not None:
+            out["t1"] = formatted
+
+        if params.bbox is not None:
+            out["v"] = ",".join(cls._fmt_num(x) for x in params.bbox)
+
+        out["p"] = params.projection
+
+        if params.rotation is not None:
+            out["r"] = cls._fmt_num(params.rotation)
+
+        if params.compare_active is not None:
+            out["ca"] = "true" if params.compare_active else "false"
+            out["cm"] = params.compare_mode
+            out["cv"] = str(params.compare_value)
+
+        if params.chart_active:
+            assert params.chart_layer is not None
+            out["cha"] = "true"
+            out["chl"] = params.chart_layer
+            if params.chart_area is not None:
+                out["chc"] = ",".join(cls._fmt_num(x) for x in params.chart_area)
+            if (formatted := cls._format_time(params.chart_time_start)) is not None:
+                out["cht"] = formatted
+            if (formatted := cls._format_time(params.chart_time_end)) is not None:
+                out["cht2"] = formatted
+            out["chch"] = "true" if params.chart_autoload else "false"
+
+        out["em"] = "true"
+        return f"{base_url}?{urlencode(out, safe=',()=:')}"
+
+    # -----------------------------------------------------------------------------
+    # Utility static methods
+    # -----------------------------------------------------------------------------
+
+    @staticmethod
+    def _fmt_num(n: float | int) -> str:
+        if isinstance(n, float) and n.is_integer():
+            return str(int(n))
+        return str(n)
+
+    @classmethod
+    def _format_layer(cls, spec: LayerSpec) -> str:
+        tokens: list[str] = []
+        if spec.hidden:
+            tokens.append("hidden")
+        if spec.opacity is not None:
+            tokens.append(f"opacity={cls._fmt_num(spec.opacity)}")
+        if spec.palettes:
+            tokens.append(f"palettes={','.join(spec.palettes)}")
+        if spec.style is not None:
+            tokens.append(f"style={spec.style}")
+        if spec.min is not None:
+            tokens.append(f"min={cls._fmt_num(spec.min)}")
+        if spec.max is not None:
+            tokens.append(f"max={cls._fmt_num(spec.max)}")
+        if spec.squash:
+            tokens.append("squash")
+        if not tokens:
+            return spec.id
+        return f"{spec.id}({','.join(tokens)})"
+
+    @staticmethod
+    def _apply_layer_preprocessing(layers: list[LayerSpec]) -> list[LayerSpec]:
+        """Pre-process a layer list before URL emission. Applied unconditionally.
+
+        Three steps:
+          1. Prepend the default base layer if none of the supplied layers' ids are in
+             BASE_LAYERS_SET. Load-bearing — Worldview shows a black background when
+             l= contains only overlays.
+          2. Append default reference overlays (Coastlines_15m, Reference_Features_15m)
+             that aren't already present. Provides land/water clarity + political borders.
+          3. Canonical reorder: baselayers first, overlays after; user-supplied order
+             preserved within each partition.
+
+        Returns a new list; the input is not mutated.
+        """
+        result = list(layers)
+
+        if not any(layer.id in BASE_LAYERS_SET for layer in result):
+            result = [LayerSpec(id=DEFAULT_BASE_LAYER), *result]
+
+        existing_ids = {layer.id for layer in result}
+        for ref_id in DEFAULT_REFERENCE_OVERLAYS:
+            if ref_id not in existing_ids:
+                result.append(LayerSpec(id=ref_id))
+
+        baselayers = [layer for layer in result if layer.id in BASE_LAYERS_SET]
+        overlays = [layer for layer in result if layer.id not in BASE_LAYERS_SET]
+        return [*baselayers, *overlays]
+
+    @staticmethod
+    def _format_time(t: str | date | datetime | None) -> str | None:
+        if t is None:
+            return None
+        if isinstance(t, str):
+            try:
+                t = date_parser.parse(t)
+            except (ValueError, OverflowError) as e:
+                raise ValueError(f"Could not parse time {t!r}: {e}") from e
+        if isinstance(t, datetime):
+            if t.tzinfo is not None:
+                t = t.astimezone(timezone.utc)
+            if t.time() == datetime.min.time():
+                return t.date().isoformat()
+            return t.strftime("%Y-%m-%dT%H:%M:%SZ")
+        if isinstance(t, date):
+            return t.isoformat()
+        raise TypeError(f"Unsupported time type: {type(t).__name__}")
+
+
+if __name__ == "__main__":
+    core = WorldviewPermalinkTool.build_url(
+        WorldviewPermalinkInputSchema(
+            layers=[LayerSpec(id="MODIS_Terra_CorrectedReflectance_TrueColor")],
+            time="2025-09-15",
+            bbox=(-125, 32, -114, 42),
         )
-        # validate the url, throw proper error
-        return WorldviewPermalinkOutputSchema(url=url)
+    )
+    print("Core:", core)
+
+    rich = WorldviewPermalinkTool.build_url(
+        WorldviewPermalinkInputSchema(
+            layers=[LayerSpec(id="MODIS_Terra_AOD", opacity=0.8)],
+            time="September 15, 2025",
+            bbox=(-125, 32, -114, 42),
+            compare_active=True,
+            compare_layers=[LayerSpec(id="MODIS_Aqua_AOD")],
+            compare_time="2025-09-14",
+            compare_mode="swipe",
+            compare_value=60,
+            chart_active=True,
+            chart_layer="MODIS_Terra_AOD",
+            chart_area=(-125, 32, -114, 42),
+            chart_time_start="2025-09-01",
+            chart_time_end="2025-09-30",
+            chart_autoload=True,
+        )
+    )
+    print("Rich:", rich)
