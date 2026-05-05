@@ -12,9 +12,13 @@ from urllib.parse import urlencode
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool, BaseToolConfig
 from dateutil import parser as date_parser
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 from akd_ext.mcp import mcp_tool
+
+# -----------------------------------------------------------------------------
+# Module global variables
+# -----------------------------------------------------------------------------
 
 DEFAULT_BASE_URL = "https://worldview.earthdata.nasa.gov/"
 
@@ -28,6 +32,47 @@ BASE_LAYERS: tuple[str, ...] = (
 BASE_LAYERS_SET: frozenset[str] = frozenset(BASE_LAYERS)
 DEFAULT_BASE_LAYER: str = BASE_LAYERS[0]
 DEFAULT_REFERENCE_OVERLAYS: tuple[str, ...] = ("Coastlines_15m", "Reference_Features_15m")
+
+_FORBIDDEN_LAYER_CHARS: frozenset[str] = frozenset(",()")
+
+
+# -----------------------------------------------------------------------------
+# Input/Output Schema with Validators
+# -----------------------------------------------------------------------------
+
+
+def _reject_grammar_chars(value: str, field_name: str) -> str:
+    """Reject ',', '(', ')' — reserved by Worldview's layer-list grammar.
+
+    The URL format `l=LayerID(mod,mod),LayerID2` uses these characters as
+    structural delimiters; embedding them inside an ID, style, or palette
+    silently corrupts the URL when Worldview parses it back.
+    """
+    bad = _FORBIDDEN_LAYER_CHARS.intersection(value)
+    if bad:
+        raise ValueError(
+            f"{field_name}={value!r} contains forbidden character(s) {sorted(bad)}; "
+            f"',', '(', and ')' are reserved by Worldview's layer-list grammar"
+        )
+    return value
+
+
+def _coerce_to_datetime(t: str | date | datetime) -> datetime:
+    """Best-effort coerce a time value to a TZ-aware UTC datetime for comparison.
+
+    Used in model validator during time comparision to check semantics.
+    """
+    if isinstance(t, str):
+        try:
+            t = date_parser.parse(t)
+        except (ValueError, OverflowError) as e:
+            raise ValueError(f"could not parse time {t!r}: {e}") from e
+    # datetime is a subclass of date — check it first
+    if isinstance(t, datetime):
+        return t if t.tzinfo else t.replace(tzinfo=timezone.utc)
+    if isinstance(t, date):
+        return datetime.combine(t, datetime.min.time(), tzinfo=timezone.utc)
+    raise TypeError(f"unsupported time type: {type(t).__name__}")
 
 
 class LayerSpec(BaseModel):
@@ -53,6 +98,8 @@ class LayerSpec(BaseModel):
     )
     opacity: float | None = Field(
         default=None,
+        ge=0.0,
+        le=1.0,
         description="Layer opacity, 0.0 (fully transparent) to 1.0 (fully opaque). None for full opacity.",
     )
     palettes: list[str] | None = Field(
@@ -81,14 +128,20 @@ class LayerSpec(BaseModel):
         ),
     )
 
+    @field_validator("id", "style")
+    @classmethod
+    def _check_string_field(cls, v: str | None, info: ValidationInfo) -> str | None:
+        if v is not None:
+            _reject_grammar_chars(v, info.field_name)
+        return v
 
-class WorldviewPermalinkToolConfig(BaseToolConfig):
-    """Configuration for the WorldviewPermalinkTool Tool."""
-
-    base_url: str = Field(
-        default=os.getenv("WORLDVIEW_BASE_URL", DEFAULT_BASE_URL),
-        description="Base URL for the NASA WORLDVIEW",
-    )
+    @field_validator("palettes")
+    @classmethod
+    def _check_palettes(cls, v: list[str] | None) -> list[str] | None:
+        if v is not None:
+            for item in v:
+                _reject_grammar_chars(item, "palettes")
+        return v
 
 
 class WorldviewPermalinkInputSchema(InputSchema):
@@ -134,6 +187,8 @@ class WorldviewPermalinkInputSchema(InputSchema):
     )
     rotation: float | None = Field(
         default=None,
+        ge=-180.0,
+        le=180.0,
         description=(
             "Map rotation in degrees, range -180 to 180. Honored only by arctic/"
             "antarctic projections; ignored by geographic."
@@ -217,6 +272,13 @@ class WorldviewPermalinkInputSchema(InputSchema):
         ),
     )
 
+    @field_validator("chart_layer")
+    @classmethod
+    def _check_chart_layer(cls, v: str | None) -> str | None:
+        if v is not None:
+            _reject_grammar_chars(v, "chart_layer")
+        return v
+
     @model_validator(mode="after")
     def _enforce_feature_gates(self) -> Self:
         if self.compare_active is not None and self.compare_layers is None:
@@ -230,6 +292,43 @@ class WorldviewPermalinkInputSchema(InputSchema):
             )
         return self
 
+    @model_validator(mode="after")
+    def _validate_semantics(self) -> Self:
+        if self.bbox is not None:
+            west, south, east, north = self.bbox
+            if south >= north:
+                raise ValueError(f"bbox south ({south}) must be < north ({north})")
+            if west == east:
+                raise ValueError(f"bbox west ({west}) must differ from east ({east}); zero-width bbox is invalid")
+            # west > east is allowed (antimeridian crossing in geographic projection)
+            if self.projection == "geographic":
+                if not (-180 <= west <= 180 and -180 <= east <= 180):
+                    raise ValueError(f"bbox lon out of [-180, 180] for geographic projection: {self.bbox}")
+                if not (-90 <= south <= 90 and -90 <= north <= 90):
+                    raise ValueError(f"bbox lat out of [-90, 90] for geographic projection: {self.bbox}")
+
+        if self.chart_active and self.chart_area is not None:
+            x1, y1, x2, y2 = self.chart_area
+            if y1 >= y2:
+                raise ValueError(f"chart_area y1 ({y1}) must be < y2 ({y2})")
+            if x1 == x2:
+                raise ValueError(f"chart_area x1 ({x1}) must differ from x2 ({x2}); zero-width area is invalid")
+            if self.projection == "geographic":
+                if not (-180 <= x1 <= 180 and -180 <= x2 <= 180):
+                    raise ValueError(f"chart_area lon out of [-180, 180] for geographic projection: {self.chart_area}")
+                if not (-90 <= y1 <= 90 and -90 <= y2 <= 90):
+                    raise ValueError(f"chart_area lat out of [-90, 90] for geographic projection: {self.chart_area}")
+
+        if self.chart_time_start is not None and self.chart_time_end is not None:
+            start = _coerce_to_datetime(self.chart_time_start)
+            end = _coerce_to_datetime(self.chart_time_end)
+            if start > end:
+                raise ValueError(
+                    f"chart_time_start ({self.chart_time_start}) must be <= chart_time_end ({self.chart_time_end})"
+                )
+
+        return self
+
 
 class WorldviewPermalinkOutputSchema(OutputSchema):
     """Output schema for the Worldview Permalink Tool."""
@@ -238,6 +337,25 @@ class WorldviewPermalinkOutputSchema(OutputSchema):
         ...,
         description="A complete NASA Worldview permalink URL that opens the map at the requested state.",
     )
+
+
+# -----------------------------------------------------------------------------
+# Tool Configuration
+# -----------------------------------------------------------------------------
+
+
+class WorldviewPermalinkToolConfig(BaseToolConfig):
+    """Configuration for the WorldviewPermalinkTool Tool."""
+
+    base_url: str = Field(
+        default=os.getenv("WORLDVIEW_BASE_URL", DEFAULT_BASE_URL),
+        description="Base URL for the NASA WORLDVIEW",
+    )
+
+
+# -----------------------------------------------------------------------------
+# Permalink generation (mcp) Tool
+# -----------------------------------------------------------------------------
 
 
 @mcp_tool
