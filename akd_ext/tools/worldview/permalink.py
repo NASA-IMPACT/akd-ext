@@ -531,7 +531,7 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
 if __name__ == "__main__":
     core = WorldviewPermalinkTool.build_url(
         WorldviewPermalinkInputSchema(
-            layers=[LayerSpec(id="MODIS_Terra_CorrectedReflectance_TrueColor")],
+            layers=[LayerSpec(id="MODIS_Terra_CorrectedReflectance_TrueColor"), LayerSpec(id="MODIS_Aqua_Aerosol")],
             time="2025-09-15",
             bbox=(-125, 32, -114, 42),
         )
@@ -540,16 +540,16 @@ if __name__ == "__main__":
 
     rich = WorldviewPermalinkTool.build_url(
         WorldviewPermalinkInputSchema(
-            layers=[LayerSpec(id="MODIS_Terra_AOD", opacity=0.8)],
+            layers=[LayerSpec(id="MODIS_Aqua_Aerosol", opacity=0.8)],
             time="September 15, 2025",
             bbox=(-125, 32, -114, 42),
             compare_active=True,
-            compare_layers=[LayerSpec(id="MODIS_Aqua_AOD")],
+            compare_layers=[LayerSpec(id="MODIS_Aqua_Aerosol")],
             compare_time="2025-09-14",
             compare_mode="swipe",
             compare_value=60,
             chart_active=True,
-            chart_layer="MODIS_Terra_AOD",
+            chart_layer="MODIS_Aqua_Aerosol",
             chart_area=(-125, 32, -114, 42),
             chart_time_start="2025-09-01",
             chart_time_end="2025-09-30",
