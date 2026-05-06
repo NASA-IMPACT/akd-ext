@@ -1,34 +1,47 @@
 """Generic Image Analyzer Agent.
 
 Analyzes remote images and returns one structured :class:`FigureAnalysis` per
-image.  The agent class is a zero-override config holder (like ``GapAgent``).
-All orchestration — downloading, batching, calling ``responses.parse`` — lives
-in the external :func:`analyze_image_urls` helper.
+image.  Callers use ``agent.arun(params)`` or
+``async for event in agent.astream(params)`` like any other agent.
+
+Internally URLs are chunked by ``batch_size``, downloaded, base64-encoded, and
+sent to ``responses.parse`` for structured output.  ``_astream`` yields
+temporally consistent events: one starting event, per-batch partial events,
+one final completed event.
 """
 
 from __future__ import annotations
 
 import base64
-import tempfile
-from pathlib import Path
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 from loguru import logger
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
-from akd._base import InputSchema, OutputSchema, TextOutput
+from akd._base import (
+    CompletedEvent,
+    CompletedEventData,
+    InputSchema,
+    OutputSchema,
+    PartialEventData,
+    PartialOutputEvent,
+    RunContext,
+    RunningEvent,
+    StartingEvent,
+    StartingEventData,
+    StreamEvent,
+    TextOutput,
+)
 from akd_ext.agents._base import OpenAIBaseAgent, OpenAIBaseAgentConfig
-from akd_ext.utils import download_images
+from akd_ext.utils import download_image_batch
 
 __all__ = [
-    "FigureAnalysis",
     "ImageAnalyzerAgent",
     "ImageAnalyzerConfig",
     "ImageAnalyzerInputSchema",
     "ImageAnalyzerOutputSchema",
-    "analyze_image_urls",
-    "render_markdown",
 ]
 
 
@@ -240,130 +253,187 @@ class ImageAnalyzerConfig(OpenAIBaseAgentConfig):
     system_prompt: str = Field(default=IMAGE_ANALYZER_SYSTEM_PROMPT)
     model_name: str = Field(default="gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
+    batch_size: int = Field(default=10, ge=1)
     download_concurrency: int = Field(default=8, ge=1)
     download_timeout_seconds: float = Field(default=60.0, gt=0)
 
 
 # -----------------------------------------------------------------------------
-# Agent  (zero-override — config holder only)
+# Agent
 # -----------------------------------------------------------------------------
 
 
 class ImageAnalyzerAgent(
     OpenAIBaseAgent[ImageAnalyzerInputSchema, ImageAnalyzerOutputSchema],
 ):
-    """Image analyzer agent — no method overrides.
+    """Image analyzer with standard ``arun``/``astream`` semantics.
 
-    Use :func:`analyze_image_urls` as the entry point.  The agent object
-    supplies configuration (model, prompt, reasoning effort, concurrency).
+    Callers see one agent: ``StartingEvent → PartialOutputEvent* → CompletedEvent``.
+    Internally URLs are chunked by ``batch_size`` and each chunk is downloaded,
+    base64-encoded, and sent to ``responses.parse`` for structured output.
     """
 
     input_schema = ImageAnalyzerInputSchema
     output_schema = ImageAnalyzerOutputSchema | TextOutput
     config_schema = ImageAnalyzerConfig
 
+    # -- private helpers -----------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# Internal: single-batch LLM call via responses.parse
-# -----------------------------------------------------------------------------
-
-
-async def _analyze_batch(
-    agent: ImageAnalyzerAgent,
-    batch: list[dict[str, Any]],
-    context: str,
-    idx: int,
-    total: int,
-) -> list[FigureAnalysis]:
-    """Send one batch of downloaded images to ``responses.parse``."""
-    content: list[dict[str, Any]] = []
-    if context:
-        content.append({"type": "input_text", "text": f"## Context\n\n{context.strip()}"})
-    content.append({
-        "type": "input_text",
-        "text": f"## Batch {idx} of {total}\n\nReturn one FigureAnalysis per attached image.",
-    })
-    for item in batch:
-        b64 = base64.b64encode(item["bytes"]).decode("ascii")
+    async def _run_batch(
+        self,
+        items: list[dict[str, Any]],
+        context: str,
+        idx: int,
+        total: int,
+    ) -> list[FigureAnalysis]:
+        """Send one batch of downloaded images to the LLM for analysis."""
+        content: list[dict[str, Any]] = []
+        if context:
+            content.append({"type": "input_text", "text": f"## Context\n\n{context.strip()}"})
         content.append({
-            "type": "input_image",
-            "image_url": f"data:{item['mime']};base64,{b64}",
+            "type": "input_text",
+            "text": f"## Batch {idx} of {total}\n\nReturn one FigureAnalysis per attached image.",
         })
-        content.append({"type": "input_text", "text": f"caption: [Image slug: {item['slug']}]"})
+        for item in items:
+            b64 = base64.b64encode(item["bytes"]).decode("ascii")
+            content.append({
+                "type": "input_image",
+                "image_url": f"data:{item['mime']};base64,{b64}",
+            })
+            content.append({"type": "input_text", "text": f"caption: [Image slug: {item['slug']}]"})
 
-    kwargs: dict[str, Any] = {}
-    if agent.config.reasoning_effort is not None:
-        kwargs["reasoning"] = {"effort": agent.config.reasoning_effort}
-    try:
-        resp = await AsyncOpenAI().responses.parse(
-            model=agent.config.model_name,
-            instructions=agent.config.system_prompt,
-            input=[{"role": "user", "content": content}],
-            text_format=_BatchOutput,
-            **kwargs,
-        )
-    except Exception as exc:
-        logger.warning(f"[ImageAnalyzer] batch {idx}/{total} LLM call failed: {exc!r}")
-        return []
+        kwargs: dict[str, Any] = {}
+        if self.config.reasoning_effort is not None:
+            kwargs["reasoning"] = {"effort": self.config.reasoning_effort}
+        try:
+            resp = await AsyncOpenAI().responses.parse(
+                model=self.config.model_name,
+                instructions=self.config.system_prompt,
+                input=[{"role": "user", "content": content}],
+                text_format=_BatchOutput,
+                **kwargs,
+            )
+        except Exception as exc:
+            logger.warning(f"[ImageAnalyzer] batch {idx}/{total} LLM call failed: {exc!r}")
+            return []
 
-    parsed = resp.output_parsed
-    if parsed is None:
-        return []
+        parsed = resp.output_parsed
+        if parsed is None:
+            return []
 
-    slug_to_url = {item["slug"]: item["url"] for item in batch}
-    for a in parsed.analyses:
-        a.url = slug_to_url.get(a.slug, "")
-    return parsed.analyses
+        slug_to_url = {item["slug"]: item["url"] for item in items}
+        for a in parsed.analyses:
+            a.url = slug_to_url.get(a.slug, "")
+        return parsed.analyses
 
+    # -- _arun ---------------------------------------------------------------
 
-# -----------------------------------------------------------------------------
-# External entry point: batch loop
-# -----------------------------------------------------------------------------
+    async def _arun(
+        self, params: ImageAnalyzerInputSchema, run_context: RunContext, **kwargs: Any
+    ) -> ImageAnalyzerOutputSchema | TextOutput:
+        urls = list(dict.fromkeys(params.urls))
+        if not urls:
+            return TextOutput(content="No URLs supplied.")
 
+        bs = self.config.batch_size
+        chunks = [urls[i : i + bs] for i in range(0, len(urls), bs)]
+        all_analyses: list[FigureAnalysis] = []
 
-async def analyze_image_urls(
-    agent: ImageAnalyzerAgent,
-    urls: list[str],
-    context: str = "",
-    batch_size: int = 10,
-) -> ImageAnalyzerOutputSchema:
-    """Download images, loop ``responses.parse`` per batch, concatenate.
+        for idx, chunk in enumerate(chunks, 1):
+            items = await download_image_batch(
+                chunk,
+                concurrency=self.config.download_concurrency,
+                timeout=self.config.download_timeout_seconds,
+            )
+            if not items:
+                logger.warning(f"[ImageAnalyzer] batch {idx}/{len(chunks)}: all downloads failed")
+                continue
+            analyses = await self._run_batch(items, params.context, idx, len(chunks))
+            all_analyses.extend(analyses)
 
-    1. Dedupe URLs preserving order.
-    2. Download all into a temp dir with bounded concurrency.
-    3. Split into batches of *batch_size*.
-    4. Per batch: call ``responses.parse`` for structured output.
-    5. Map slug → url, concatenate, render Markdown.
-    """
-    urls = list(dict.fromkeys(urls))
-    if not urls:
-        return ImageAnalyzerOutputSchema(analyses=[], markdown="No URLs supplied.")
+        if not all_analyses:
+            return TextOutput(content="No figures could be analyzed; check warnings.")
 
-    with tempfile.TemporaryDirectory(prefix="image_analyzer_") as tmp:
-        items = await download_images(
-            urls,
-            Path(tmp),
-            concurrency=agent.config.download_concurrency,
-            timeout=agent.config.download_timeout_seconds,
-        )
-    logger.info(f"[ImageAnalyzer] {len(items)}/{len(urls)} downloads succeeded")
-    if not items:
         return ImageAnalyzerOutputSchema(
-            analyses=[], markdown="All image downloads failed; check warnings.",
+            analyses=all_analyses,
+            markdown=render_markdown(all_analyses, params.context),
         )
 
-    bs = batch_size
-    total = (len(items) + bs - 1) // bs
-    all_analyses: list[FigureAnalysis] = []
-    for i in range(0, len(items), bs):
-        all_analyses.extend(
-            await _analyze_batch(agent, items[i : i + bs], context, i // bs + 1, total)
+    # -- _astream: temporally consistent events ------------------------------
+
+    async def _astream(
+        self, params: ImageAnalyzerInputSchema, run_context: RunContext, **kwargs: Any
+    ) -> AsyncIterator[StreamEvent]:
+        class_name = self.__class__.__name__
+
+        # 1. Starting → Running (matches base class lifecycle)
+        yield StartingEvent(
+            source=class_name,
+            message=f"Starting {class_name}",
+            data=StartingEventData[ImageAnalyzerInputSchema](params=params),
+            run_context=run_context,
+        )
+        yield RunningEvent(
+            source=class_name,
+            message=f"Running {class_name}",
+            run_context=run_context,
         )
 
-    return ImageAnalyzerOutputSchema(
-        analyses=all_analyses,
-        markdown=render_markdown(all_analyses, context),
-    )
+        urls = list(dict.fromkeys(params.urls))
+        if not urls:
+            yield CompletedEvent(
+                source=class_name,
+                message=f"Completed {class_name}",
+                data=CompletedEventData(output=TextOutput(content="No URLs supplied.")),
+                run_context=run_context,
+            )
+            return
+
+        bs = self.config.batch_size
+        chunks = [urls[i : i + bs] for i in range(0, len(urls), bs)]
+        all_analyses: list[FigureAnalysis] = []
+
+        # 2. Process each batch → emit PartialOutputEvent per batch
+        for idx, chunk in enumerate(chunks, 1):
+            items = await download_image_batch(
+                chunk,
+                concurrency=self.config.download_concurrency,
+                timeout=self.config.download_timeout_seconds,
+            )
+            if not items:
+                logger.warning(f"[ImageAnalyzer] batch {idx}/{len(chunks)}: all downloads failed")
+                continue
+            analyses = await self._run_batch(items, params.context, idx, len(chunks))
+            all_analyses.extend(analyses)
+
+            yield PartialOutputEvent(
+                source=class_name,
+                message=f"Batch {idx}/{len(chunks)} complete",
+                data=PartialEventData(
+                    partial_output=ImageAnalyzerOutputSchema(
+                        analyses=list(all_analyses),
+                        markdown="",
+                    ),
+                ),
+                run_context=run_context,
+            )
+
+        # 3. Single final completed event
+        final = ImageAnalyzerOutputSchema(
+            analyses=all_analyses,
+            markdown=render_markdown(all_analyses, params.context),
+        )
+        yield CompletedEvent(
+            source=class_name,
+            message=f"Completed {class_name}",
+            data=CompletedEventData(output=final),
+            run_context=run_context,
+        )
+
+    def check_output(self, output) -> str | None:
+        if isinstance(output, ImageAnalyzerOutputSchema) and not output.analyses:
+            return "No FigureAnalysis entries returned."
+        return super().check_output(output)
 
 
 # -----------------------------------------------------------------------------

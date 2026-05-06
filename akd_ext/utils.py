@@ -62,3 +62,22 @@ async def download_images(
     async with httpx.AsyncClient(follow_redirects=True, timeout=timeout) as client:
         results = await asyncio.gather(*[fetch(client, u) for u in urls])
     return [r for r in results if r is not None]
+
+
+async def download_image_batch(
+    urls: list[str],
+    concurrency: int = 8,
+    timeout: float = 60.0,
+) -> list[dict[str, Any]]:
+    """Download image URLs into a temporary directory.
+
+    Convenience wrapper around :func:`download_images` that manages its own
+    temp directory.  Returns the same list of dicts (``url``, ``slug``,
+    ``bytes``, ``mime``).
+    """
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix="image_batch_") as tmp:
+        return await download_images(
+            urls, Path(tmp), concurrency=concurrency, timeout=timeout,
+        )
