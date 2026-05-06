@@ -6,10 +6,12 @@ Use as fallback when README-based search (RepositorySearchTool) is insufficient.
 """
 
 import os
+import time
 from typing import Any, Literal
 from urllib.parse import urljoin
 
 import httpx
+import logfire
 from loguru import logger
 from pydantic import Field
 
@@ -18,6 +20,7 @@ from akd.structures import SearchResult
 from akd.tools import BaseTool, BaseToolConfig
 
 from akd_ext.mcp import mcp_tool
+from akd_ext.observability import run_tags, scrub_payload
 
 
 class CodeSignalsSearchToolConfig(BaseToolConfig):
@@ -120,7 +123,25 @@ class CodeSignalsSearchTool(BaseTool[CodeSignalsSearchInputSchema, CodeSignalsSe
 
         async with httpx.AsyncClient(timeout=self.config.timeout) as client:
             try:
+                started = time.perf_counter()
                 response = await client.post(url, json=request_body)
+                logfire.info(
+                    "akd_ext.search.code_signals.request",
+                    **scrub_payload(
+                        {
+                            **run_tags(
+                                tool_name=self.__class__.__name__,
+                                control_layer="litellm",
+                                provider_runtime="openai-agents",
+                                repo="akd-ext",
+                            ),
+                            "query": params.query,
+                            "search_type": self.config.search_type,
+                            "status_code": response.status_code,
+                            "duration_ms": int((time.perf_counter() - started) * 1000),
+                        }
+                    ),
+                )
                 response.raise_for_status()
                 data = response.json()
             except httpx.TimeoutException as e:

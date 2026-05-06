@@ -9,6 +9,8 @@ natural language queries.
 import asyncio
 import os
 import httpx
+import time
+import logfire
 from akd._base import InputSchema
 from akd.tools.search import SearchToolOutputSchema
 from akd.structures import SearchResult
@@ -18,6 +20,7 @@ from typing import Literal
 from loguru import logger
 
 from akd_ext.mcp import mcp_tool
+from akd_ext.observability import run_tags, scrub_payload
 from akd_ext.structures import SDEIndexedDocumentType, NASASMDDivision
 
 
@@ -248,9 +251,27 @@ class SDESearchTool(BaseTool[SDESearchToolInputSchema, SDESearchToolOutputSchema
         # Make API request
         async with httpx.AsyncClient(timeout=self.config.timeout) as client:
             try:
+                started = time.perf_counter()
                 response = await client.post(
                     f"{self.config.base_url}/api/search",
                     json=request_body,
+                )
+                logfire.info(
+                    "akd_ext.search.sde.request",
+                    **scrub_payload(
+                        {
+                            **run_tags(
+                                tool_name=self.__class__.__name__,
+                                control_layer="litellm",
+                                provider_runtime="openai-agents",
+                                repo="akd-ext",
+                            ),
+                            "query": params.query,
+                            "search_type": self.config.search_type,
+                            "status_code": response.status_code,
+                            "duration_ms": int((time.perf_counter() - started) * 1000),
+                        }
+                    ),
                 )
                 response.raise_for_status()
                 data = response.json()

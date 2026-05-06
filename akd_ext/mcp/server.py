@@ -1,9 +1,11 @@
 """FastMCP Server for akd-ext tools."""
 
 from fastmcp import FastMCP
+import logfire
 
 from akd_ext.mcp.registry import MCPToolRegistry
 from akd_ext.mcp.converter import tool_converter, register_mcp_tool
+from akd_ext.observability import init_observability, run_tags, scrub_payload
 from akd.tools._base import BaseTool
 
 # Create MCP server
@@ -51,6 +53,20 @@ def register_tools_manually(tools: list[type[BaseTool]]) -> None:
         register_mcp_tool(mcp_func, mcp)
 
 
+init_observability(service_name="akd-ext-mcp")
+logfire.info(
+    "akd_ext.mcp.server.startup",
+    **scrub_payload(
+        {
+            **run_tags(
+                repo="akd-ext",
+                control_layer="litellm",
+                provider_runtime="openai-agents",
+            ),
+            "server_name": "akd-ext-tools",
+        }
+    ),
+)
 register_all_tools()
 # register_tools_manually(tools=[])  # Add tools here if needed
 

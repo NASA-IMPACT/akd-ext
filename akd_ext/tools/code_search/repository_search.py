@@ -1,8 +1,10 @@
 import os
 import asyncio
+import time
 from pydantic import Field, model_validator
 from urllib.parse import urlparse
 from loguru import logger
+import logfire
 
 from akd.tools.search.code_search import (
     SDECodeSearchTool,
@@ -13,6 +15,7 @@ from akd.tools.search.code_search import (
 from akd.structures import SearchResultItem
 
 from akd_ext.mcp import mcp_tool
+from akd_ext.observability import run_tags, scrub_payload
 from .utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
 
 
@@ -99,11 +102,38 @@ class RepositorySearchTool(SDECodeSearchTool):
     config_schema = RepositorySearchToolConfig
 
     async def _arun(self, params: RepositorySearchToolInputSchema) -> RepositorySearchToolOutputSchema:
-        search_result: CodeSearchToolOutputSchema = await super()._arun(params)
-        tasks: list[asyncio.Task] = [
-            self._enrich_code_search_with_metadata(repository_item) for repository_item in search_result.results
-        ]
-        enriched_results: list[RepositorySearchResultItem] = await asyncio.gather(*tasks)
+        started = time.perf_counter()
+        with logfire.span(
+            "akd_ext.search.repository",
+            **run_tags(
+                tool_name=self.__class__.__name__,
+                provider="github",
+                control_layer="litellm",
+                provider_runtime="openai-agents",
+                repo="akd-ext",
+            ),
+        ):
+            search_result: CodeSearchToolOutputSchema = await super()._arun(params)
+            tasks: list[asyncio.Task] = [
+                self._enrich_code_search_with_metadata(repository_item) for repository_item in search_result.results
+            ]
+            enriched_results: list[RepositorySearchResultItem] = await asyncio.gather(*tasks)
+        logfire.info(
+            "akd_ext.search.repository.done",
+            **scrub_payload(
+                {
+                    **run_tags(
+                        tool_name=self.__class__.__name__,
+                        control_layer="litellm",
+                        provider_runtime="openai-agents",
+                        repo="akd-ext",
+                    ),
+                    "query_count": len(params.queries),
+                    "result_count": len(enriched_results),
+                    "duration_ms": int((time.perf_counter() - started) * 1000),
+                }
+            ),
+        )
         repository_search_result: RepositorySearchToolOutputSchema = RepositorySearchToolOutputSchema(
             results=enriched_results, extra=search_result.extra
         )

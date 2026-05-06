@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import time
 import uuid
 from collections.abc import AsyncIterator
 from typing import Any, Literal, cast
@@ -14,6 +15,7 @@ from agents import (
     function_tool,
     trace,
 )
+import logfire
 from agents.stream_events import (
     RawResponsesStreamEvent,
     RunItemStreamEvent,
@@ -63,6 +65,7 @@ from akd_ext.agents._mixins import FileAttachmentMixin
 
 from akd_ext._types import AKDTool, OPENAI_TOOL_TYPES
 from akd_ext.mcp.converter import tool_converter
+from akd_ext.observability import run_tags, scrub_payload
 
 
 class OpenAIBaseAgentConfig(BaseAgentConfig):
@@ -192,6 +195,38 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         super().__init__(config=config, debug=debug)
         self._agent = self._create_agent()
 
+    @staticmethod
+    def _trace_tags(run_context: RunContext, **extra: Any) -> dict[str, Any]:
+        workflow_id = getattr(run_context, "workflow_id", None) or run_context.run_id
+        return run_tags(
+            workflow_id=workflow_id,
+            run_id=run_context.run_id,
+            session_id=getattr(run_context, "session_id", None),
+            request_id=getattr(run_context, "request_id", None),
+            parent_run_id=getattr(run_context, "parent_run_id", None),
+            control_layer=getattr(run_context, "control_layer", None),
+            provider_runtime=getattr(run_context, "provider_runtime", None),
+            repo=getattr(run_context, "repo", None),
+            **extra,
+        )
+
+    def _runtime_run_config(self, run_context: RunContext) -> RunConfig:
+        metadata = dict(self.config.tracing_params or {})
+        workflow_id = getattr(run_context, "workflow_id", None) or run_context.run_id
+        metadata.update(
+            {
+                "workflow_id": workflow_id,
+                "run_id": run_context.run_id,
+                "session_id": getattr(run_context, "session_id", None),
+                "request_id": getattr(run_context, "request_id", None),
+                "parent_run_id": getattr(run_context, "parent_run_id", None),
+                "control_layer": getattr(run_context, "control_layer", None),
+                "provider_runtime": getattr(run_context, "provider_runtime", None),
+                "repo": getattr(run_context, "repo", None),
+            }
+        )
+        return RunConfig(trace_metadata={k: v for k, v in metadata.items() if v is not None})
+
     # ── Agent creation ───────────────────────────────────────────────
 
     def _create_agent(self) -> Agent:
@@ -286,6 +321,22 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                 details=details,
             )
         return run_usage
+
+    @staticmethod
+    def _usage_attributes(run_usage: RunUsage) -> dict[str, int]:
+        """Build normalized token attributes for observability events."""
+        input_tokens = int(getattr(run_usage, "input_tokens", 0) or 0)
+        output_tokens = int(getattr(run_usage, "output_tokens", 0) or 0)
+        details = getattr(run_usage, "details", {}) or {}
+        cached_tokens = int(details.get("input_tokens_details.cached_tokens", 0) or 0)
+        reasoning_tokens = int(details.get("output_tokens_details.reasoning_tokens", 0) or 0)
+        return {
+            "input_tokens": input_tokens,
+            "output_tokens": output_tokens,
+            "total_tokens": input_tokens + output_tokens,
+            "input_tokens_details.cached_tokens": cached_tokens,
+            "output_tokens_details.reasoning_tokens": reasoning_tokens,
+        }
 
     @staticmethod
     def _to_runner_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -442,17 +493,53 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         """Run the agent via Runner.run() and return the RunResult."""
         class_name = self.__class__.__name__
         messages = run_context.messages
+        setattr(run_context, "workflow_id", getattr(run_context, "workflow_id", None) or run_context.run_id)
+        setattr(run_context, "control_layer", getattr(run_context, "control_layer", None) or "litellm")
+        setattr(run_context, "provider_runtime", getattr(run_context, "provider_runtime", None) or "openai-agents")
+        setattr(run_context, "repo", getattr(run_context, "repo", None) or "akd-ext")
 
         self._inject_human_response(messages, run_context)
 
         with trace(class_name):
-            result = await Runner.run(
-                self._agent,
-                input=self._to_runner_input(messages),
-                run_config=self.config.run_config,
-            )
+            started = time.perf_counter()
+            with logfire.span(
+                "akd_ext.agent.run",
+                **self._trace_tags(
+                    run_context,
+                    agent_name=class_name,
+                    model=self.config.model_name,
+                    provider="openai-agents",
+                ),
+            ):
+                result = await Runner.run(
+                    self._agent,
+                    input=self._to_runner_input(messages),
+                    run_config=self._runtime_run_config(run_context),
+                )
             messages[:] = self._from_runner_output(result.to_input_list())
             run_context.usage += self._extract_usage(result.raw_responses)
+            logfire.info(
+                "akd_ext.agent.run.done",
+                **scrub_payload(
+                    {
+                        **run_tags(
+                            workflow_id=getattr(run_context, "workflow_id", None) or run_context.run_id,
+                            run_id=run_context.run_id,
+                            session_id=getattr(run_context, "session_id", None),
+                            request_id=getattr(run_context, "request_id", None),
+                            parent_run_id=getattr(run_context, "parent_run_id", None),
+                            control_layer=getattr(run_context, "control_layer", None),
+                            provider_runtime=getattr(run_context, "provider_runtime", None),
+                            repo=getattr(run_context, "repo", None),
+                            agent_name=class_name,
+                            model=self.config.model_name,
+                            provider="openai-agents",
+                        ),
+                        "duration_ms": int((time.perf_counter() - started) * 1000),
+                        **self._usage_attributes(run_context.usage),
+                    }
+                ),
+            )
             return result
 
     # ── _arun: routes between direct call and streaming engine ───────
@@ -555,6 +642,10 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         """
         class_name = self.__class__.__name__
         messages = run_context.messages
+        setattr(run_context, "workflow_id", getattr(run_context, "workflow_id", None) or run_context.run_id)
+        setattr(run_context, "control_layer", getattr(run_context, "control_layer", None) or "litellm")
+        setattr(run_context, "provider_runtime", getattr(run_context, "provider_runtime", None) or "openai-agents")
+        setattr(run_context, "repo", getattr(run_context, "repo", None) or "akd-ext")
 
         # HITL resume
         human_response = run_context.human_response
@@ -583,207 +674,241 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         current_trace = trace(class_name)
         current_trace.__enter__()
         try:
-            stream = Runner.run_streamed(
-                self._agent,
-                input=self._to_runner_input(messages),
-                run_config=self.config.run_config,
-            )
+            stream_started = time.perf_counter()
+            with logfire.span(
+                "akd_ext.agent.run_streamed",
+                **self._trace_tags(
+                    run_context,
+                    agent_name=class_name,
+                    model=self.config.model_name,
+                    provider="openai-agents",
+                ),
+            ):
+                stream = Runner.run_streamed(
+                    self._agent,
+                    input=self._to_runner_input(messages),
+                    run_config=self._runtime_run_config(run_context),
+                )
 
-            async for event in stream.stream_events():
-                if self.debug:
+                async for event in stream.stream_events():
+                    if self.debug:
+                        if isinstance(event, RawResponsesStreamEvent):
+                            logger.debug(f"[{class_name}] RawEvent: {getattr(event.data, 'type', 'unknown')}")
+                        elif isinstance(event, RunItemStreamEvent):
+                            logger.debug(f"[{class_name}] RunItemEvent: {event.name}")
+
                     if isinstance(event, RawResponsesStreamEvent):
-                        logger.debug(f"[{class_name}] RawEvent: {getattr(event.data, 'type', 'unknown')}")
-                    elif isinstance(event, RunItemStreamEvent):
-                        logger.debug(f"[{class_name}] RunItemEvent: {event.name}")
+                        event_type = getattr(event.data, "type", "")
 
-                if isinstance(event, RawResponsesStreamEvent):
-                    event_type = getattr(event.data, "type", "")
+                        if event_type == "response.output_text.delta":
+                            delta = getattr(event.data, "delta", "") or ""
+                            accumulated += delta
+                            if delta:
+                                yield StreamingTokenEvent(
+                                    source=class_name,
+                                    message=f"Streaming {class_name}",
+                                    data=StreamingEventData(token=delta),
+                                    run_context=run_context,
+                                )
 
-                    if event_type == "response.output_text.delta":
-                        delta = getattr(event.data, "delta", "") or ""
-                        accumulated += delta
-                        if delta:
-                            yield StreamingTokenEvent(
-                                source=class_name,
-                                message=f"Streaming {class_name}",
-                                data=StreamingEventData(token=delta),
-                                run_context=run_context,
-                            )
-
-                        if partial_model is not None:
-                            parsed = self._try_parse_json(accumulated)
-                            if parsed and parsed != last_partial_dict:
-                                last_partial_dict = parsed
-                                try:
-                                    partial = partial_model.model_validate(parsed)
-                                    yield PartialOutputEvent(
-                                        source=class_name,
-                                        message="Partial...",
-                                        data=PartialEventData(partial_output=partial),
-                                        run_context=run_context,
-                                    )
-                                except Exception:
-                                    pass
-
-                    elif event_type == "response.output_text.done":
-                        done_text = getattr(event.data, "text", "") or ""
-                        if done_text and not accumulated:
-                            accumulated = done_text
-
-                    elif "reasoning" in event_type:
-                        content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
-                        if content:
-                            yield ThinkingEvent(
-                                source=class_name,
-                                message="Reasoning...",
-                                data=ThinkingEventData(thinking_content=content),
-                                run_context=run_context,
-                            )
-
-                elif isinstance(event, RunItemStreamEvent):
-                    if event.name == "tool_called":
-                        raw_item = getattr(event.item, "raw_item", None)
-                        if raw_item:
-                            tool_name = getattr(raw_item, "name", "")
-                            tool_input_raw = getattr(raw_item, "arguments", "{}")
-                            tool_input = (
-                                json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
-                            )
-                            tool_call_id = getattr(raw_item, "call_id", None) or getattr(
-                                raw_item, "id", uuid.uuid4().hex[:8]
-                            )
-
-                            # Turn boundary: new tool_called after previous turn's outputs → reset
-                            if current_turn_has_outputs:
-                                current_turn_tool_calls = []
-                                current_turn_has_outputs = False
-
-                            current_turn_tool_calls.append(
-                                {
-                                    "id": tool_call_id,
-                                    "type": "function",
-                                    "function": {"name": tool_name, "arguments": tool_input},
-                                }
-                            )
-                            yield ToolCallingEvent(
-                                source=class_name,
-                                message=f"Calling tool: {tool_name}",
-                                data=ToolCallingEventData(
-                                    tool_call=ToolCall(
-                                        tool_call_id=tool_call_id,
-                                        tool_name=tool_name,
-                                        arguments=tool_input,
-                                    )
-                                ),
-                                run_context=run_context,
-                            )
-
-                            # HostedMCPTool: server-side execution, output on the raw_item itself
-                            if getattr(raw_item, "type", "") == "mcp_call":
-                                mcp_output = getattr(raw_item, "output", None)
-                                if mcp_output is not None:
-                                    if not current_turn_has_outputs and current_turn_tool_calls:
-                                        messages.append(
-                                            {
-                                                "role": "assistant",
-                                                "content": None,
-                                                "tool_calls": list(current_turn_tool_calls),
-                                            }
+                            if partial_model is not None:
+                                parsed = self._try_parse_json(accumulated)
+                                if parsed and parsed != last_partial_dict:
+                                    last_partial_dict = parsed
+                                    try:
+                                        partial = partial_model.model_validate(parsed)
+                                        yield PartialOutputEvent(
+                                            source=class_name,
+                                            message="Partial...",
+                                            data=PartialEventData(partial_output=partial),
+                                            run_context=run_context,
                                         )
-                                        current_turn_has_outputs = True
+                                    except Exception:
+                                        pass
 
-                                    serialized = mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output)
-                                    messages.append(
-                                        {"role": "tool", "tool_call_id": tool_call_id, "content": serialized}
-                                    )
-                                    yield ToolResultEvent(
-                                        source=class_name,
-                                        message="Tool result",
-                                        data=ToolResultEventData(
-                                            result=ToolResult(
-                                                tool_call_id=tool_call_id,
-                                                tool_name=tool_name,
-                                                content=mcp_output,
-                                            )
-                                        ),
-                                        run_context=run_context,
-                                    )
+                        elif event_type == "response.output_text.done":
+                            done_text = getattr(event.data, "text", "") or ""
+                            if done_text and not accumulated:
+                                accumulated = done_text
 
-                            if tool_name == "ask_human":
-                                try:
-                                    human_input = HumanToolInput(**tool_input)
-                                except Exception:
-                                    human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
+                        elif "reasoning" in event_type:
+                            content = getattr(event.data, "content", "") or getattr(event.data, "delta", "") or ""
+                            if content:
+                                yield ThinkingEvent(
+                                    source=class_name,
+                                    message="Reasoning...",
+                                    data=ThinkingEventData(thinking_content=content),
+                                    run_context=run_context,
+                                )
 
-                                messages.append(
+                    elif isinstance(event, RunItemStreamEvent):
+                        if event.name == "tool_called":
+                            raw_item = getattr(event.item, "raw_item", None)
+                            if raw_item:
+                                tool_name = getattr(raw_item, "name", "")
+                                tool_input_raw = getattr(raw_item, "arguments", "{}")
+                                tool_input = (
+                                    json.loads(tool_input_raw) if isinstance(tool_input_raw, str) else tool_input_raw
+                                )
+                                tool_call_id = getattr(raw_item, "call_id", None) or getattr(
+                                    raw_item, "id", uuid.uuid4().hex[:8]
+                                )
+
+                                # Turn boundary: new tool_called after previous turn's outputs → reset
+                                if current_turn_has_outputs:
+                                    current_turn_tool_calls = []
+                                    current_turn_has_outputs = False
+
+                                current_turn_tool_calls.append(
                                     {
-                                        "role": "assistant",
-                                        "content": None,
-                                        "tool_calls": list(current_turn_tool_calls),
+                                        "id": tool_call_id,
+                                        "type": "function",
+                                        "function": {"name": tool_name, "arguments": tool_input},
                                     }
                                 )
-                                run_context.messages = list(messages)
-                                run_context.usage += self._extract_usage(stream.raw_responses)
-                                stream.cancel()
-                                current_trace.finish(reset_current=True)
-                                yield HumanInputRequiredEvent(
+                                yield ToolCallingEvent(
                                     source=class_name,
-                                    message=f"Human input required: {tool_input.get('question', 'Input needed')}",
-                                    data=HumanInputRequiredEventData(
-                                        human_input=human_input,
-                                        tool_call_id=tool_call_id,
-                                        tool_name=tool_name,
+                                    message=f"Calling tool: {tool_name}",
+                                    data=ToolCallingEventData(
+                                        tool_call=ToolCall(
+                                            tool_call_id=tool_call_id,
+                                            tool_name=tool_name,
+                                            arguments=tool_input,
+                                        )
                                     ),
                                     run_context=run_context,
                                 )
-                                return
 
-                    elif event.name == "tool_output":
-                        raw_item = getattr(event.item, "raw_item", None)
-                        tool_output_content = getattr(event.item, "output", None)
-                        tool_call_id = (
-                            raw_item.get("call_id", "")
-                            if isinstance(raw_item, dict)
-                            else getattr(raw_item, "call_id", "")
-                        ) or uuid.uuid4().hex[:8]
-                        if tool_output_content is not None:
-                            if not current_turn_has_outputs and current_turn_tool_calls:
+                                # HostedMCPTool: server-side execution, output on the raw_item itself
+                                if getattr(raw_item, "type", "") == "mcp_call":
+                                    mcp_output = getattr(raw_item, "output", None)
+                                    if mcp_output is not None:
+                                        if not current_turn_has_outputs and current_turn_tool_calls:
+                                            messages.append(
+                                                {
+                                                    "role": "assistant",
+                                                    "content": None,
+                                                    "tool_calls": list(current_turn_tool_calls),
+                                                }
+                                            )
+                                            current_turn_has_outputs = True
+
+                                        serialized = (
+                                            mcp_output if isinstance(mcp_output, str) else json.dumps(mcp_output)
+                                        )
+                                        messages.append(
+                                            {"role": "tool", "tool_call_id": tool_call_id, "content": serialized}
+                                        )
+                                        yield ToolResultEvent(
+                                            source=class_name,
+                                            message="Tool result",
+                                            data=ToolResultEventData(
+                                                result=ToolResult(
+                                                    tool_call_id=tool_call_id,
+                                                    tool_name=tool_name,
+                                                    content=mcp_output,
+                                                )
+                                            ),
+                                            run_context=run_context,
+                                        )
+
+                                if tool_name == "ask_human":
+                                    try:
+                                        human_input = HumanToolInput(**tool_input)
+                                    except Exception:
+                                        human_input = HumanToolInput(question=tool_input.get("question", "Input needed"))
+
+                                    messages.append(
+                                        {
+                                            "role": "assistant",
+                                            "content": None,
+                                            "tool_calls": list(current_turn_tool_calls),
+                                        }
+                                    )
+                                    run_context.messages = list(messages)
+                                    run_context.usage += self._extract_usage(stream.raw_responses)
+                                    stream.cancel()
+                                    current_trace.finish(reset_current=True)
+                                    yield HumanInputRequiredEvent(
+                                        source=class_name,
+                                        message=f"Human input required: {tool_input.get('question', 'Input needed')}",
+                                        data=HumanInputRequiredEventData(
+                                            human_input=human_input,
+                                            tool_call_id=tool_call_id,
+                                            tool_name=tool_name,
+                                        ),
+                                        run_context=run_context,
+                                    )
+                                    return
+
+                        elif event.name == "tool_output":
+                            raw_item = getattr(event.item, "raw_item", None)
+                            tool_output_content = getattr(event.item, "output", None)
+                            tool_call_id = (
+                                raw_item.get("call_id", "")
+                                if isinstance(raw_item, dict)
+                                else getattr(raw_item, "call_id", "")
+                            ) or uuid.uuid4().hex[:8]
+                            if tool_output_content is not None:
+                                if not current_turn_has_outputs and current_turn_tool_calls:
+                                    messages.append(
+                                        {
+                                            "role": "assistant",
+                                            "content": None,
+                                            "tool_calls": list(current_turn_tool_calls),
+                                        }
+                                    )
+                                    current_turn_has_outputs = True
+
+                                serialized = (
+                                    tool_output_content
+                                    if isinstance(tool_output_content, str)
+                                    else json.dumps(tool_output_content)
+                                )
                                 messages.append(
                                     {
-                                        "role": "assistant",
-                                        "content": None,
-                                        "tool_calls": list(current_turn_tool_calls),
+                                        "role": "tool",
+                                        "tool_call_id": tool_call_id,
+                                        "content": serialized,
                                     }
                                 )
-                                current_turn_has_outputs = True
 
-                            serialized = (
-                                tool_output_content
-                                if isinstance(tool_output_content, str)
-                                else json.dumps(tool_output_content)
-                            )
-                            messages.append(
-                                {
-                                    "role": "tool",
-                                    "tool_call_id": tool_call_id,
-                                    "content": serialized,
-                                }
-                            )
+                                yield ToolResultEvent(
+                                    source=class_name,
+                                    message="Tool result",
+                                    data=ToolResultEventData(
+                                        result=ToolResult(
+                                            tool_call_id=tool_call_id,
+                                            tool_name=getattr(raw_item, "name", "unknown"),
+                                            content=tool_output_content,
+                                        )
+                                    ),
+                                    run_context=run_context,
+                                )
 
-                            yield ToolResultEvent(
-                                source=class_name,
-                                message="Tool result",
-                                data=ToolResultEventData(
-                                    result=ToolResult(
-                                        tool_call_id=tool_call_id,
-                                        tool_name=getattr(raw_item, "name", "unknown"),
-                                        content=tool_output_content,
-                                    )
-                                ),
-                                run_context=run_context,
-                            )
-
-            run_context.usage += self._extract_usage(stream.raw_responses)
+                run_context.usage += self._extract_usage(stream.raw_responses)
+            logfire.info(
+                "akd_ext.agent.run_streamed.done",
+                **scrub_payload(
+                    {
+                        **run_tags(
+                            workflow_id=getattr(run_context, "workflow_id", None) or run_context.run_id,
+                            run_id=run_context.run_id,
+                            session_id=getattr(run_context, "session_id", None),
+                            request_id=getattr(run_context, "request_id", None),
+                            parent_run_id=getattr(run_context, "parent_run_id", None),
+                            control_layer=getattr(run_context, "control_layer", None),
+                            provider_runtime=getattr(run_context, "provider_runtime", None),
+                            repo=getattr(run_context, "repo", None),
+                            agent_name=class_name,
+                            model=self.config.model_name,
+                            provider="openai-agents",
+                        ),
+                        "duration_ms": int((time.perf_counter() - stream_started) * 1000),
+                        **self._usage_attributes(run_context.usage),
+                    }
+                ),
+            )
 
             if self.debug:
                 logger.debug(
