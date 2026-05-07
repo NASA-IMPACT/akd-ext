@@ -187,7 +187,7 @@ class TestHelpers:
         assert _coerce_datetime(bad) is None
 
     def test_coerce_bbox_from_list(self) -> None:
-        assert _coerce_bbox([-180, -90, 180, 90]) == (-180.0, -90.0, 180.0, 90.0)
+        assert _coerce_bbox([-180, -90, 180, 90]) == [-180.0, -90.0, 180.0, 90.0]
 
     def test_coerce_bbox_from_dict(self) -> None:
         assert _coerce_bbox(
@@ -197,7 +197,7 @@ class TestHelpers:
                 "MaxLongitude": 180,
                 "MaxLatitude": 90,
             }
-        ) == (-180.0, -90.0, 180.0, 90.0)
+        ) == [-180.0, -90.0, 180.0, 90.0]
 
     @pytest.mark.parametrize(
         "bad",
@@ -232,7 +232,7 @@ class TestNormalizer:
         assert mapping.subtitle == "AIRS / Aqua"
         assert mapping.measurement == "Carbon Monoxide"
         assert mapping.daynight == "Day"
-        assert mapping.spatial_coverage == (-180.0, -90.0, 180.0, 90.0)
+        assert mapping.spatial_coverage == [-180.0, -90.0, 180.0, 90.0]
         assert mapping.temporal_start == datetime(2002, 8, 30, tzinfo=timezone.utc)
         assert mapping.temporal_end == datetime(2024, 12, 31, 23, 59, 59, tzinfo=timezone.utc)
         assert mapping.ongoing is True

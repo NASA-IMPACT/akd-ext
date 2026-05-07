@@ -124,9 +124,11 @@ class LayerMapping(BaseModel):
         description="'Day' / 'Night' / 'Both' — daynight discrimination.",
     )
 
-    spatial_coverage: tuple[float, float, float, float] | None = Field(
+    spatial_coverage: list[float] | None = Field(
         None,
-        description="WGS84 bounding box: (west, south, east, north).",
+        min_length=4,
+        max_length=4,
+        description="WGS84 bounding box: [west, south, east, north].",
     )
     temporal_start: datetime | None = Field(
         None,
@@ -321,27 +323,27 @@ def _coerce_datetime(value: Any) -> datetime | None:
         return None
 
 
-def _coerce_bbox(value: Any) -> tuple[float, float, float, float] | None:
-    """Coerce a UMM-Vis WGS84SpatialCoverage entry to (west, south, east, north).
+def _coerce_bbox(value: Any) -> list[float] | None:
+    """Coerce a UMM-Vis WGS84SpatialCoverage entry to ``[west, south, east, north]``.
 
     Accepts either a 4-element list/tuple ``[W, S, E, N]`` or a dict with
     ``MinLongitude`` / ``MinLatitude`` / ``MaxLongitude`` / ``MaxLatitude`` keys.
     """
     if isinstance(value, (list, tuple)) and len(value) == 4:
         try:
-            west, south, east, north = (float(v) for v in value)
+            return [float(v) for v in value]
         except (TypeError, ValueError):
             return None
-        return (west, south, east, north)
     if isinstance(value, dict):
         try:
-            west = float(value["MinLongitude"])
-            south = float(value["MinLatitude"])
-            east = float(value["MaxLongitude"])
-            north = float(value["MaxLatitude"])
+            return [
+                float(value["MinLongitude"]),
+                float(value["MinLatitude"]),
+                float(value["MaxLongitude"]),
+                float(value["MaxLatitude"]),
+            ]
         except (KeyError, TypeError, ValueError):
             return None
-        return (west, south, east, north)
     return None
 
 
