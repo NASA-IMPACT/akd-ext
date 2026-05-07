@@ -326,18 +326,13 @@ class ImageAnalyzerAgent(
             a.url = slug_to_url.get(a.slug, "")
         return parsed.analyses
 
-    # -- _arun ---------------------------------------------------------------
-
-    async def _arun(
-        self, params: ImageAnalyzerInputSchema, run_context: RunContext, **kwargs: Any
-    ) -> ImageAnalyzerOutputSchema | TextOutput:
+    async def _process_batches(
+        self, params: ImageAnalyzerInputSchema,
+    ) -> AsyncIterator[tuple[int, int, list[FigureAnalysis]]]:
+        """Dedupe, chunk, download, analyse. Yields ``(idx, total, analyses)`` per batch."""
         urls = list(dict.fromkeys(params.urls))
-        if not urls:
-            return TextOutput(content="No URLs supplied.")
-
         bs = self.config.batch_size
         chunks = [urls[i : i + bs] for i in range(0, len(urls), bs)]
-        all_analyses: list[FigureAnalysis] = []
 
         for idx, chunk in enumerate(chunks, 1):
             items = await download_image_batch(
@@ -349,6 +344,18 @@ class ImageAnalyzerAgent(
                 logger.warning(f"[ImageAnalyzer] batch {idx}/{len(chunks)}: all downloads failed")
                 continue
             analyses = await self._run_batch(items, params.context, idx, len(chunks))
+            yield idx, len(chunks), analyses
+
+    # -- _arun ---------------------------------------------------------------
+
+    async def _arun(
+        self, params: ImageAnalyzerInputSchema, run_context: RunContext, **kwargs: Any
+    ) -> ImageAnalyzerOutputSchema | TextOutput:
+        if not params.urls:
+            return TextOutput(content="No URLs supplied.")
+
+        all_analyses: list[FigureAnalysis] = []
+        async for _idx, _total, analyses in self._process_batches(params):
             all_analyses.extend(analyses)
 
         if not all_analyses:
@@ -379,8 +386,7 @@ class ImageAnalyzerAgent(
             run_context=run_context,
         )
 
-        urls = list(dict.fromkeys(params.urls))
-        if not urls:
+        if not params.urls:
             yield CompletedEvent(
                 source=class_name,
                 message=f"Completed {class_name}",
@@ -389,26 +395,14 @@ class ImageAnalyzerAgent(
             )
             return
 
-        bs = self.config.batch_size
-        chunks = [urls[i : i + bs] for i in range(0, len(urls), bs)]
         all_analyses: list[FigureAnalysis] = []
 
         # 2. Process each batch → emit PartialOutputEvent per batch
-        for idx, chunk in enumerate(chunks, 1):
-            items = await download_image_batch(
-                chunk,
-                concurrency=self.config.download_concurrency,
-                timeout=self.config.download_timeout_seconds,
-            )
-            if not items:
-                logger.warning(f"[ImageAnalyzer] batch {idx}/{len(chunks)}: all downloads failed")
-                continue
-            analyses = await self._run_batch(items, params.context, idx, len(chunks))
+        async for idx, total, analyses in self._process_batches(params):
             all_analyses.extend(analyses)
-
             yield PartialOutputEvent(
                 source=class_name,
-                message=f"Batch {idx}/{len(chunks)} complete",
+                message=f"Batch {idx}/{total} complete",
                 data=PartialEventData(
                     partial_output=ImageAnalyzerOutputSchema(
                         analyses=list(all_analyses),
