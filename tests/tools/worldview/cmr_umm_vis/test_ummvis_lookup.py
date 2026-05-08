@@ -19,8 +19,10 @@ from akd_ext.tools.worldview.cmr_umm_vis import (
 from akd_ext.tools.worldview.cmr_umm_vis.ummvis_lookup import (
     _coerce_bbox,
     _coerce_datetime,
+    _dedupe_layers,
     _extract_source_cids,
     _map_projections,
+    _resolve_layer_id,
     _to_layer_mapping,
 )
 
@@ -225,7 +227,12 @@ class TestNormalizer:
     def test_full_record_round_trip(self) -> None:
         mapping = _to_layer_mapping(_airs_record())
         assert mapping is not None
-        assert mapping.layer_id == "AIRS_L2_Carbon_Monoxide_500hPa_Volume_Mixing_Ratio_Day_v7_STD"
+        # Fixture has no BestAvailableExternalIdentifier, so resolution falls back
+        # to umm.Name with the trailing "_v7_STD" suffix stripped — that matches
+        # the public GIBS layer identifier.
+        assert mapping.layer_id == "AIRS_L2_Carbon_Monoxide_500hPa_Volume_Mixing_Ratio_Day"
+        assert mapping.layer_id_source == "name_stripped"
+        assert mapping.available_in_gibs is None  # validation not requested
         assert mapping.visualization_concept_id == "VIS1277379058-CMR_TEST"
         assert mapping.visualization_type == "tiles"
         assert mapping.title == "Carbon Monoxide (L2, 500 hPa, Day)"
@@ -281,10 +288,155 @@ class TestNormalizer:
         mapping = _to_layer_mapping(record)
         assert mapping is not None
         assert mapping.layer_id == "L1"
+        assert mapping.layer_id_source == "name_raw"
         assert mapping.title is None
         assert mapping.spatial_coverage is None
         assert mapping.temporal_start is None
         assert mapping.worldview_projections is None
+
+    def test_best_field_takes_priority_over_name(self) -> None:
+        record = _airs_record()
+        record["umm"]["Specification"]["ProductIdentification"]["BestAvailableExternalIdentifier"] = (
+            "AIRS_L2_Carbon_Monoxide_500hPa_Volume_Mixing_Ratio_Day"
+        )
+        mapping = _to_layer_mapping(record)
+        assert mapping is not None
+        assert mapping.layer_id == "AIRS_L2_Carbon_Monoxide_500hPa_Volume_Mixing_Ratio_Day"
+        assert mapping.layer_id_source == "best"
+
+    def test_junk_best_falls_back_to_name_strip(self) -> None:
+        """``DUJUAN`` and similar test pollution must not leak through as a layer id."""
+        record = _airs_record()
+        record["umm"]["Specification"]["ProductIdentification"]["BestAvailableExternalIdentifier"] = "DUJUAN"
+        mapping = _to_layer_mapping(record)
+        assert mapping is not None
+        assert mapping.layer_id == "AIRS_L2_Carbon_Monoxide_500hPa_Volume_Mixing_Ratio_Day"
+        assert mapping.layer_id_source == "name_stripped"
+
+    def test_gibs_validation_tags_available_in_gibs(self) -> None:
+        record = _airs_record()
+        record["umm"]["Specification"]["ProductIdentification"]["BestAvailableExternalIdentifier"] = (
+            "AIRS_L2_Carbon_Monoxide_500hPa_Volume_Mixing_Ratio_Day"
+        )
+        gibs = frozenset({"AIRS_L2_Carbon_Monoxide_500hPa_Volume_Mixing_Ratio_Day"})
+        mapping = _to_layer_mapping(record, gibs_layers=gibs)
+        assert mapping is not None
+        assert mapping.available_in_gibs is True
+
+    def test_gibs_validation_marks_pending_when_best_not_in_catalog(self) -> None:
+        """Layers awaiting GIBS publication should surface as best_pending_gibs, not be dropped."""
+        record = _airs_record()
+        # Clear Name so the strip-fallback can't rescue it.
+        record["umm"]["Name"] = "AMSRU2_L3_Cloud_Liquid_Water_Daily"
+        record["umm"]["Specification"]["ProductIdentification"]["BestAvailableExternalIdentifier"] = (
+            "AMSRU2_L3_Cloud_Liquid_Water_Daily"
+        )
+        gibs = frozenset({"some_other_layer"})
+        mapping = _to_layer_mapping(record, gibs_layers=gibs)
+        assert mapping is not None
+        assert mapping.layer_id == "AMSRU2_L3_Cloud_Liquid_Water_Daily"
+        assert mapping.layer_id_source == "best_pending_gibs"
+        assert mapping.available_in_gibs is False
+
+
+@pytest.mark.unit
+class TestResolveLayerId:
+    def test_prefers_best_when_present(self) -> None:
+        umm = {
+            "Name": "MODIS_Aqua_NDVI_v1_STD",
+            "Specification": {"ProductIdentification": {"BestAvailableExternalIdentifier": "MODIS_Aqua_NDVI"}},
+        }
+        assert _resolve_layer_id(umm) == ("MODIS_Aqua_NDVI", "best")
+
+    @pytest.mark.parametrize("junk", ["DUJUAN", "test", "PLACEHOLDER", "YET_TO_SUPPLY", "", "abc"])
+    def test_rejects_junk_best(self, junk: str) -> None:
+        umm = {
+            "Name": "MODIS_Aqua_NDVI_v1_STD",
+            "Specification": {"ProductIdentification": {"BestAvailableExternalIdentifier": junk}},
+        }
+        layer_id, source = _resolve_layer_id(umm)
+        assert layer_id == "MODIS_Aqua_NDVI"
+        assert source == "name_stripped"
+
+    @pytest.mark.parametrize(
+        "name,expected,source",
+        [
+            ("MODIS_Aqua_NDVI_v1_STD", "MODIS_Aqua_NDVI", "name_stripped"),
+            ("VIIRS_AOT_v12_NRT", "VIIRS_AOT", "name_stripped"),
+            (
+                "OPERA_L3_Dynamic_Surface_Water_Extent-HLS_v1_STD",
+                "OPERA_L3_Dynamic_Surface_Water_Extent-HLS",
+                "name_stripped",
+            ),
+            ("MODIS_Aqua_NDVI", "MODIS_Aqua_NDVI", "name_raw"),
+            ("MODIS_Aqua_NDVI_8Day", "MODIS_Aqua_NDVI_8Day", "name_raw"),
+        ],
+    )
+    def test_strips_version_suffix_from_name(self, name: str, expected: str, source: str) -> None:
+        umm = {"Name": name}
+        assert _resolve_layer_id(umm) == (expected, source)
+
+    def test_returns_none_when_both_missing(self) -> None:
+        assert _resolve_layer_id({}) == (None, "unresolved")
+
+    def test_best_pending_gibs_when_strip_does_not_help(self) -> None:
+        """Best is set, valid-looking, but not in the GIBS catalog and Name doesn't help."""
+        umm = {
+            "Name": "AMSRU2_L3_Ocean_Wind_Speed_Daily_vV01_STD",  # vV01 not matched by suffix regex
+            "Specification": {
+                "ProductIdentification": {"BestAvailableExternalIdentifier": "AMSRU2_L3_Ocean_Wind_Speed_Daily"}
+            },
+        }
+        layer_id, source = _resolve_layer_id(umm, gibs_layers=frozenset({"unrelated"}))
+        assert layer_id == "AMSRU2_L3_Ocean_Wind_Speed_Daily"
+        assert source == "best_pending_gibs"
+
+
+@pytest.mark.unit
+class TestDedupe:
+    def _layer(
+        self,
+        layer_id: str,
+        source: str = "best",
+        vis_concept_id: str = "VIS1-X",
+        title: str | None = None,
+    ) -> LayerMapping:
+        return LayerMapping(
+            layer_id=layer_id,
+            layer_id_source=source,  # type: ignore[arg-type]
+            visualization_concept_id=vis_concept_id,
+            visualization_type="tiles",
+            title=title,
+        )
+
+    def test_collapses_by_layer_id_and_visualization_type(self) -> None:
+        layers = [
+            self._layer("FOO", source="best", vis_concept_id="VIS1-X"),
+            self._layer("FOO", source="best", vis_concept_id="VIS2-X"),
+            self._layer("BAR", source="best", vis_concept_id="VIS3-X"),
+        ]
+        deduped = _dedupe_layers(layers)
+        assert sorted(layer.layer_id for layer in deduped) == ["BAR", "FOO"]
+
+    def test_prefers_higher_quality_source(self) -> None:
+        """A canonical 'best' mapping should win over a 'best_pending_gibs' duplicate."""
+        layers = [
+            self._layer("FOO", source="best_pending_gibs", vis_concept_id="VIS1-X"),
+            self._layer("FOO", source="best", vis_concept_id="VIS2-X"),
+        ]
+        deduped = _dedupe_layers(layers)
+        assert len(deduped) == 1
+        assert deduped[0].visualization_concept_id == "VIS2-X"
+        assert deduped[0].layer_id_source == "best"
+
+    def test_tiebreaks_by_populated_fields(self) -> None:
+        layers = [
+            self._layer("FOO", source="best", vis_concept_id="VIS1-X", title=None),
+            self._layer("FOO", source="best", vis_concept_id="VIS2-X", title="Something"),
+        ]
+        deduped = _dedupe_layers(layers)
+        assert len(deduped) == 1
+        assert deduped[0].visualization_concept_id == "VIS2-X"
 
 
 # -----------------------------------------------------------------------------
