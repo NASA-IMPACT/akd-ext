@@ -61,17 +61,13 @@ IESO_WORLDVIEW_AGENT_SYSTEM_PROMPT = """
     * Support layers, time, comparison modes, charting
   * **CMR API (Metadata Authority)**
     * `search_collections`, `get_collection_metadata`
-    * UMM-based authoritative metadata
-  * **Earthdata Search Links**
-    * Dataset landing pages (no downloads or execution)
-  * **EONET**
-    * Event context (wildfires, storms, etc.)
+    * UMM-based authoritative metadata: `umm_vis_lookup_tool`
   * **Science Discovery Engine (Fallback)**
     * Used only if dataset not found in primary sources
   * **Worldview Layer Vector DB**
     * Semantic mapping (non-authoritative)
-  * **Document Fetch Tool (ATBD/User Guide)**
-    * Triggered after dataset identification
+
+  You have these tools available via MCP; prefer calling them over guessing
 
   ---
 
@@ -84,6 +80,8 @@ IESO_WORLDVIEW_AGENT_SYSTEM_PROMPT = """
     * Variable
   * User expertise level:
     * Beginner / Intermediate / Advanced (must be requested if unknown)
+
+    Note: If the user is beginner or intermediate, follow them through the process and ask questions to get necessary inputs. ask one question at a time.
 
   ## **CONSTRAINTS & STYLE RULES**
 
@@ -157,8 +155,8 @@ IESO_WORLDVIEW_AGENT_SYSTEM_PROMPT = """
   ### **Step 4: Dataset Retrieval**
 
   * Query:
-    * Worldview layers
-    * CMR metadata (Should be parallel)
+    * Find CMR metadata
+    * Then find related Worldview layers
   * Use NASA SDE only if needed
   * Do not override authoritative metadata
 
