@@ -1,43 +1,48 @@
-"""CMR CARE Agent for NASA dataset discovery.
+"""CMR CARE Pydantic Agent — NASA CMR dataset discovery on ``PydanticAIBaseAgent``.
 
-This module implements the CMR CARE (Clarify, Analyze, Rank, Explain) Agent
-for transparent, reproducible discovery of NASA Earthdata datasets.
+Parallel to :mod:`akd_ext.agents.cmr_care` (which is built on ``OpenAIBaseAgent``),
+this module rebuilds the same agent on top of ``PydanticAIBaseAgent`` so the
+new base class can be validated against a real-shaped AKD agent. Input/output
+schemas are reused from :mod:`akd_ext.agents.cmr_care` to keep parity.
 
-Public API:
-    CMRCareAgent, CMRCareAgentInputSchema, CMRCareAgentOutputSchema, CMRCareConfig
+The ``system_prompt`` is a **placeholder** — replace
+``CMR_CARE_PYDANTIC_SYSTEM_PROMPT`` below with the real CARE prompt before
+running against a live model.
 """
 
 from __future__ import annotations
 
 import os
+
 from typing import Any, Literal
 
-from agents import HostedMCPTool
 from pydantic import Field
+from pydantic_ai.capabilities import MCP
 
-from akd_ext._types import OpenAITool
+from akd._base import TextOutput
 
-from akd._base import (
-    InputSchema,
-    OutputSchema,
-    TextOutput,
-)
 from akd_ext.agents._base import (
-    OpenAIBaseAgent,
-    OpenAIBaseAgentConfig,
+    PydanticAIBaseAgent,
+    PydanticAIBaseAgentConfig,
+)
+from akd_ext.agents.cmr_care import (
+    CMRCareAgentInputSchema,
+    CMRCareAgentOutputSchema,
 )
 
 from loguru import logger
 
 # -----------------------------------------------------------------------------
-# System Prompts
+# System Prompt
 # -----------------------------------------------------------------------------
+# PLACEHOLDER — paste the real CMR CARE system prompt here before running
+# this agent against a live model. The parity tests use ``TestModel`` so they
+# don't depend on the prompt content.
 
-
-CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
+CMR_CARE_PYDANTIC_SYSTEM_PROMPT = """ROLE
     You are the NASA Earthdata / CMR Scientific Data Discovery Agent.
     You are a non-decision-making, human-in-the-loop scientific data discovery assistant whose sole function is to help users discover, organize, and understand NASA Earthdata CMR datasets relevant to Earth science questions.
-    You are not a scientific authority, analyst, or recommender. 
+    You are not a scientific authority, analyst, or recommender.
 
     OBJECTIVE
     Enable transparent, reproducible, and user-controlled discovery and ranking of NASA Earthdata (CMR) datasets that may answer an Earth science question, including indirect (multi-hop) discovery when direct datasets are insufficient.
@@ -85,59 +90,37 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     Phenomenon
     Explicit variables
     Expand scientific synonyms (candidate terms only)
-
-    Clarify (conditional)
-
-    1. Ask a MAXIMUM of 2–5 questions total, bundled into ONE message.
-
-    2. Variables — ask only if multiple plausible variable families apply.
-
-    3. Spatial bounds — ask only if no region/country/area is given. Named regions are sufficient; never request lat/lon or bounding boxes for them.
-
-    4. Temporal bounds — ask the user first for their preferred time range. If the user does not specify, fall back to relative terms ("recent", "last decade") or defaults from step 13.
-
-    5. At the END of the same clarifying message, append:
-    "If you'd rather skip these and run the CMR search with reasonable defaults, just reply 'skip' — I'll proceed and surface every assumption I made."
-    - If user replies "skip" (or equivalent) → go directly to step 6, apply defaults from step 13, and surface all assumptions in Interpreted Scope.
-
-    6. Map terms → GCMD keywords
-    7. Translate GCMD concepts → CMR API parameters
-    8. Search CMR Collections (retrieve multiple candidates)
-    9. Rank datasets — primary: metadata relevance; secondary: usage (tie-breaker only)
-    10. Explain relevance and gaps (no recommendations)
-
+    Clarify (blocking):
+    Variables
+    Spatial bounds
+    Temporal bounds
+    Indirect inference permission (if needed)
+    Map terms → GCMD keywords
+    Translate GCMD concepts → CMR API parameters
+    Search CMR Collections (retrieve multiple candidates)
+    Rank datasets:
+    Primary: metadata relevance
+    Secondary: usage (tie-breaker only)
+    Explain relevance and gaps (no recommendations)
     Conditional Multi-Hop Loop (Only If Needed)
+    Detect gaps in direct results
+    Identify indirect variables
+    Search Semantic Scholar (rate-limited)
+    Exclude variables that cannot map to GCMD
+    Obtain explicit user approval
+    Re-run the entire loop
+    If scope is non-Earth science → respond "I'm sorry, this query falls outside my area of expertise in Earth science data discovery. I'm unable to assist with this request." and stop.
 
-    11. Detect gaps → identify indirect variables → search Semantic Scholar (rate-limited) → exclude variables that cannot map to GCMD → obtain explicit user approval → re-run the loop.
-
-    12. If scope is non-Earth science → respond "I don't know" and stop.
-
-    Assumption Handling Protocol
-
-    13. Defaults (applied on skip or when inputs missing):
-        - Temporal start: January 1 of the inferred/earliest relevant year.
-        - Temporal end:   December 31 of the inferred/latest relevant year.
-        - No year given:  latest 5 years only (e.g., if current year is 2026 → 2021-01-01 to 2026-12-31).
-        - Spatial:        "Global" unless a named region is in the query.
-
-    14. Use contextual inference for spatial scope (named region, country, global). Do NOT force bounding boxes or polygons unless the user provides them. Represent at metadata level only (e.g., "Global", "Cameroon region").
-
-    15. Surface EVERY assumption under "Interpreted Scope", labeled "Assumed" or "Default applied". This includes: inferred variables, inferred spatial scope, inferred temporal range, fallback to relative terms, and any skip-path defaults. Nothing silent.
-
-    16. Progress over paralysis — proceed with transparent defaults rather than blocking on clarification.
-
-    17. When asking clarification questions, always number them (1., 2., 3., ...) so the user can respond to each individually and heading Clarifying Questions.
-
-    18. Clarification-turn output rule: When the response is clarifying questions only (no CMR search run yet), output ONLY the numbered questions followed by the "skip" fast-path line. 
-    Do NOT render "Interpreted Scope", "Curated / Ranked CMR Dataset List", or any other OUTPUT FORMAT section in this turn. The full OUTPUT FORMAT applies only when actual search results are being returned.
 
     OUTPUT FORMAT
     All responses must follow this structure exactly. No free-form text is allowed outside these sections.
-    1. Interpreted Scope
+    1. Clarifying Questions
+    You must ask clarifying questions to the user to reduce ambiquity in search.
+    2. Interpreted Scope
     Restate user intent without inference
     Separate confirmed inputs vs unresolved ambiguities
     List phenomenon, variables, spatial & temporal bounds
-    2. Curated / Ranked CMR Dataset List
+    3. Curated / Ranked CMR Dataset List
     For each dataset (CMR only), include:
     Short Name
     CMR Concept ID
@@ -147,10 +130,23 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     ProcessingLevelId
     Explicitly listed missing or ambiguous metadata
     Ranking reflects metadata relevance only.
+    4. Search Reproducibility Log
+    CMR endpoints used
+    Query parameters
+    GCMD mappings
+    Paging behavior
+    Ranking logic
+    UTC timestamps
+    5. Fact-Check / User Verification List
+    Items the user must confirm manually
+    Variable definitions, QA flags, caveats
+    Documentation links only
+    No interpretation
 
 
     CONDITIONAL SECTIONS
     Tabular Summary → only if ≥2 datasets
+    JSON Audit Block → only if datasets returned (pure JSON, null for missing fields, no inference)
 
 
     STOP / DEGRADED OUTPUT
@@ -160,7 +156,7 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
     What cannot be determined
     Why
     Exact user action required
-    Stop immediately. 
+    Stop immediately.
 
     ADDITIONAL CONTEXT :
 
@@ -409,98 +405,89 @@ CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT = """ROLE
 # -----------------------------------------------------------------------------
 
 
-def get_default_cmr_tools() -> list[OpenAITool]:
-    """Default CMR MCP tools. Uses CMR_MCP_URL env var if set."""
+def get_default_cmr_capabilities() -> list[Any]:
+    """Default CMR MCP capability for pydantic_ai.
+
+    Points at the CMR MCP server (override via ``CMR_MCP_URL`` env var) and
+    exposes the same allowed-tool subset the OpenAI-based ``cmr_care.py``
+    uses, so the two agents hit the same backend surface.
+    """
     return [
-        HostedMCPTool(
-            tool_config={
-                "type": "mcp",
-                "server_label": "CMR_MCP_Server",
-                "allowed_tools": [
-                    "search_collections",
-                    "get_granules",
-                    "get_collection_metadata",
-                ],
-                "require_approval": "never",
-                "server_description": "CMR MCP server for NASA dataset discovery",
-                "server_url": os.environ.get(
-                    "CMR_MCP_URL",
-                    "https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp",
-                ),
-            }
+        MCP(
+            # Trailing slash matters: the endpoint returns a 307 redirect
+            # to the slashed form, which the MCP streamable-HTTP client
+            # won't follow on POST (per HTTP semantics for POST redirects).
+            url=os.environ.get(
+                "CMR_MCP_URL",
+                "https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp/",
+            ),
+            allowed_tools=[
+                "search_collections",
+                "get_granules",
+                "get_collection_metadata",
+            ],
+            description="CMR MCP server for NASA dataset discovery",
         ),
     ]
 
 
-class CMRCareConfig(OpenAIBaseAgentConfig):
-    """Configuration for CMR CARE Agent.
+class CMRCarePydanticConfig(PydanticAIBaseAgentConfig):
+    """Config for ``CMRCarePydanticAgent``.
 
-    Carries all settings for the orchestrator and its sub-agents.
-    system_prompt + tools are for the search agent.
-    formatter_system_prompt is for the output formatter (no tools).
+    Mirrors ``CMRCareConfig`` from ``cmr_care.py`` but wires MCP via
+    pydantic_ai's native ``MCP`` capability (passed through the inherited
+    ``capabilities`` field), not the OpenAI Agents SDK's ``HostedMCPTool``.
     """
 
     description: str = Field(
         default=(
-            """Earth science dataset discovery agent using NASA's Common Metadata Repository (CMR).
-            Helps users discover, organize, and understand NASA Earthdata datasets across atmosphere,
-            ocean, land, cryosphere, biosphere, and solid earth domains.
-            Outputs are delivered via a structured schema and interactive chat with the user
-            for clarification, guidance, approval gates, or status updates."""
-        )
+            "Earth science dataset discovery agent using NASA's Common Metadata Repository (CMR). "
+            "Helps users discover, organize, and understand NASA Earthdata datasets across atmosphere, "
+            "ocean, land, cryosphere, biosphere, and solid earth domains. "
+            "Outputs are delivered via a structured schema and interactive chat with the user "
+            "for clarification, guidance, approval gates, or status updates."
+        ),
     )
-    system_prompt: str = Field(default=CMR_DATA_SEARCH_CARE_AGENT_SYSTEM_PROMPT)
-    model_name: str = Field(default="gpt-5.2")
+    system_prompt: str = Field(default=CMR_CARE_PYDANTIC_SYSTEM_PROMPT)
+    model_name: str = Field(default="openai:gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
-    tools: list[Any] = Field(default_factory=get_default_cmr_tools)
+    capabilities: list[Any] = Field(default_factory=get_default_cmr_capabilities)
 
 
 # -----------------------------------------------------------------------------
-# Public Input/Output Schemas
+# Agent
 # -----------------------------------------------------------------------------
 
 
-class CMRCareAgentInputSchema(InputSchema):
-    """Input schema for CMR CARE Agent."""
+class CMRCarePydanticAgent(PydanticAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
+    """Earth Science Data Search Agent on ``PydanticAIBaseAgent``.
 
-    query: str = Field(..., description="Earth science query for dataset discovery")
-
-
-class CMRCareAgentOutputSchema(OutputSchema):
-    """Use this schema whenever you have dataset concept IDs to report.
-    Put ALL your text output (interpreted scope, dataset list, reproducibility log, tables, JSON audit block) in the report field.
-    Use TextOutput for clarification questions or when no datasets were found."""
-
-    __response_field__ = "result"
-    result: str = Field(..., description="Search result with discovered CMR datasets and details")
-
-
-# -----------------------------------------------------------------------------
-# CMR CARE Orchestrator Agent (Public)
-# -----------------------------------------------------------------------------
-
-
-class CMRCareAgent(OpenAIBaseAgent[CMRCareAgentInputSchema, CMRCareAgentOutputSchema]):
-    """Earth Science Data Search Agent that uses NASA CMR.
-    Uses NASA in-house CARE-driven process (https://github.com/NASA-IMPACT/CARE-Code-Agent-ES)
-    CARE: Collaborative Agent Reasoning Engineering.
+    Parity build of ``CMRCareAgent`` on the new Pydantic AI base class; uses
+    the same input/output schemas so downstream callers can swap between the
+    two implementations without changing their contract.
     """
 
     input_schema = CMRCareAgentInputSchema
     output_schema = CMRCareAgentOutputSchema | TextOutput
-    config_schema = CMRCareConfig
+    config_schema = CMRCarePydanticConfig
 
     def check_output(self, output) -> str | None:
-        if isinstance(output, CMRCareAgentOutputSchema) and not output.report.strip():
-            return "Report is empty. Provide search reasoning and details."
+        if isinstance(output, CMRCareAgentOutputSchema) and not output.result.strip():
+            return "Result is empty. Provide search reasoning and details."
         return super().check_output(output)
 
+
+__all__ = [
+    "CMR_CARE_PYDANTIC_SYSTEM_PROMPT",
+    "CMRCarePydanticAgent",
+    "CMRCarePydanticConfig",
+]
 
 if __name__ == "__main__":
     import asyncio
 
     async def main():
-        agent = CMRCareAgent(CMRCareConfig(debug=True))
+        agent = CMRCarePydanticAgent(CMRCarePydanticConfig(debug=True))
         logger.info(f"Agent description: {agent.description}")
         question = "Can you find me datasets about sea ice?"
 

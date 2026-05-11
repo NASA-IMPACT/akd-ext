@@ -101,6 +101,10 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
     top_p: float | None = Field(default=None, description="Nucleus sampling parameter.")
     frequency_penalty: float | None = Field(default=None, description="Frequency penalty for token repetition.")
     presence_penalty: float | None = Field(default=None, description="Presence penalty for new topics.")
+    truncation: Literal["auto", "disabled"] | None = Field(
+        default="auto",
+        description="Truncation strategy for managing context window. 'auto' enables server-side truncation of older messages.",
+    )
 
     @field_validator("tools", mode="before")
     @classmethod
@@ -135,6 +139,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
                 store=True,
                 max_tokens=self.max_tokens,
                 reasoning=reasoning,
+                truncation=self.truncation,
             )
         # Non-reasoning models use standard sampling parameters
         return ModelSettings(
@@ -144,6 +149,7 @@ class OpenAIBaseAgentConfig(BaseAgentConfig):
             top_p=self.top_p,
             frequency_penalty=self.frequency_penalty,
             presence_penalty=self.presence_penalty,
+            truncation=self.truncation,
         )
 
     @property
@@ -202,7 +208,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         if not is_union:
             return Agent(
                 name=self.__class__.__name__,
-                instructions=self.config.system_prompt,
+                instructions=self._system_prompt,
                 model=self.config.model_name or "gpt-5-nano",
                 tools=self.config.tools,
                 output_type=None if is_text else self.output_schema,
@@ -213,7 +219,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
             envelope = self.effective_output_schema
             return Agent(
                 name=self.__class__.__name__,
-                instructions=self.config.system_prompt,
+                instructions=self._system_prompt,
                 model=self.config.model_name or "gpt-5-nano",
                 tools=self.config.tools,
                 output_type=envelope,
@@ -226,7 +232,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         all_tools = list(self.config.tools) + sdk_output_tools
         return Agent(
             name=self.__class__.__name__,
-            instructions=self.config.system_prompt,
+            instructions=self._system_prompt,
             model=self.config.model_name or "gpt-5-nano",
             tools=all_tools,
             output_type=None,
@@ -770,7 +776,14 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                                 data=ToolResultEventData(
                                     result=ToolResult(
                                         tool_call_id=tool_call_id,
-                                        tool_name=getattr(raw_item, "name", "unknown"),
+                                        tool_name=next(
+                                            (
+                                                tc["function"]["name"]
+                                                for tc in current_turn_tool_calls
+                                                if tc["id"] == tool_call_id
+                                            ),
+                                            "unknown",
+                                        ),
                                         content=tool_output_content,
                                     )
                                 ),

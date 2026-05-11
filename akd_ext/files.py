@@ -76,12 +76,19 @@ class URLFileResolver:
                 {
                     "type": "input_image",
                     "image_url": f"data:{attachment.mime_type};base64,{encoded}",
-                }
+                },
+                # caption to the image.
+                {
+                    "type": "input_text",
+                    "text": f"caption to the image above: [Image: {attachment.filename}] (url: {attachment.url})",
+                },
             ]
 
         # Text-based files
+        # can replace it with same base-64 encoding too: {"type": "input_file", "filename": "doc.pdf", "file_data": "data:application/pdf;base64,..."}
+        # however, if we sought to apply token minimization techniques, raw text is good.
         text = raw.decode("utf-8")
-        return [{"type": "text", "text": f"[File: {attachment.filename}]\n{text}"}]
+        return [{"type": "input_text", "text": f"[File: {attachment.filename}]\n{text}"}]
 
 
 # ── Default Resolver Registry ────────────────────────────────────────

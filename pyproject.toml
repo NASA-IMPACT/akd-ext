@@ -17,16 +17,18 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
-    "fastmcp>=2.0.0",
+    "akd @ git+https://github.com/NASA-IMPACT/akd-core.git@develop",
+    "fastmcp>=2.0.0,<3.2.4",
+    "griffe>=1.0.0,<2",
     "openai-agents>=0.6.7",
+    "pydantic-ai>=1.81.0",
     "PyGithub>=2.1.1",
 ]
 
 [project.urls]
 Homepage = "https://github.com/NASA-IMPACT/akd-ext"
 Repository = "https://github.com/NASA-IMPACT/akd-ext"
-"AKD Core" = "https://github.com/NASA-IMPACT/accelerated-discovery"
+"AKD Core" = "https://github.com/NASA-IMPACT/akd-core"
 
 [project.optional-dependencies]
 dev = [
@@ -45,9 +47,13 @@ build-backend = "setuptools.build_meta"
 include = ["akd_ext*"]
 exclude = ["tests*"]
 
+[tool.setuptools.package-data]
+"akd_ext" = ["**/*.md", "**/*.yml", "**/*.yaml", "**/*.json", "py.typed"]
+
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+pythonpath = ["."]
 python_files = ["test_*.py", "*_test.py"]
 python_functions = ["test_*"]
 addopts = [
@@ -67,7 +73,7 @@ markers = [
 ]
 
 [tool.uv]
-override-dependencies = ["wrapt>=1.14"]
+override-dependencies = ["wrapt>=1.14", "mistralai<2"]
 
 [tool.ruff]
 target-version = "py312"
@@ -82,6 +88,7 @@ quote-style = "double"
 
 [dependency-groups]
 dev = [
+    "marimo>=0.23.1",
     "pytest>=9.0.2",
     "pytest-asyncio>=1.3.0",
     "pytest-cov>=7.0.0",

@@ -15,8 +15,8 @@ class TestRepositorySearchTool:
     @pytest.mark.parametrize(
         "query",
         [
-            "indus pipeline code",
-            "NASA earth science data processing for universal file format",
+            "nasa python",
+            "pds software",
         ],
     )
     async def test_repository_search_tool(self, query: str):
@@ -55,5 +55,6 @@ class TestRepositorySearchTool:
         """Test Repository Search Tool results number."""
         config = RepositorySearchToolConfig(page_size=page_size)
         tool = RepositorySearchTool(config=config)
-        result = await tool.arun(RepositorySearchToolInputSchema(queries=["indus pipeline code"]))
+        # "nasa python" has >100 results in the SDE code index so any page_size up to the 10 cap works
+        result = await tool.arun(RepositorySearchToolInputSchema(queries=["nasa python"]))
         assert len(result.results) == result_size

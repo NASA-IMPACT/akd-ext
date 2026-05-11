@@ -46,57 +46,59 @@ class TestFileAttachmentMixin:
         messages = [{"role": "user", "content": "hello"}]
         run_context = RunContext(messages=messages)
 
-        await mixin._resolve_and_inject_files(messages, run_context)
+        await mixin._resolve_and_inject_files(run_context)
 
-        assert messages[0]["content"] == "hello"
+        assert len(run_context.messages) == 1
+        assert run_context.messages[0]["content"] == "hello"
 
     @pytest.mark.asyncio
     async def test_inject_openai_file(self, mixin):
-        """OpenAI file attachment is injected into last user message."""
+        """OpenAI file attachment is appended as a new user message."""
         messages = [{"role": "user", "content": "Analyze this file"}]
         att = OpenAIFileAttachment(file_id="f1", filename="report.pdf", openai_file_id="file-abc")
         run_context = RunContext(messages=messages, file_attachments=[att])
 
-        await mixin._resolve_and_inject_files(messages, run_context)
+        await mixin._resolve_and_inject_files(run_context)
 
-        content = messages[0]["content"]
-        assert isinstance(content, list)
-        assert content[0] == {"type": "text", "text": "Analyze this file"}
-        assert content[1] == {"type": "file", "file": {"file_id": "file-abc"}}
+        assert len(run_context.messages) == 2
+        assert run_context.messages[0]["content"] == "Analyze this file"
+        assert run_context.messages[1]["role"] == "user"
+        assert run_context.messages[1]["content"] == [{"type": "input_file", "file_id": "file-abc"}]
 
     @pytest.mark.asyncio
     async def test_inject_url_file(self, mixin):
-        """URL file attachment is injected into last user message."""
+        """URL file attachment is appended as a new user message."""
         messages = [{"role": "user", "content": "Check this data"}]
         att = URLFileAttachment(
             file_id="f2", filename="test.csv", mime_type="text/csv", url="https://example.com/test.csv"
         )
         run_context = RunContext(messages=messages, file_attachments=[att])
 
-        await mixin._resolve_and_inject_files(messages, run_context)
+        await mixin._resolve_and_inject_files(run_context)
 
-        content = messages[0]["content"]
-        assert isinstance(content, list)
-        assert content[0] == {"type": "text", "text": "Check this data"}
-        assert content[1]["type"] == "text"
-        assert "[File: test.csv]" in content[1]["text"]
+        assert len(run_context.messages) == 2
+        assert run_context.messages[0]["content"] == "Check this data"
+        assert run_context.messages[1]["role"] == "user"
+        assert run_context.messages[1]["content"][0]["type"] == "text"
+        assert "[File: test.csv]" in run_context.messages[1]["content"][0]["text"]
 
     @pytest.mark.asyncio
     async def test_inject_multiple_attachments(self, mixin):
-        """Multiple attachments are all injected."""
+        """Multiple attachments are all added to the new message."""
         messages = [{"role": "user", "content": "Compare these"}]
         att1 = OpenAIFileAttachment(file_id="f1", filename="a.pdf", openai_file_id="file-a")
         att2 = OpenAIFileAttachment(file_id="f2", filename="b.pdf", openai_file_id="file-b")
         run_context = RunContext(messages=messages, file_attachments=[att1, att2])
 
-        await mixin._resolve_and_inject_files(messages, run_context)
+        await mixin._resolve_and_inject_files(run_context)
 
-        content = messages[0]["content"]
-        assert len(content) == 3  # original text + 2 file parts
+        assert len(run_context.messages) == 2
+        assert run_context.messages[0]["content"] == "Compare these"
+        assert len(run_context.messages[1]["content"]) == 2
 
     @pytest.mark.asyncio
-    async def test_inject_targets_last_user_message(self, mixin):
-        """Files are injected into the last user message, not earlier ones."""
+    async def test_files_appended_as_new_message(self, mixin):
+        """Files are appended as a new message, existing messages are untouched."""
         messages = [
             {"role": "user", "content": "first message"},
             {"role": "assistant", "content": "response"},
@@ -105,16 +107,17 @@ class TestFileAttachmentMixin:
         att = OpenAIFileAttachment(file_id="f1", filename="report.pdf", openai_file_id="file-abc")
         run_context = RunContext(messages=messages, file_attachments=[att])
 
-        await mixin._resolve_and_inject_files(messages, run_context)
+        await mixin._resolve_and_inject_files(run_context)
 
-        # First user message unchanged
-        assert messages[0]["content"] == "first message"
-        # Last user message converted to multipart
-        assert isinstance(messages[2]["content"], list)
+        assert len(run_context.messages) == 4
+        assert run_context.messages[0]["content"] == "first message"
+        assert run_context.messages[2]["content"] == "second message"
+        assert run_context.messages[3]["role"] == "user"
+        assert run_context.messages[3]["content"] == [{"type": "input_file", "file_id": "file-abc"}]
 
     @pytest.mark.asyncio
-    async def test_existing_multipart_content_preserved(self, mixin):
-        """If content is already multipart, existing parts are preserved."""
+    async def test_existing_multipart_untouched(self, mixin):
+        """Existing multipart content is not modified."""
         messages = [
             {
                 "role": "user",
@@ -127,10 +130,12 @@ class TestFileAttachmentMixin:
         att = OpenAIFileAttachment(file_id="f1", filename="report.pdf", openai_file_id="file-abc")
         run_context = RunContext(messages=messages, file_attachments=[att])
 
-        await mixin._resolve_and_inject_files(messages, run_context)
+        await mixin._resolve_and_inject_files(run_context)
 
-        content = messages[0]["content"]
-        assert len(content) == 3  # 2 existing + 1 new
+        assert len(run_context.messages) == 2
+        assert len(run_context.messages[0]["content"]) == 2  # original untouched
+        assert run_context.messages[1]["role"] == "user"
+        assert run_context.messages[1]["content"] == [{"type": "input_file", "file_id": "file-abc"}]
 
     @pytest.mark.asyncio
     async def test_unregistered_attachment_type_raises(self, mixin):
@@ -144,4 +149,33 @@ class TestFileAttachmentMixin:
         run_context = RunContext(messages=messages, file_attachments=[att])
 
         with pytest.raises(TypeError, match="No resolver registered"):
-            await mixin._resolve_and_inject_files(messages, run_context)
+            await mixin._resolve_and_inject_files(run_context)
+
+    @pytest.mark.asyncio
+    async def test_none_messages_initialized(self, mixin):
+        """When run_context.messages is None, it gets initialized."""
+        att = OpenAIFileAttachment(file_id="f1", filename="report.pdf", openai_file_id="file-abc")
+        run_context = RunContext(messages=None, file_attachments=[att])
+
+        await mixin._resolve_and_inject_files(run_context)
+
+        assert run_context.messages is not None
+        assert len(run_context.messages) == 1
+        assert run_context.messages[0]["role"] == "user"
+        assert run_context.messages[0]["content"] == [{"type": "input_file", "file_id": "file-abc"}]
+
+    @pytest.mark.asyncio
+    async def test_attachments_cleared_after_injection(self, mixin):
+        """Attachments are cleared from run_context after injection to prevent re-injection."""
+        messages = [{"role": "user", "content": "Analyze this"}]
+        att = OpenAIFileAttachment(file_id="f1", filename="report.pdf", openai_file_id="file-abc")
+        run_context = RunContext(messages=messages, file_attachments=[att])
+
+        await mixin._resolve_and_inject_files(run_context)
+
+        assert run_context.file_attachments == []
+
+        # Second call should be a no-op
+        msg_count = len(run_context.messages)
+        await mixin._resolve_and_inject_files(run_context)
+        assert len(run_context.messages) == msg_count

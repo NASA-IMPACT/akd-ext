@@ -20,7 +20,7 @@ class FileAttachmentMixin:
             ...
 
     The mixin reads ``file_attachments`` from RunContext (passed as an extra field)
-    and resolves them into multipart content parts injected into the last user message.
+    and resolves them into a new user message appended to the conversation.
     """
 
     file_resolvers: dict[type[FileAttachment], FileResolver] = DEFAULT_RESOLVERS
@@ -29,24 +29,25 @@ class FileAttachmentMixin:
         self,
         run_context: RunContext,
     ) -> None:
-        """Resolve file attachments and inject content into the last user message."""
+        """Resolve file attachments and append as a new user message."""
         attachments: list[FileAttachment] = getattr(run_context, "file_attachments", [])
         if not attachments or not run_context:
             return
 
-        messages: list[dict[str, Any]] = run_context.messages or [{"role": "user", "content": []}]
+        parts: list[dict[str, Any]] = []
+        for att in attachments:
+            resolver = self.file_resolvers.get(type(att))
+            if resolver is None:
+                raise TypeError(f"No resolver registered for attachment type {type(att).__name__}")
+            parts.extend(await resolver.resolve(att))
 
-        # Find last user message and convert to multipart content array
-        for msg in reversed(messages):
-            if msg.get("role") == "user":
-                existing = msg["content"]
-                parts = [{"type": "text", "text": existing}] if isinstance(existing, str) else list(existing)
-                for att in attachments:
-                    resolver = self.file_resolvers.get(type(att))
-                    if resolver is None:
-                        raise TypeError(f"No resolver registered for attachment type {type(att).__name__}")
-                    parts.extend(await resolver.resolve(att))
-                msg["content"] = parts
-                break
+        if not parts:
+            return
 
-        run_context.messages = messages
+        if run_context.messages is None:
+            run_context.messages = []
+
+        run_context.messages.append({"role": "user", "content": parts})
+
+        # Clear attachments so they aren't re-injected on subsequent runs
+        run_context.file_attachments = []
