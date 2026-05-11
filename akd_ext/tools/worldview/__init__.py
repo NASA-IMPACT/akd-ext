@@ -1,6 +1,6 @@
 """Worldview tools for akd_ext."""
 
-from .cmr_umm_vis import (
+from .cmr import (
     LayerMapping,
     UMMVisLookupTool,
     UMMVisLookupToolConfig,
