@@ -181,7 +181,7 @@ class TestBboxValidation:
     def test_antimeridian_crossing_accepted(self):
         # Pacific-spanning bbox: west (170) > east (-170) is valid in geographic.
         schema = WorldviewPermalinkInputSchema(layers=[LayerSpec(id="L")], bbox=(170.0, -10.0, -170.0, 10.0))
-        assert schema.bbox == (170.0, -10.0, -170.0, 10.0)
+        assert schema.bbox == [170.0, -10.0, -170.0, 10.0]
 
     def test_lon_out_of_range_rejected_for_geographic(self):
         with pytest.raises(ValidationError, match="bbox lon out of"):

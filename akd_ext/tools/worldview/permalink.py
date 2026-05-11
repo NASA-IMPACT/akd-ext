@@ -177,10 +177,12 @@ class WorldviewPermalinkInputSchema(InputSchema):
             "('2025-01-02') if the order matters."
         ),
     )
-    bbox: tuple[float, float, float, float] | None = Field(
+    bbox: list[float] | None = Field(
         default=None,
+        min_length=4,
+        max_length=4,
         description=(
-            "Map viewport extent as (west, south, east, north). Degrees for the "
+            "Map viewport extent as [west, south, east, north]. Degrees for the "
             "geographic projection; projected meters for arctic/antarctic. "
             "If None, Worldview opens at its default global extent."
         ),
@@ -249,10 +251,12 @@ class WorldviewPermalinkInputSchema(InputSchema):
         default=None,
         description=("GIBS layer ID to chart. Charting supports one layer at a time. REQUIRED when chart_active=True."),
     )
-    chart_area: tuple[float, float, float, float] | None = Field(
+    chart_area: list[float] | None = Field(
         default=None,
+        min_length=4,
+        max_length=4,
         description=(
-            "Area-of-interest for the chart, as (x1, y1, x2, y2) in the same coordinate "
+            "Area-of-interest for the chart, as [x1, y1, x2, y2] in the same coordinate "
             "system as `bbox`. Statistics are computed over this region."
         ),
     )
