@@ -776,7 +776,14 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
                                 data=ToolResultEventData(
                                     result=ToolResult(
                                         tool_call_id=tool_call_id,
-                                        tool_name=getattr(raw_item, "name", "unknown"),
+                                        tool_name=next(
+                                            (
+                                                tc["function"]["name"]
+                                                for tc in current_turn_tool_calls
+                                                if tc["id"] == tool_call_id
+                                            ),
+                                            "unknown",
+                                        ),
                                         content=tool_output_content,
                                     )
                                 ),
