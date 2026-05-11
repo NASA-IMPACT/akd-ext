@@ -17,7 +17,7 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "akd @ git+https://github.com/NASA-IMPACT/accelerated-discovery.git@develop",
+    "akd @ git+https://github.com/NASA-IMPACT/akd-core.git@develop",
     "fastmcp>=2.0.0,<3.2.4",
     "griffe>=1.0.0,<2",
     "openai-agents>=0.6.7",
@@ -28,7 +28,7 @@ dependencies = [
 [project.urls]
 Homepage = "https://github.com/NASA-IMPACT/akd-ext"
 Repository = "https://github.com/NASA-IMPACT/akd-ext"
-"AKD Core" = "https://github.com/NASA-IMPACT/accelerated-discovery"
+"AKD Core" = "https://github.com/NASA-IMPACT/akd-core"
 
 [project.optional-dependencies]
 dev = [
