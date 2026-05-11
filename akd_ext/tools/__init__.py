@@ -21,6 +21,13 @@ from .code_search.repository_search import (
     RepositorySearchToolConfig,
 )
 
+from .worldview import (
+    LayerSpec,
+    WorldviewPermalinkInputSchema,
+    WorldviewPermalinkOutputSchema,
+    WorldviewPermalinkTool,
+)
+
 __all__ = [
     "DummyTool",
     "DummyInputSchema",
@@ -38,4 +45,8 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "LayerSpec",
+    "WorldviewPermalinkInputSchema",
+    "WorldviewPermalinkOutputSchema",
+    "WorldviewPermalinkTool",
 ]
