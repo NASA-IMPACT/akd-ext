@@ -21,6 +21,14 @@ from .code_search.repository_search import (
     RepositorySearchToolConfig,
 )
 
+from .worldview import (
+    LayerMapping,
+    UMMVisLookupTool,
+    UMMVisLookupToolConfig,
+    UMMVisLookupToolInputSchema,
+    UMMVisLookupToolOutputSchema,
+)
+
 __all__ = [
     "DummyTool",
     "DummyInputSchema",
@@ -38,4 +46,9 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "LayerMapping",
+    "UMMVisLookupTool",
+    "UMMVisLookupToolConfig",
+    "UMMVisLookupToolInputSchema",
+    "UMMVisLookupToolOutputSchema",
 ]
