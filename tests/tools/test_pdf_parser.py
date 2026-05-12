@@ -14,8 +14,8 @@ from akd_ext.tools.pdf_parser import (
 async def test_pdf_parser_defaults_fast_to_akd_simple(monkeypatch):
     tool = PDFParserTool()
 
-    async def fake_simple(url_or_path):
-        return {"content": "simple", "metadata": {"source": url_or_path}}
+    async def fake_simple(url):
+        return {"content": "simple", "metadata": {"source": url}}
 
     def fake_scraper_to_result(out):
         return out
@@ -25,7 +25,7 @@ async def test_pdf_parser_defaults_fast_to_akd_simple(monkeypatch):
 
     result = await tool.arun(
         PDFParserToolInputSchema(
-            url_or_path="https://example.com/test.pdf",
+            url="https://example.com/test.pdf",
             mode="fast",
         )
     )
@@ -38,8 +38,8 @@ async def test_pdf_parser_defaults_fast_to_akd_simple(monkeypatch):
 async def test_pdf_parser_defaults_non_fast_to_akd_docling(monkeypatch):
     tool = PDFParserTool()
 
-    async def fake_docling(url_or_path, mode):
-        return {"content": f"docling-{mode}", "metadata": {"source": url_or_path}}
+    async def fake_docling(url, mode):
+        return {"content": f"docling-{mode}", "metadata": {"source": url}}
 
     def fake_scraper_to_result(out):
         return out
@@ -49,7 +49,7 @@ async def test_pdf_parser_defaults_non_fast_to_akd_docling(monkeypatch):
 
     result = await tool.arun(
         PDFParserToolInputSchema(
-            url_or_path="https://example.com/test.pdf",
+            url="https://example.com/test.pdf",
             mode="accurate",
         )
     )
@@ -64,7 +64,7 @@ async def test_pdf_parser_unsupported_backend(monkeypatch):
 
     # Bypass schema validation intentionally to test runtime fallback branch.
     params = PDFParserToolInputSchema.model_construct(
-        url_or_path="https://example.com/test.pdf",
+        url="https://example.com/test.pdf",
         mode="fast",
         backend_hint="unknown_backend",
         return_format="markdown",
