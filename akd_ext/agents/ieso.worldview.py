@@ -9,9 +9,11 @@ Public API:
 
 from __future__ import annotations
 
-from typing import Literal
+import os
+from typing import Any, Literal
 
 from pydantic import Field
+from pydantic_ai.capabilities import MCP
 
 from akd._base import (
     InputSchema,
@@ -256,6 +258,73 @@ IESO_WORLDVIEW_AGENT_SYSTEM_PROMPT = """
 """
 
 # -----------------------------------------------------------------------------
+# MCP capabilities
+# -----------------------------------------------------------------------------
+
+
+def get_default_ieso_worldview_capabilities() -> list[Any]:
+    """Default MCP server capabilities wired into the IESO Worldview agent.
+
+    Auth tokens are read from env at construction time:
+      - IESO_MCP_KEY: the three IESO-hosted worldview tool servers
+      - VECTOR_DB_TOOL_KEY: IESO validation / layer vector-DB server
+      - SDE_MCP_KEY: Science Discovery Engine fallback server
+    """
+    ieso_mcp_key = os.environ.get("IESO_MCP_KEY")
+    vector_db_tool_key = os.environ.get("VECTOR_DB_TOOL_KEY")
+    sde_mcp_key = os.environ.get("SDE_MCP_KEY")
+
+    return [
+        MCP(
+            url="https://sudden-gold-carp-features-tool-worldview-permalink-82de.fastmcp.app/mcp",
+            id="ieso-worldview-tool-worldview_permalink_tool",
+            allowed_tools=["worldview_permalink_tool"],
+            authorization_token=ieso_mcp_key,
+            description="Permalink generation for NASA worldview.",
+        ),
+        MCP(
+            url="https://sudden-gold-carp-features-tool-cmr-uat.fastmcp.app/mcp",
+            id="ieso-worldview-tool-umm_vis_lookup_tool",
+            allowed_tools=["umm_vis_lookup_tool"],
+            authorization_token=ieso_mcp_key,
+            description="Layerid Visualization lookup for CMR Concept id",
+        ),
+        MCP(
+            url="https://sudden-gold-carp-features-tools-earthdata-search-da3be0.fastmcp.app/mcp",
+            id="ieso-worldview-tool-earthdata_search_landing_page_tool",
+            allowed_tools=["earthdata_search_landing_page_tool"],
+            authorization_token=ieso_mcp_key,
+            description="Earthdata search landing page for concept id",
+        ),
+        MCP(
+            url="https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp",
+            id="CMR_MCP_Server",
+            allowed_tools=[
+                "search_collections",
+                "get_granules",
+                "get_collection_metadata",
+            ],
+            description=("CMR MCP server to fetch metadata information including links to download datasets"),
+        ),
+        MCP(
+            url="https://ieso-benchmark-mcp-tools.fastmcp.app/mcp",
+            id="IESO_Validation_MCP_Server",
+            allowed_tools=[
+                "search_worldview_layers",
+                "validate_temporal_coverage",
+            ],
+            authorization_token=vector_db_tool_key,
+        ),
+        MCP(
+            url="https://brainy-lime-pheasant.fastmcp.app/mcp",
+            id="sde_mcp_tool",
+            allowed_tools=["sde_search_tool"],
+            authorization_token=sde_mcp_key,
+        ),
+    ]
+
+
+# -----------------------------------------------------------------------------
 # Configuration
 # -----------------------------------------------------------------------------
 
@@ -276,6 +345,7 @@ class IESOWorldviewAgentConfig(PydanticAIBaseAgentConfig):
     system_prompt: str = Field(default=IESO_WORLDVIEW_AGENT_SYSTEM_PROMPT)
     model_name: str = Field(default="openai:gpt-5.2")
     reasoning_effort: Literal["low", "medium", "high"] | None = Field(default="medium")
+    capabilities: list[Any] = Field(default_factory=get_default_ieso_worldview_capabilities)
 
 
 # -----------------------------------------------------------------------------
