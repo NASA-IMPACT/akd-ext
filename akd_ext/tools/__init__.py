@@ -27,6 +27,10 @@ from .worldview import (
     UMMVisLookupToolConfig,
     UMMVisLookupToolInputSchema,
     UMMVisLookupToolOutputSchema,
+    LayerSpec,
+    WorldviewPermalinkInputSchema,
+    WorldviewPermalinkOutputSchema,
+    WorldviewPermalinkTool,
 )
 
 __all__ = [
@@ -51,4 +55,8 @@ __all__ = [
     "UMMVisLookupToolConfig",
     "UMMVisLookupToolInputSchema",
     "UMMVisLookupToolOutputSchema",
+    "LayerSpec",
+    "WorldviewPermalinkInputSchema",
+    "WorldviewPermalinkOutputSchema",
+    "WorldviewPermalinkTool",
 ]

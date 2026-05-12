@@ -8,10 +8,21 @@ from .cmr import (
     UMMVisLookupToolOutputSchema,
 )
 
+from akd_ext.tools.worldview.permalink import (
+    LayerSpec,
+    WorldviewPermalinkInputSchema,
+    WorldviewPermalinkOutputSchema,
+    WorldviewPermalinkTool,
+)
+
 __all__ = [
     "LayerMapping",
     "UMMVisLookupTool",
     "UMMVisLookupToolConfig",
     "UMMVisLookupToolInputSchema",
     "UMMVisLookupToolOutputSchema",
+    "LayerSpec",
+    "WorldviewPermalinkInputSchema",
+    "WorldviewPermalinkOutputSchema",
+    "WorldviewPermalinkTool",
 ]
