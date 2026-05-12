@@ -9,14 +9,14 @@ import httpx
 import pytest
 from pydantic import ValidationError
 
-from akd_ext.tools.worldview.cmr_umm_vis import (
+from akd_ext.tools.worldview.cmr import (
     LayerMapping,
     UMMVisLookupTool,
     UMMVisLookupToolConfig,
     UMMVisLookupToolInputSchema,
     UMMVisLookupToolOutputSchema,
 )
-from akd_ext.tools.worldview.cmr_umm_vis.ummvis_lookup import (
+from akd_ext.tools.worldview.cmr.ummvis_lookup import (
     _coerce_bbox,
     _coerce_datetime,
     _dedupe_layers,
@@ -476,7 +476,7 @@ def _build_tool_with_transport(transport: httpx.MockTransport) -> UMMVisLookupTo
 
     # Monkeypatch only on this tool's reference. We can't mutate httpx globally
     # without leaking into other tests.
-    import akd_ext.tools.worldview.cmr_umm_vis.ummvis_lookup as module
+    import akd_ext.tools.worldview.cmr.ummvis_lookup as module
 
     module.httpx.AsyncClient = factory  # type: ignore[assignment]
     tool._restore_httpx = lambda: setattr(module.httpx, "AsyncClient", real_async_client)  # type: ignore[attr-defined]
@@ -488,7 +488,7 @@ class TestTwoPath:
     @pytest.fixture(autouse=True)
     def _restore_httpx(self):
         # Capture the original before each test, restore after.
-        import akd_ext.tools.worldview.cmr_umm_vis.ummvis_lookup as module
+        import akd_ext.tools.worldview.cmr.ummvis_lookup as module
 
         original = module.httpx.AsyncClient
         yield
