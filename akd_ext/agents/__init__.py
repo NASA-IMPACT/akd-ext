@@ -28,7 +28,7 @@ from akd_ext.agents.gap import (
     GapAgentOutputSchema,
 )
 
-from akd_ext.agents.ieso.worldview import (
+from akd_ext.agents.ieso_worldview import (
     IESOWorldviewAgent,
     IESOWorldviewAgentConfig,
     IESOWorldviewAgentInputSchema,
