@@ -37,7 +37,12 @@ def _intro(mo):
         - Type a query (e.g. *"Show Saharan dust over the Atlantic on 2023-06-15"*).
         - The agent may answer directly, ask a clarifying question, or
           render a URL via `geoui_render_intent` once it has enough info.
-        - URLs in the response are clickable.
+        - After rendering, the agent opens the URL in a Chromium window
+          driven by Playwright MCP. **One Chromium spans the whole
+          session** — pan, zoom, and date-scrub directly in the map; the
+          agent reads back the live URL on the next turn and refines from
+          there.
+        - First run may pause while Playwright downloads Chromium (~150 MB).
         """
     )
     return
@@ -73,10 +78,17 @@ def _env(mo):
 
 
 @app.cell
-def _agent(missing_keys):
-    """Instantiate the agent once. If env is missing, surface as None
-    and the chat cell will render a placeholder instead.
+async def _agent(missing_keys):
+    """Instantiate the agent once and pre-enter the Playwright MCP so
+    Chromium spans every turn.
+
+    Why async: ``MCPServerStdio.__aenter__`` spawns the npx subprocess
+    and Chromium child; we want that to happen once at notebook startup
+    rather than per-arun. The server is reference-counted, so the
+    agent's per-run enter just bumps the count.
     """
+    from contextlib import AsyncExitStack
+
     from akd._base import TextOutput
 
     from ieso_w_geoui import (
@@ -84,15 +96,36 @@ def _agent(missing_keys):
         IESOWorldviewGeoUIAgentConfig,
         IESOWorldviewGeoUIAgentInputSchema,
     )
+    from ieso_w_geoui.agent import (
+        get_default_ieso_worldview_geoui_capabilities,
+        make_playwright_mcp,
+        playwright_capability,
+    )
 
     if missing_keys:
         agent = None
+        playwright = None
+        stack = None
     else:
-        agent = IESOWorldviewGeoUIAgent(IESOWorldviewGeoUIAgentConfig())
+        stack = AsyncExitStack()
+        playwright = make_playwright_mcp()
+        # Pre-enter: starts npx + Chromium once; agent.arun's per-run
+        # enter on the same instance is then a no-op refcount bump.
+        await stack.enter_async_context(playwright)
+
+        agent = IESOWorldviewGeoUIAgent(
+            IESOWorldviewGeoUIAgentConfig(
+                capabilities=[
+                    *get_default_ieso_worldview_geoui_capabilities(),
+                    playwright_capability(playwright),
+                ],
+            ),
+        )
 
     # Mutable container so the async chat handler can persist
-    # `agent.last_run_context` across turns.
-    session = {"ctx": None, "turns": 0, "last_output": None}
+    # `agent.last_run_context` across turns. ``stack`` lives here too so
+    # the reset cell can close it if we ever wire that path.
+    session = {"ctx": None, "turns": 0, "last_output": None, "stack": stack}
     return IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, session
 
 
@@ -100,9 +133,11 @@ def _agent(missing_keys):
 def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
     """The chat itself.
 
-    The handler is async; pydantic_ai's MCP toolset is set up on first
-    use and torn down per-`arun` (so MCP cold-start cost shows up on
-    the first turn but not subsequent ones).
+    The handler is async. The Playwright MCP is held open by the
+    ``_agent`` cell's ``AsyncExitStack`` and reference-counted, so
+    Chromium spans every turn. Streamable-HTTP MCPs (CMR) are still
+    spun up per ``arun`` — that cost shows up on each turn but is
+    small relative to LLM latency.
     """
 
     def _flatten_exceptions(exc: BaseException) -> list[BaseException]:

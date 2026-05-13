@@ -28,6 +28,7 @@ from akd_ext.tools.worldview import (
 )
 from pydantic import Field
 from pydantic_ai.capabilities import MCP
+from pydantic_ai.mcp import MCPServerStdio
 
 from ieso_w_geoui.tools import GeoUIGetStateTool, GeoUIRenderIntentTool
 
@@ -68,6 +69,12 @@ IESO_WORLDVIEW_GEOUI_AGENT_SYSTEM_PROMPT = """
   * **GeoUI Protocol tools (Primary visualization interface)**
     * ``geoui_render_intent(intent)`` — render a ``GeoIntent`` as a Worldview permalink URL
     * ``geoui_get_state(url)`` — read the current application state from a Worldview URL
+  * **Browser tools (Playwright MCP) — used to open the visualization and observe live state**
+    * ``browser_navigate(url)`` — open a URL in the user-facing Chromium window
+    * ``browser_evaluate(function)`` — run a JS snippet in the open page; primary use is
+      ``() => window.location.href`` to read the current Worldview URL after the user may
+      have interacted with the map
+    * Other Playwright tools may be exposed; do not use them unless explicitly asked.
   * **CMR API (Metadata Authority)**
     * ``search_collections``, ``get_collection_metadata``
     * UMM-based authoritative metadata
@@ -191,8 +198,16 @@ IESO_WORLDVIEW_GEOUI_AGENT_SYSTEM_PROMPT = """
 
   ### **Step 6.5: Observe Current State (when iterating)**
 
-  * If a prior Worldview URL exists from earlier in the conversation,
-    call ``geoui_get_state(url=...)`` to retrieve the current ``GeoIntent``.
+  * On every turn after the first, read the **live** Worldview URL from
+    the browser — do NOT trust your memory of the last URL you produced.
+    The user may have panned, zoomed, toggled layers, or scrubbed the
+    date directly in the map, and those changes only show up in the
+    browser's address bar.
+  * Procedure:
+    1. Call ``browser_evaluate(function="() => window.location.href")``
+       to get the current URL.
+    2. Call ``geoui_get_state(url=...)`` on that URL to obtain the
+       current ``GeoIntent``.
   * Treat the returned GeoIntent as your starting point for refinement.
   * Carry forward fields the user did not ask to change; modify only
     the fields implicated by the latest user request.
@@ -202,7 +217,11 @@ IESO_WORLDVIEW_GEOUI_AGENT_SYSTEM_PROMPT = """
 
   * Build a **``GeoIntent``** describing the desired application state.
   * Call ``geoui_render_intent(intent=...)`` to obtain the Worldview
-    permalink URL. The returned URL is the visualization the user opens.
+    permalink URL.
+  * **Immediately** call ``browser_navigate(url=...)`` with that URL so
+    the visualization opens in the user-facing Chromium window. The
+    user is watching that window — do not just hand back a URL string
+    and stop. Navigation is part of finishing the turn.
   * GeoIntent core fields:
     * ``viewport``: ``{ "bbox": [west, south, east, north], "crs": "EPSG:4326" }``
       (``crs`` defaults to ``"EPSG:4326"``; use ``"EPSG:3413"`` for arctic
@@ -378,6 +397,61 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
         #     authorization_token=os.environ.get("SDE_MCP_KEY"),
         # ),
     ]
+
+
+# -----------------------------------------------------------------------------
+# Playwright MCP wiring (Option A: persistent Chromium across turns)
+# -----------------------------------------------------------------------------
+#
+# The browser sits behind an MCP server speaking stdio. We want a single
+# Chromium process to span every ``agent.arun`` so the user can interact
+# with the map between turns. The trick is pydantic_ai's reference-counted
+# ``MCPServer.__aenter__``: if the notebook pre-enters the stdio server
+# once at startup (running_count → 1), each per-run ``__aenter__`` from
+# ``agent.run`` just bumps the count and skips re-spawning. Closing the
+# notebook's hold then tears Chromium down.
+#
+# Usage from the notebook:
+#
+#     pw = make_playwright_mcp()
+#     await stack.enter_async_context(pw)        # hold Chromium open
+#     agent = IESOWorldviewGeoUIAgent(
+#         IESOWorldviewGeoUIAgentConfig(
+#             capabilities=[
+#                 *get_default_ieso_worldview_geoui_capabilities(),
+#                 playwright_capability(pw),
+#             ],
+#         ),
+#     )
+
+
+def make_playwright_mcp() -> MCPServerStdio:
+    """Return an unstarted Playwright MCP stdio server.
+
+    First run downloads Chromium (~150 MB) on demand — pre-warm before
+    a poster demo. Subsequent runs reuse the cached browser binary.
+    """
+    return MCPServerStdio(command="npx", args=["@playwright/mcp@latest"])
+
+
+def playwright_capability(server: MCPServerStdio) -> MCP:
+    """Wrap an externally-owned ``MCPServerStdio`` as a pydantic_ai capability.
+
+    ``builtin=False`` forces the local toolset path; ``local=server`` reuses
+    the caller's already-instantiated (and ideally already-entered) MCP
+    server instead of building a fresh one. ``allowed_tools`` restricts the
+    ~20-tool Playwright surface to the two the agent should reach for —
+    everything else (snapshot, click, evaluate-on-element, etc.) is filtered
+    out so the model doesn't wander.
+    """
+    return MCP(
+        url="stdio://playwright-mcp",  # placeholder; only used for the cap's id slug
+        builtin=False,
+        local=server,
+        id="playwright_mcp",
+        allowed_tools=["browser_navigate", "browser_evaluate"],
+        description="Headed Chromium for opening Worldview URLs and reading back live state.",
+    )
 
 
 def get_default_geoui_tools() -> list[BaseTool]:
