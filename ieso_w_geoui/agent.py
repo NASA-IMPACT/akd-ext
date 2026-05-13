@@ -454,6 +454,20 @@ def make_playwright_mcp(cdp_endpoint: str | None = None) -> MCPServerStdio:
             ``"http://localhost:9222"``). Required for state to survive
             across turns. If ``None``, the MCP boots its own Chromium
             on each arun (first such boot downloads ~150 MB).
+
+    Used by:
+        ``ieso_w_geoui/notebooks/chat.py`` ``_agent`` cell, which reads
+        ``PLAYWRIGHT_CDP_ENDPOINT`` from the env and passes it through
+        so the long-lived Chromium launched by ``ieso_w_geoui/start.sh``
+        persists across chat turns.
+
+    Why ``cdp_endpoint`` is optional:
+        The same helper serves two flows. The demo / notebook path
+        sets ``cdp_endpoint`` so Chromium state (URL, pan/zoom, layer
+        toggles) lives outside Python and survives across the
+        per-arun MCP lifecycle. The fresh-browser-per-arun path
+        (``cdp_endpoint=None``) is useful for headless tests where
+        state persistence doesn't matter.
     """
     args = ["@playwright/mcp@latest"]
     if cdp_endpoint:
@@ -470,6 +484,30 @@ def playwright_capability(server: MCPServerStdio) -> MCP:
     ~20-tool Playwright surface to the two the agent should reach for —
     everything else (snapshot, click, evaluate-on-element, etc.) is filtered
     out so the model doesn't wander.
+
+    Used by:
+        ``ieso_w_geoui/notebooks/chat.py`` ``_agent`` cell, which
+        appends the returned ``MCP`` to the agent's ``capabilities``
+        list alongside CMR, Thinking, and the per-turn trace hook.
+
+    Why ``builtin=False, local=server``:
+        The caller owns the ``MCPServerStdio`` lifetime, and each
+        ``agent.arun`` enters and exits the MCP inside one anyio
+        task. An earlier attempt that pre-entered the MCP in a marimo
+        cell and held it across turns raised
+        ``RuntimeError: Attempted to exit cancel scope in a different
+        task than it was entered in`` — anyio binds the MCP's internal
+        task group to the entering task and marimo's per-cell tasks
+        die on return. The current design avoids that by launching
+        Chromium externally (see ``ieso_w_geoui/start.sh``) and
+        letting the MCP live one arun at a time; this capability
+        wrapper is the API that supports that pattern.
+
+    Why ``allowed_tools`` is narrowed:
+        Playwright MCP exposes ~20 tools. Restricting to
+        ``browser_navigate`` + ``browser_evaluate`` keeps the model
+        from wandering into snapshot/click/file flows the system
+        prompt doesn't authorize.
     """
     return MCP(
         url="stdio://playwright-mcp",  # placeholder; only used for the cap's id slug
