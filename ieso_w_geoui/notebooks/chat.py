@@ -237,6 +237,27 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
     import asyncio
 
     async def _handler(messages, config):
+        """Streaming handler with live tool-call visibility.
+
+        Streams a collapsible ``<details><summary>Tool calls</summary>``
+        block whose contents grow as ``before_tool_execute`` fires. The
+        user can expand it mid-turn to see whether the agent is making
+        progress or has entered a loop — that visibility is what makes
+        manual stop usable.
+
+        Tradeoffs we're explicitly accepting:
+
+        - Marimo's chat-streaming protocol can raise
+          ``Received text-delta for missing text part`` under heavy
+          chunking. We mitigate by polling slowly (0.5s) and batching
+          every new tool fired since the last poll into a single yield,
+          which keeps the chunk count to ~one per second.
+        - ``asyncio.create_task`` detaches ``arun`` from this generator's
+          task. If the user hits stop, marimo closes the generator and
+          we'd leak a background task that keeps firing tools. The
+          ``finally`` block below cancels ``arun_task`` on any exit
+          (normal, error, or ``GeneratorExit``).
+        """
         if agent is None:
             yield "Agent not initialised — fix the missing env vars above and re-run the notebook."
             return
@@ -251,105 +272,106 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
                 IESOWorldviewGeoUIAgentInputSchema(query=latest),
                 run_context=session["ctx"],
                 # Reset per-turn usage. AKD's _wire_usage_limits caps
-                # request_limit at max_tool_iterations (≤50), and the
-                # default arun threads cumulative usage from
-                # run_context — together they fire UsageLimitExceeded
-                # after ~5–10 turns of tool-heavy chat. Per-turn reset
-                # restores request_limit's intended runaway-protection
-                # role; cumulative requests are tracked below for the
-                # session-state view.
+                # request_limit at max_tool_iterations (≤50); the
+                # default arun threads cumulative usage from run_context
+                # — together they fire UsageLimitExceeded after ~5–10
+                # tool-heavy turns. Per-turn reset restores
+                # request_limit's intended runaway-protection role;
+                # cumulative usage is tracked manually below.
                 usage=None,
             )
         )
 
-        # Poll the trace list while arun runs in the background, yielding
-        # a numbered line every time the hook appends a new tool name.
-        # The lines accumulate inside a single `<details open>` block —
-        # opened lazily on the first tool call so clarification replies
-        # (zero tools) don't render an empty collapsible header.
-        # asyncio.wait with a small timeout doesn't cancel the task; it
-        # just bounds how long we wait before re-checking.
         details_opened = False
         last_count = 0
 
-        def _open_details() -> str:
-            # Closed by default — Gemini-style "show thinking" toggle.
-            # The list still streams in while the agent runs; the user
-            # clicks the summary to expand and see what's been called.
-            return "<details><summary>Tool calls</summary>\n\n"
+        def _flush_new_tools() -> str:
+            """Build a chunk for any tools recorded since the last yield.
 
-        def _new_tool_lines(start: int, names: list[str]) -> str:
-            return "".join(f"{i}. `{n}`\n" for i, n in enumerate(names, start + 1))
-
-        while not arun_task.done():
-            await asyncio.wait({arun_task}, timeout=0.15)
+            Empty string when no new tools fired this tick. Opens the
+            ``<details>`` block lazily on the first tool so turns that
+            never call a tool don't render an empty collapsible.
+            """
+            nonlocal details_opened, last_count
             tools = list(session["current_turn_tools"])
-            if len(tools) > last_count:
-                chunk = ""
-                if not details_opened:
-                    chunk = _open_details()
-                    details_opened = True
-                chunk += _new_tool_lines(last_count, tools[last_count:])
-                yield chunk
-                last_count = len(tools)
-        # Drain anything that fired in the final tick before completion.
-        tools = list(session["current_turn_tools"])
-        if len(tools) > last_count:
+            if len(tools) <= last_count:
+                return ""
             chunk = ""
             if not details_opened:
-                chunk = _open_details()
+                # Closed by default — Gemini-style "show thinking" toggle.
+                chunk = "<details><summary>Tool calls</summary>\n\n"
                 details_opened = True
-            chunk += _new_tool_lines(last_count, tools[last_count:])
-            yield chunk
-
-        # Close the `<details>` block we opened. If no tools fired this
-        # turn, no opener was emitted and no closer is needed.
-        closer = "\n</details>\n" if details_opened else ""
-        sep = "\n---\n\n" if details_opened else ""
+            new = tools[last_count:]
+            chunk += "".join(f"{i}. `{n}`\n" for i, n in enumerate(new, last_count + 1))
+            last_count = len(tools)
+            return chunk
 
         try:
-            output = arun_task.result()
-        except BaseException as exc:  # noqa: BLE001 — surface ExceptionGroup too
-            yield closer + sep + _format_error(exc)
-            return
+            # Poll the trace list while arun runs. 0.5s timeout keeps
+            # this cooperative without flooding the marimo wire protocol.
+            # asyncio.wait doesn't cancel the task on timeout — it just
+            # bounds how long we wait before checking again.
+            while not arun_task.done():
+                await asyncio.wait({arun_task}, timeout=0.5)
+                chunk = _flush_new_tools()
+                if chunk:
+                    yield chunk
 
-        # Persist context for the next turn.
-        session["ctx"] = agent.last_run_context
-        session["turns"] += 1
-        session["last_output"] = output
-        # Accumulate usage manually since we no longer thread it through
-        # pydantic_ai's run-level counter. AKDRunUsage has no __add__,
-        # so we sum the three numeric fields by hand.
-        turn_usage = getattr(agent.last_run_context, "usage", None)
-        if turn_usage is not None:
-            cum = session.get("cum_usage")
-            if cum is None:
-                session["cum_usage"] = turn_usage
+            # Drain anything that fired in the final tick.
+            chunk = _flush_new_tools()
+            if chunk:
+                yield chunk
+
+            closer = "\n</details>\n" if details_opened else ""
+            sep = "\n---\n\n" if details_opened else ""
+
+            try:
+                output = arun_task.result()
+            except BaseException as exc:  # noqa: BLE001 — surface ExceptionGroup too
+                yield closer + sep + _format_error(exc)
+                return
+
+            # Persist context for the next turn.
+            session["ctx"] = agent.last_run_context
+            session["turns"] += 1
+            session["last_output"] = output
+            # AKDRunUsage has no __add__; sum field-wise.
+            turn_usage = getattr(agent.last_run_context, "usage", None)
+            if turn_usage is not None:
+                cum = session.get("cum_usage")
+                if cum is None:
+                    session["cum_usage"] = turn_usage
+                else:
+                    session["cum_usage"] = type(turn_usage)(
+                        input_tokens=(cum.input_tokens or 0) + (turn_usage.input_tokens or 0),
+                        output_tokens=(cum.output_tokens or 0) + (turn_usage.output_tokens or 0),
+                        requests=(cum.requests or 0) + (turn_usage.requests or 0),
+                    )
+
+            if isinstance(output, TextOutput):
+                body = output.content
             else:
-                session["cum_usage"] = type(turn_usage)(
-                    input_tokens=(cum.input_tokens or 0) + (turn_usage.input_tokens or 0),
-                    output_tokens=(cum.output_tokens or 0) + (turn_usage.output_tokens or 0),
-                    requests=(cum.requests or 0) + (turn_usage.requests or 0),
-                )
+                # Structured final output: render `result` markdown + clickable url.
+                # ``str(output)`` would give the Pydantic repr with escaped \n.
+                lines = [output.result.strip()]
+                url = getattr(output, "url", "") or ""
+                if url.strip():
+                    lines.append(f"\n**Worldview URL:** [{url}]({url})")
+                body = "\n".join(lines)
 
-        # Clarification / mid-conversation text: render the markdown body.
-        if isinstance(output, TextOutput):
-            body = output.content
-        else:
-            # Structured final output: `result` (sectioned markdown) + `url`.
-            # Returning ``str(output)`` here would give the Pydantic repr —
-            # escaped newlines, unwrapped one-liner — which is what shows up
-            # as "long text with literal \n" in the chat UI.
-            lines = [output.result.strip()]
-            url = getattr(output, "url", "") or ""
-            if url.strip():
-                lines.append(f"\n**Worldview URL:** [{url}]({url})")
-            body = "\n".join(lines)
-
-        # closer + sep computed above account for whether a <details>
-        # block was opened; no separate post-hoc trace block is needed
-        # because the live collapsible above already shows the trace.
-        yield closer + sep + body
+            yield closer + sep + body
+        finally:
+            # Cancel the detached arun_task on any exit path (normal,
+            # exception, or generator close from a "stop" click). Without
+            # this, hitting stop leaves the agent firing tools in the
+            # background — exactly the leak that contributed to turn 3's
+            # surprise behaviour.
+            if not arun_task.done():
+                arun_task.cancel()
+                try:
+                    await arun_task
+                except BaseException:  # noqa: BLE001 — swallow cancel propagation
+                    pass
 
     chat = mo.ui.chat(
         _handler,
