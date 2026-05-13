@@ -123,6 +123,7 @@ def _agent(cdp_endpoint, missing_keys):
     task.
     """
     from akd._base import TextOutput
+    from pydantic_ai.capabilities.hooks import Hooks
 
     from ieso_w_geoui import (
         IESOWorldviewGeoUIAgent,
@@ -135,21 +136,8 @@ def _agent(cdp_endpoint, missing_keys):
         playwright_capability,
     )
 
-    if missing_keys:
-        agent = None
-    else:
-        playwright = make_playwright_mcp(cdp_endpoint=cdp_endpoint)
-        agent = IESOWorldviewGeoUIAgent(
-            IESOWorldviewGeoUIAgentConfig(
-                capabilities=[
-                    *get_default_ieso_worldview_geoui_capabilities(),
-                    playwright_capability(playwright),
-                ],
-            ),
-        )
-
-    # Mutable container so the async chat handler can persist
-    # `agent.last_run_context` across turns.
+    # Session dict has to exist before the trace hook so the hook's
+    # closure can append to ``current_turn_tools``.
     # ``cum_usage`` is our own running tally: we pass ``usage=None`` per
     # turn (so pydantic_ai's request_limit doesn't trip on cumulative
     # counts — AKD's base config caps request_limit at 50), then add the
@@ -160,7 +148,33 @@ def _agent(cdp_endpoint, missing_keys):
         "last_output": None,
         "cum_usage": None,
         "cdp_endpoint": cdp_endpoint,
+        "current_turn_tools": [],
     }
+
+    # before_tool_execute fires once per model-issued tool call. We
+    # record the names in order so the chat can render a collapsible
+    # trace. The handler clears this list before each ``arun``.
+    trace_hook = Hooks()
+
+    @trace_hook.on.before_tool_execute
+    async def _record_tool_call(ctx, *, call, tool_def, args):
+        session["current_turn_tools"].append(tool_def.name)
+        return args
+
+    if missing_keys:
+        agent = None
+    else:
+        playwright = make_playwright_mcp(cdp_endpoint=cdp_endpoint)
+        agent = IESOWorldviewGeoUIAgent(
+            IESOWorldviewGeoUIAgentConfig(
+                capabilities=[
+                    *get_default_ieso_worldview_geoui_capabilities(),
+                    playwright_capability(playwright),
+                    trace_hook,
+                ],
+            ),
+        )
+
     return IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, session
 
 
@@ -185,6 +199,18 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
             return leaves
         return [exc]
 
+    def _format_tool_trace(tools: list[str]) -> str:
+        """Render an ordered tool-call trace as a collapsible details block.
+
+        Empty string when no tools were called this turn — keeps simple
+        clarification replies clean.
+        """
+        if not tools:
+            return ""
+        items = "\n".join(f"{i}. `{name}`" for i, name in enumerate(tools, 1))
+        suffix = "" if len(tools) == 1 else "s"
+        return f"\n\n<details><summary>Tool trace ({len(tools)} call{suffix})</summary>\n\n{items}\n\n</details>"
+
     def _format_error(exc: BaseException) -> str:
         """Format an exception (including ExceptionGroup) as a markdown
         block listing the leaf cause(s) plus the head of each traceback.
@@ -208,13 +234,20 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
             )
         return "\n".join(sections)
 
+    import asyncio
+
     async def _handler(messages, config):
         if agent is None:
-            return "Agent not initialised — fix the missing env vars above and re-run the notebook."
+            yield "Agent not initialised — fix the missing env vars above and re-run the notebook."
+            return
+
+        # Reset per-turn tool trace. The hook in _agent appends to this
+        # list on each before_tool_execute fire.
+        session["current_turn_tools"] = []
 
         latest = messages[-1].content if messages else ""
-        try:
-            output = await agent.arun(
+        arun_task = asyncio.create_task(
+            agent.arun(
                 IESOWorldviewGeoUIAgentInputSchema(query=latest),
                 run_context=session["ctx"],
                 # Reset per-turn usage. AKD's _wire_usage_limits caps
@@ -227,8 +260,58 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
                 # session-state view.
                 usage=None,
             )
+        )
+
+        # Poll the trace list while arun runs in the background, yielding
+        # a numbered line every time the hook appends a new tool name.
+        # The lines accumulate inside a single `<details open>` block —
+        # opened lazily on the first tool call so clarification replies
+        # (zero tools) don't render an empty collapsible header.
+        # asyncio.wait with a small timeout doesn't cancel the task; it
+        # just bounds how long we wait before re-checking.
+        details_opened = False
+        last_count = 0
+
+        def _open_details() -> str:
+            # Closed by default — Gemini-style "show thinking" toggle.
+            # The list still streams in while the agent runs; the user
+            # clicks the summary to expand and see what's been called.
+            return "<details><summary>Tool calls</summary>\n\n"
+
+        def _new_tool_lines(start: int, names: list[str]) -> str:
+            return "".join(f"{i}. `{n}`\n" for i, n in enumerate(names, start + 1))
+
+        while not arun_task.done():
+            await asyncio.wait({arun_task}, timeout=0.15)
+            tools = list(session["current_turn_tools"])
+            if len(tools) > last_count:
+                chunk = ""
+                if not details_opened:
+                    chunk = _open_details()
+                    details_opened = True
+                chunk += _new_tool_lines(last_count, tools[last_count:])
+                yield chunk
+                last_count = len(tools)
+        # Drain anything that fired in the final tick before completion.
+        tools = list(session["current_turn_tools"])
+        if len(tools) > last_count:
+            chunk = ""
+            if not details_opened:
+                chunk = _open_details()
+                details_opened = True
+            chunk += _new_tool_lines(last_count, tools[last_count:])
+            yield chunk
+
+        # Close the `<details>` block we opened. If no tools fired this
+        # turn, no opener was emitted and no closer is needed.
+        closer = "\n</details>\n" if details_opened else ""
+        sep = "\n---\n\n" if details_opened else ""
+
+        try:
+            output = arun_task.result()
         except BaseException as exc:  # noqa: BLE001 — surface ExceptionGroup too
-            return _format_error(exc)
+            yield closer + sep + _format_error(exc)
+            return
 
         # Persist context for the next turn.
         session["ctx"] = agent.last_run_context
@@ -251,17 +334,22 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
 
         # Clarification / mid-conversation text: render the markdown body.
         if isinstance(output, TextOutput):
-            return output.content
+            body = output.content
+        else:
+            # Structured final output: `result` (sectioned markdown) + `url`.
+            # Returning ``str(output)`` here would give the Pydantic repr —
+            # escaped newlines, unwrapped one-liner — which is what shows up
+            # as "long text with literal \n" in the chat UI.
+            lines = [output.result.strip()]
+            url = getattr(output, "url", "") or ""
+            if url.strip():
+                lines.append(f"\n**Worldview URL:** [{url}]({url})")
+            body = "\n".join(lines)
 
-        # Structured final output: `result` (sectioned markdown) + `url`.
-        # Returning ``str(output)`` here would give the Pydantic repr —
-        # escaped newlines, unwrapped one-liner — which is what shows up
-        # as "long text with literal \n" in the chat UI.
-        lines = [output.result.strip()]
-        url = getattr(output, "url", "") or ""
-        if url.strip():
-            lines.append(f"\n**Worldview URL:** [{url}]({url})")
-        return "\n".join(lines)
+        # closer + sep computed above account for whether a <details>
+        # block was opened; no separate post-hoc trace block is needed
+        # because the live collapsible above already shows the trace.
+        yield closer + sep + body
 
     chat = mo.ui.chat(
         _handler,
