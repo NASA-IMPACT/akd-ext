@@ -113,6 +113,51 @@ def _env(mo):
 
 
 @app.cell
+def _warm_button(mo):
+    """Manual MCP warm-up trigger.
+
+    The first call to a remote MCP after it has gone cold (FastMCP
+    DNS-level suspension, Lambda cold-start) can take several
+    seconds. ``start.sh`` warms them once at launch; this button
+    lets you re-warm mid-session — useful before kicking off a query
+    you care about timing.
+    """
+    warm_btn = mo.ui.run_button(label="Warm MCPs")
+    warm_btn
+    return (warm_btn,)
+
+
+@app.cell
+async def _warm_handler(mo, warm_btn):
+    """React to the warm button. Idle until ``warm_btn.value`` flips
+    to True on click, then call ``warm()`` and render one line per
+    endpoint with its HTTP status (or transport-error class).
+
+    Marimo cell bodies are top-level code (mid-cell ``return`` is a
+    syntax error), so we compute ``out`` in an if/else chain and
+    display it once at the end.
+    """
+    if not warm_btn.value:
+        out = mo.md("")
+    else:
+        from ieso_w_geoui.warm_mcps import warm
+
+        results = await warm()
+        if not results:
+            out = mo.md("_No remote MCPs configured — nothing to warm._")
+        else:
+            lines = [f"**Warmed {len(results)} endpoint(s):**", ""]
+            for r in results:
+                if r.ok:
+                    lines.append(f"- `{r.url}` → HTTP **{r.status}**")
+                else:
+                    lines.append(f"- `{r.url}` → warm failed ({r.error})")
+            out = mo.md("\n".join(lines))
+    out
+    return
+
+
+@app.cell
 def _agent(cdp_endpoint, missing_keys):
     """Instantiate the agent. Per-turn MCP lifecycle; Chromium is held
     *outside* the notebook via CDP (see ``PLAYWRIGHT_CDP_ENDPOINT`` in

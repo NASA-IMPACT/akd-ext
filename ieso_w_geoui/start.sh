@@ -151,6 +151,15 @@ echo
 
 # Run marimo from the worktree root (one level up from this script).
 # Running inside ieso_w_geoui/ would shadow the package and break the
-# notebook's `from ieso_w_geoui import …` import.
+# notebook's `from ieso_w_geoui import …` import. We `cd` here so the
+# MCP warmer below can also resolve its imports against the worktree.
 cd "$SCRIPT_DIR/.."
+
+# Pre-warm remote MCP endpoints (auto-discovered from the agent's
+# capability list) so the first chat turn doesn't pay cold-start
+# latency. `|| true` keeps a failed warm from aborting launch — the
+# agent will retry on its first real call.
+uv run python -m ieso_w_geoui.warm_mcps || true
+echo
+
 exec uv run marimo "$MARIMO_MODE" ieso_w_geoui/notebooks/chat.py
