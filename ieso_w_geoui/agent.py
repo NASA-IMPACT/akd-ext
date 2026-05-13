@@ -23,6 +23,9 @@ from typing import Any, Literal
 from akd._base import InputSchema, OutputSchema, TextOutput
 from akd.tools import BaseTool
 from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
+from akd_ext.tools.worldview import (
+    EarthdataSearchLandingPageTool,
+)
 from pydantic import Field
 from pydantic_ai.capabilities import MCP
 
@@ -304,36 +307,52 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
     """Default MCP server capabilities for the GeoUI-variant agent.
 
     Same as :func:`akd_ext.agents.ieso_worldview.get_default_ieso_worldview_capabilities`
-    minus the ``worldview_permalink_tool`` MCP. Permalink construction is
-    now a local tool (``geoui_render_intent``).
+    minus the ``worldview_permalink_tool`` MCP (replaced by the local
+    ``geoui_render_intent`` tool) and minus the three IESO/SDE MCPs
+    whose tools we now run locally to sidestep FastMCP Cloud cold-start
+    DNS hiccups:
+
+      - ``umm_vis_lookup_tool``               → ``UMMVisLookupTool`` (local)
+      - ``earthdata_search_landing_page_tool``→ ``EarthdataSearchLandingPageTool`` (local)
+      - ``sde_search_tool``                   → ``SDESearchTool`` (local)
+
+    The two MCPs that remain have no local equivalent in this codebase:
+
+      - ``CMR_MCP_Server`` (AWS-hosted; no cold-start risk).
+      - ``IESO_Validation_MCP_Server`` (FastMCP-hosted; may cold-start —
+        we accept that until a local version exists).
 
     Auth tokens are read from env at construction time:
-      - IESO_MCP_KEY: the two remaining IESO-hosted worldview tool servers
-      - VECTOR_DB_TOOL_KEY: IESO validation / layer vector-DB server
-      - SDE_MCP_KEY: Science Discovery Engine fallback server
+      - IESO_MCP_KEY:        currently unused; was for the disabled MCPs
+      - VECTOR_DB_TOOL_KEY:  IESO validation / layer vector-DB server
+      - SDE_MCP_KEY:         currently unused; was for the disabled SDE MCP
     """
-    ieso_mcp_key = os.environ.get("IESO_MCP_KEY")
-    vector_db_tool_key = os.environ.get("VECTOR_DB_TOOL_KEY")
-    sde_mcp_key = os.environ.get("SDE_MCP_KEY")
+    # vector_db_tool_key = os.environ.get("VECTOR_DB_TOOL_KEY")
 
     return [
+        # ── DISABLED: replaced by local UMMVisLookupTool ──────────────────
+        # MCP(
+        #     url="https://sudden-gold-carp-features-tool-cmr-uat.fastmcp.app/mcp",
+        #     id="ieso-worldview-tool-umm_vis_lookup_tool",
+        #     allowed_tools=["umm_vis_lookup_tool"],
+        #     authorization_token=os.environ.get("IESO_MCP_KEY"),
+        #     description="Layerid Visualization lookup for CMR Concept id",
+        # ),
+        # ── DISABLED: replaced by local EarthdataSearchLandingPageTool ────
+        # MCP(
+        #     url="https://sudden-gold-carp-features-tools-earthdata-search-da3be0.fastmcp.app/mcp",
+        #     id="ieso-worldview-tool-earthdata_search_landing_page_tool",
+        #     allowed_tools=["earthdata_search_landing_page_tool"],
+        #     authorization_token=os.environ.get("IESO_MCP_KEY"),
+        #     description="Earthdata search landing page for concept id",
+        # ),
         MCP(
-            url="https://sudden-gold-carp-features-tool-cmr-uat.fastmcp.app/mcp",
-            id="ieso-worldview-tool-umm_vis_lookup_tool",
-            allowed_tools=["umm_vis_lookup_tool"],
-            authorization_token=ieso_mcp_key,
-            description="Layerid Visualization lookup for CMR Concept id",
-        ),
-        MCP(
-            url="https://sudden-gold-carp-features-tools-earthdata-search-da3be0.fastmcp.app/mcp",
-            id="ieso-worldview-tool-earthdata_search_landing_page_tool",
-            allowed_tools=["earthdata_search_landing_page_tool"],
-            authorization_token=ieso_mcp_key,
-            description="Earthdata search landing page for concept id",
-        ),
-        MCP(
-            url="https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp",
+            # Trailing slash is load-bearing: the server returns a 307 redirect
+            # without it, and pydantic_ai's MCP streamable-http client does not
+            # follow redirects (raises on raise_for_status).
+            url="https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp/",
             id="CMR_MCP_Server",
+            builtin=False,  # Force local streamable-HTTP client (respects trailing slash)
             allowed_tools=[
                 "search_collections",
                 "get_granules",
@@ -341,27 +360,41 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
             ],
             description="CMR MCP server to fetch metadata information including links to download datasets",
         ),
-        MCP(
-            url="https://ieso-benchmark-mcp-tools.fastmcp.app/mcp",
-            id="IESO_Validation_MCP_Server",
-            allowed_tools=[
-                "search_worldview_layers",
-                "validate_temporal_coverage",
-            ],
-            authorization_token=vector_db_tool_key,
-        ),
-        MCP(
-            url="https://brainy-lime-pheasant.fastmcp.app/mcp",
-            id="sde_mcp_tool",
-            allowed_tools=["sde_search_tool"],
-            authorization_token=sde_mcp_key,
-        ),
+        # ── Currently authorization issue ────
+        # MCP(
+        #     url="https://ieso-benchmark-mcp-tools.fastmcp.app/mcp",
+        #     id="IESO_Validation_MCP_Server",
+        #     allowed_tools=[
+        #         "search_worldview_layers",
+        #         "validate_temporal_coverage",
+        #     ],
+        #     authorization_token=vector_db_tool_key,
+        # ),
+        # ── DISABLED: replaced by local SDESearchTool ─────────────────────
+        # MCP(
+        #     url="https://brainy-lime-pheasant.fastmcp.app/mcp",
+        #     id="sde_mcp_tool",
+        #     allowed_tools=["sde_search_tool"],
+        #     authorization_token=os.environ.get("SDE_MCP_KEY"),
+        # ),
     ]
 
 
 def get_default_geoui_tools() -> list[BaseTool]:
-    """Default local AKD tools wired into the GeoUI-variant agent."""
-    return [GeoUIRenderIntentTool(), GeoUIGetStateTool()]
+    """Default local AKD tools wired into the GeoUI-variant agent.
+
+    Includes the two GeoUI Protocol tools plus three IESO/SDE tools that
+    we previously routed through FastMCP-hosted servers. The local
+    versions are functionally equivalent and avoid the cold-start DNS
+    issue (see ``get_default_ieso_worldview_geoui_capabilities``).
+    """
+    return [
+        GeoUIRenderIntentTool(),
+        GeoUIGetStateTool(),
+        # UMMVisLookupTool(), # currently uat server that ummvis depdends upon is broken
+        EarthdataSearchLandingPageTool(),
+        # SDESearchTool(), # currently uat server that ummvis depdends upon is broken
+    ]
 
 
 # -----------------------------------------------------------------------------
@@ -465,7 +498,9 @@ class IESOWorldviewGeoUIAgent(
 #
 # Requires:
 #   - .env populated from .env.example (or shell env) with at minimum
-#     OPENAI_API_KEY, IESO_MCP_KEY, VECTOR_DB_TOOL_KEY, SDE_MCP_KEY.
+#     OPENAI_API_KEY and VECTOR_DB_TOOL_KEY. IESO_MCP_KEY and SDE_MCP_KEY
+#     are no longer needed by this agent (their MCPs were replaced by
+#     local tool variants — see get_default_ieso_worldview_geoui_capabilities).
 #   - Cost: one LLM round-trip. The query is intentionally light; the
 #     agent may respond with a clarifying TextOutput rather than a
 #     rendered URL — that's a successful wiring test either way.
@@ -481,7 +516,7 @@ if __name__ == "__main__":
 
     load_dotenv()
 
-    required = ["OPENAI_API_KEY", "IESO_MCP_KEY", "VECTOR_DB_TOOL_KEY", "SDE_MCP_KEY"]
+    required = ["OPENAI_API_KEY", "VECTOR_DB_TOOL_KEY"]
     missing = [k for k in required if not os.getenv(k)]
     if missing:
         print(f"Missing env vars: {missing}")
