@@ -23,9 +23,9 @@ from typing import Any, Literal
 from akd._base import InputSchema, OutputSchema, TextOutput
 from akd.tools import BaseTool
 from akd_ext.agents._base import PydanticAIBaseAgent, PydanticAIBaseAgentConfig
-from akd_ext.tools.worldview import (
-    EarthdataSearchLandingPageTool,
-)
+from akd_ext.tools.worldview import EarthdataSearchLandingPageTool, UMMVisLookupTool
+from akd_ext.tools.sde_search import SDESearchTool
+
 from pydantic import Field
 from pydantic_ai.capabilities import MCP
 from pydantic_ai.mcp import MCPServerStdio
@@ -346,15 +346,13 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
       - VECTOR_DB_TOOL_KEY:  IESO validation / layer vector-DB server
       - SDE_MCP_KEY:         currently unused; was for the disabled SDE MCP
     """
-    # vector_db_tool_key = os.environ.get("VECTOR_DB_TOOL_KEY")
-
     return [
         # ── DISABLED: replaced by local UMMVisLookupTool ──────────────────
         # MCP(
         #     url="https://sudden-gold-carp-features-tool-cmr-uat.fastmcp.app/mcp",
         #     id="ieso-worldview-tool-umm_vis_lookup_tool",
         #     allowed_tools=["umm_vis_lookup_tool"],
-        #     authorization_token=os.environ.get("IESO_MCP_KEY"),
+        #     authorization_token=f"Bearer {os.environ.get('IESO_MCP_KEY')}",
         #     description="Layerid Visualization lookup for CMR Concept id",
         # ),
         # ── DISABLED: replaced by local EarthdataSearchLandingPageTool ────
@@ -362,7 +360,7 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
         #     url="https://sudden-gold-carp-features-tools-earthdata-search-da3be0.fastmcp.app/mcp",
         #     id="ieso-worldview-tool-earthdata_search_landing_page_tool",
         #     allowed_tools=["earthdata_search_landing_page_tool"],
-        #     authorization_token=os.environ.get("IESO_MCP_KEY"),
+        #     authorization_token=f"Bearer {os.environ.get('IESO_MCP_KEY')}",
         #     description="Earthdata search landing page for concept id",
         # ),
         MCP(
@@ -380,21 +378,21 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
             description="CMR MCP server to fetch metadata information including links to download datasets",
         ),
         # ── Currently authorization issue ────
-        # MCP(
-        #     url="https://ieso-benchmark-mcp-tools.fastmcp.app/mcp",
-        #     id="IESO_Validation_MCP_Server",
-        #     allowed_tools=[
-        #         "search_worldview_layers",
-        #         "validate_temporal_coverage",
-        #     ],
-        #     authorization_token=vector_db_tool_key,
-        # ),
+        MCP(
+            url="https://ieso-benchmark-mcp-tools.fastmcp.app/mcp",
+            id="IESO_Validation_MCP_Server",
+            allowed_tools=[
+                "search_worldview_layers",
+                "validate_temporal_coverage",
+            ],
+            authorization_token=f"Bearer {os.environ.get('VECTOR_DB_TOOL_KEY')}",
+        ),
         # ── DISABLED: replaced by local SDESearchTool ─────────────────────
         # MCP(
         #     url="https://brainy-lime-pheasant.fastmcp.app/mcp",
         #     id="sde_mcp_tool",
         #     allowed_tools=["sde_search_tool"],
-        #     authorization_token=os.environ.get("SDE_MCP_KEY"),
+        #     authorization_token=f"Bearer {os.environ.get('SDE_MCP_KEY')}",
         # ),
     ]
 
@@ -494,9 +492,9 @@ def get_default_geoui_tools() -> list[BaseTool]:
     return [
         GeoUIRenderIntentTool(),
         GeoUIGetStateTool(),
-        # UMMVisLookupTool(), # currently uat server that ummvis depdends upon is broken
+        UMMVisLookupTool(),
         EarthdataSearchLandingPageTool(),
-        # SDESearchTool(), # currently uat server that ummvis depdends upon is broken
+        SDESearchTool(),
     ]
 
 
