@@ -34,15 +34,34 @@ def _intro(mo):
         as Worldview permalink URLs. Each turn carries forward the agent's
         prior `run_context`, so the conversation has memory.
 
+        ### One-time setup
+
+        Launch Chromium with remote debugging **before** opening this
+        notebook, and point `PLAYWRIGHT_CDP_ENDPOINT` at it:
+
+        ```bash
+        # In one terminal — leave running:
+        /Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome \\
+            --remote-debugging-port=9222 \\
+            --user-data-dir=/tmp/worldview-chromium
+
+        # In the notebook's .env (or shell that launches marimo):
+        export PLAYWRIGHT_CDP_ENDPOINT=http://localhost:9222
+        ```
+
+        Each agent turn attaches a fresh Playwright MCP to this
+        already-running Chromium via CDP, so the map's URL / pan / zoom
+        survives across turns even though the MCP itself doesn't.
+
+        ### Using it
+
         - Type a query (e.g. *"Show Saharan dust over the Atlantic on 2023-06-15"*).
         - The agent may answer directly, ask a clarifying question, or
           render a URL via `geoui_render_intent` once it has enough info.
-        - After rendering, the agent opens the URL in a Chromium window
-          driven by Playwright MCP. **One Chromium spans the whole
-          session** — pan, zoom, and date-scrub directly in the map; the
-          agent reads back the live URL on the next turn and refines from
-          there.
-        - First run may pause while Playwright downloads Chromium (~150 MB).
+        - After rendering, the agent calls `browser_navigate` to open the
+          URL in your Chromium window. Pan, zoom, or scrub directly in
+          the map — on the next turn the agent reads the live URL back
+          via `browser_evaluate` and refines from there.
         """
     )
     return
@@ -62,33 +81,47 @@ def _env(mo):
     required_keys = ["OPENAI_API_KEY", "VECTOR_DB_TOOL_KEY"]
     missing_keys = [k for k in required_keys if not os.getenv(k)]
 
-    env_status = (
-        mo.callout(
+    cdp_endpoint = os.getenv("PLAYWRIGHT_CDP_ENDPOINT")
+
+    if missing_keys:
+        env_status = mo.callout(
             mo.md(
                 f"**Missing env vars:** `{', '.join(missing_keys)}`. "
                 f"Create `.env` from `.env.example` in the worktree root and re-run."
             ),
             kind="danger",
         )
-        if missing_keys
-        else mo.callout(mo.md(f"Env OK — keys present: `{', '.join(required_keys)}`."), kind="success")
-    )
+    elif not cdp_endpoint:
+        env_status = mo.callout(
+            mo.md(
+                "**`PLAYWRIGHT_CDP_ENDPOINT` not set.** The agent will boot a "
+                "fresh Chromium per turn and your pan/zoom state will not "
+                "survive between turns. Launch Chrome with "
+                "`--remote-debugging-port=9222` and export "
+                "`PLAYWRIGHT_CDP_ENDPOINT=http://localhost:9222` to get "
+                "persistent state (see the intro for the full command)."
+            ),
+            kind="warn",
+        )
+    else:
+        env_status = mo.callout(
+            mo.md(f"Env OK — required keys present and `PLAYWRIGHT_CDP_ENDPOINT={cdp_endpoint}` will be used."),
+            kind="success",
+        )
     env_status
-    return (missing_keys,)
+    return missing_keys, cdp_endpoint
 
 
 @app.cell
-async def _agent(missing_keys):
-    """Instantiate the agent once and pre-enter the Playwright MCP so
-    Chromium spans every turn.
-
-    Why async: ``MCPServerStdio.__aenter__`` spawns the npx subprocess
-    and Chromium child; we want that to happen once at notebook startup
-    rather than per-arun. The server is reference-counted, so the
-    agent's per-run enter just bumps the count.
+def _agent(cdp_endpoint, missing_keys):
+    """Instantiate the agent. Per-turn MCP lifecycle; Chromium is held
+    *outside* the notebook via CDP (see ``PLAYWRIGHT_CDP_ENDPOINT`` in
+    the env cell). Each ``agent.arun`` spawns a fresh Playwright MCP
+    that attaches to the running Chromium and tears down cleanly when
+    the arun completes — anyio's same-task enter/exit rule stays
+    satisfied because the MCP's scope is fully contained in the arun
+    task.
     """
-    from contextlib import AsyncExitStack
-
     from akd._base import TextOutput
 
     from ieso_w_geoui import (
@@ -104,15 +137,8 @@ async def _agent(missing_keys):
 
     if missing_keys:
         agent = None
-        playwright = None
-        stack = None
     else:
-        stack = AsyncExitStack()
-        playwright = make_playwright_mcp()
-        # Pre-enter: starts npx + Chromium once; agent.arun's per-run
-        # enter on the same instance is then a no-op refcount bump.
-        await stack.enter_async_context(playwright)
-
+        playwright = make_playwright_mcp(cdp_endpoint=cdp_endpoint)
         agent = IESOWorldviewGeoUIAgent(
             IESOWorldviewGeoUIAgentConfig(
                 capabilities=[
@@ -123,9 +149,18 @@ async def _agent(missing_keys):
         )
 
     # Mutable container so the async chat handler can persist
-    # `agent.last_run_context` across turns. ``stack`` lives here too so
-    # the reset cell can close it if we ever wire that path.
-    session = {"ctx": None, "turns": 0, "last_output": None, "stack": stack}
+    # `agent.last_run_context` across turns.
+    # ``cum_usage`` is our own running tally: we pass ``usage=None`` per
+    # turn (so pydantic_ai's request_limit doesn't trip on cumulative
+    # counts — AKD's base config caps request_limit at 50), then add the
+    # turn's usage here for display.
+    session = {
+        "ctx": None,
+        "turns": 0,
+        "last_output": None,
+        "cum_usage": None,
+        "cdp_endpoint": cdp_endpoint,
+    }
     return IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, session
 
 
@@ -133,11 +168,12 @@ async def _agent(missing_keys):
 def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
     """The chat itself.
 
-    The handler is async. The Playwright MCP is held open by the
-    ``_agent`` cell's ``AsyncExitStack`` and reference-counted, so
-    Chromium spans every turn. Streamable-HTTP MCPs (CMR) are still
-    spun up per ``arun`` — that cost shows up on each turn but is
-    small relative to LLM latency.
+    Async handler. All MCPs (Playwright + CMR) are spun up and torn
+    down per ``arun``. Chromium state is preserved by attaching the
+    Playwright MCP to an externally-owned Chromium via CDP, so the
+    cheap thing (subprocess spawn + JSON-RPC handshake) happens each
+    turn while the expensive thing (Chromium launch + page render) is
+    one-shot at the start of the session.
     """
 
     def _flatten_exceptions(exc: BaseException) -> list[BaseException]:
@@ -181,6 +217,15 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
             output = await agent.arun(
                 IESOWorldviewGeoUIAgentInputSchema(query=latest),
                 run_context=session["ctx"],
+                # Reset per-turn usage. AKD's _wire_usage_limits caps
+                # request_limit at max_tool_iterations (≤50), and the
+                # default arun threads cumulative usage from
+                # run_context — together they fire UsageLimitExceeded
+                # after ~5–10 turns of tool-heavy chat. Per-turn reset
+                # restores request_limit's intended runaway-protection
+                # role; cumulative requests are tracked below for the
+                # session-state view.
+                usage=None,
             )
         except BaseException as exc:  # noqa: BLE001 — surface ExceptionGroup too
             return _format_error(exc)
@@ -189,6 +234,20 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
         session["ctx"] = agent.last_run_context
         session["turns"] += 1
         session["last_output"] = output
+        # Accumulate usage manually since we no longer thread it through
+        # pydantic_ai's run-level counter. AKDRunUsage has no __add__,
+        # so we sum the three numeric fields by hand.
+        turn_usage = getattr(agent.last_run_context, "usage", None)
+        if turn_usage is not None:
+            cum = session.get("cum_usage")
+            if cum is None:
+                session["cum_usage"] = turn_usage
+            else:
+                session["cum_usage"] = type(turn_usage)(
+                    input_tokens=(cum.input_tokens or 0) + (turn_usage.input_tokens or 0),
+                    output_tokens=(cum.output_tokens or 0) + (turn_usage.output_tokens or 0),
+                    requests=(cum.requests or 0) + (turn_usage.requests or 0),
+                )
 
         if isinstance(output, TextOutput):
             return output.content
@@ -237,11 +296,14 @@ def _session_view(chat, mo, session):
                 pass
         return f"`{cls_name}`: {obj}"
 
-    usage_str = "n/a"
+    last_usage_str = "n/a"
     run_id_str = "n/a"
     if ctx is not None:
-        usage_str = str(ctx.usage) if ctx.usage is not None else "n/a"
+        last_usage_str = str(ctx.usage) if ctx.usage is not None else "n/a"
         run_id_str = ctx.run_id or "n/a"
+
+    cum_usage = session.get("cum_usage")
+    cum_usage_str = str(cum_usage) if cum_usage is not None else "n/a"
 
     mo.md(
         f"""
@@ -249,7 +311,8 @@ def _session_view(chat, mo, session):
 
         - **Turns:** {turns}
         - **Last `run_id`:** `{run_id_str}`
-        - **Cumulative usage:** `{usage_str}`
+        - **Last turn usage:** `{last_usage_str}`
+        - **Cumulative usage:** `{cum_usage_str}`
 
         #### Last output
 
@@ -273,6 +336,7 @@ def _reset_handler(mo, reset, session):
         session["ctx"] = None
         session["turns"] = 0
         session["last_output"] = None
+        session["cum_usage"] = None
         mo.md("_Session memory cleared. Next message starts a fresh conversation._")
     else:
         mo.md("")

@@ -400,21 +400,32 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
 
 
 # -----------------------------------------------------------------------------
-# Playwright MCP wiring (Option A: persistent Chromium across turns)
+# Playwright MCP wiring (CDP-attach: external Chromium spans turns)
 # -----------------------------------------------------------------------------
 #
-# The browser sits behind an MCP server speaking stdio. We want a single
-# Chromium process to span every ``agent.arun`` so the user can interact
-# with the map between turns. The trick is pydantic_ai's reference-counted
-# ``MCPServer.__aenter__``: if the notebook pre-enters the stdio server
-# once at startup (running_count → 1), each per-run ``__aenter__`` from
-# ``agent.run`` just bumps the count and skips re-spawning. Closing the
-# notebook's hold then tears Chromium down.
+# The browser sits behind an MCP server speaking stdio. We need Chromium
+# state (URL, pan/zoom, layer toggles) to survive across ``agent.arun``
+# calls so the user can interact with the map between turns. Earlier we
+# tried pre-entering the stdio server in an async marimo cell so the
+# subprocess would span every arun — pydantic_ai's reference-counted
+# ``MCPServer.__aenter__`` made that plausible on paper, but it doesn't
+# survive marimo's task model: ``MCPServerStdio`` enters an ``anyio``
+# task group internally, anyio insists the cancel scope exits on the
+# same asyncio task that entered it, and marimo's per-cell tasks die
+# the moment their cell returns. End result was
+# ``RuntimeError: Attempted to exit cancel scope in a different task
+# than it was entered in`` and the chat handler disappearing from the
+# marimo function registry.
+#
+# Fix: don't try to persist the MCP at all. Keep Chromium alive
+# *externally* (the user launches it with ``--remote-debugging-port``),
+# create the Playwright MCP fresh per arun, and have it attach via
+# ``--cdp-endpoint``. The MCP's anyio scope is then fully contained in
+# one arun task; Chromium state lives outside Python entirely.
 #
 # Usage from the notebook:
 #
-#     pw = make_playwright_mcp()
-#     await stack.enter_async_context(pw)        # hold Chromium open
+#     pw = make_playwright_mcp(cdp_endpoint="http://localhost:9222")
 #     agent = IESOWorldviewGeoUIAgent(
 #         IESOWorldviewGeoUIAgentConfig(
 #             capabilities=[
@@ -423,15 +434,33 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
 #             ],
 #         ),
 #     )
+#
+# Before opening the notebook the user launches Chromium with remote
+# debugging enabled, for example:
+#
+#     /Applications/Google\ Chrome.app/Contents/MacOS/Google\ Chrome \
+#         --remote-debugging-port=9222 \
+#         --user-data-dir=/tmp/worldview-chromium
+#
+# Leaving ``cdp_endpoint=None`` falls back to vanilla per-turn
+# Chromium boot (no state persistence) — useful for headless tests but
+# not the demo path.
 
 
-def make_playwright_mcp() -> MCPServerStdio:
+def make_playwright_mcp(cdp_endpoint: str | None = None) -> MCPServerStdio:
     """Return an unstarted Playwright MCP stdio server.
 
-    First run downloads Chromium (~150 MB) on demand — pre-warm before
-    a poster demo. Subsequent runs reuse the cached browser binary.
+    Args:
+        cdp_endpoint: If set, the MCP attaches to an already-running
+            Chromium via Chrome DevTools Protocol (e.g.
+            ``"http://localhost:9222"``). Required for state to survive
+            across turns. If ``None``, the MCP boots its own Chromium
+            on each arun (first such boot downloads ~150 MB).
     """
-    return MCPServerStdio(command="npx", args=["@playwright/mcp@latest"])
+    args = ["@playwright/mcp@latest"]
+    if cdp_endpoint:
+        args += ["--cdp-endpoint", cdp_endpoint]
+    return MCPServerStdio(command="npx", args=args)
 
 
 def playwright_capability(server: MCPServerStdio) -> MCP:
