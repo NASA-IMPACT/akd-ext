@@ -249,14 +249,18 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
                     requests=(cum.requests or 0) + (turn_usage.requests or 0),
                 )
 
+        # Clarification / mid-conversation text: render the markdown body.
         if isinstance(output, TextOutput):
             return output.content
-        return getattr(output, "text", None) or str(output)
 
-        # Structured output: `result` (sectioned narrative) + `url`.
+        # Structured final output: `result` (sectioned markdown) + `url`.
+        # Returning ``str(output)`` here would give the Pydantic repr —
+        # escaped newlines, unwrapped one-liner — which is what shows up
+        # as "long text with literal \n" in the chat UI.
         lines = [output.result.strip()]
-        if getattr(output, "url", "").strip():
-            lines.append(f"\n**Worldview URL:** [{output.url}]({output.url})")
+        url = getattr(output, "url", "") or ""
+        if url.strip():
+            lines.append(f"\n**Worldview URL:** [{url}]({url})")
         return "\n".join(lines)
 
     chat = mo.ui.chat(
