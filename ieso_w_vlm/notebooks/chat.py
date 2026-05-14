@@ -213,6 +213,7 @@ def _agent(cdp_endpoint, missing_keys):
     from akd._base import TextOutput
     from pydantic_ai.capabilities.hooks import Hooks
 
+    from ieso_benchmark import new_session_id
     from ieso_w_vlm import (
         IESOWorldviewVLMAgent,
         IESOWorldviewVLMAgentConfig,
@@ -230,9 +231,15 @@ def _agent(cdp_endpoint, missing_keys):
     # turn (so pydantic_ai's request_limit doesn't trip on cumulative
     # counts — AKD's base config caps request_limit at 50), then add the
     # turn's usage here for display.
+    # ``log_session_id`` groups all log rows from this marimo session;
+    # ``attempts`` increments on every ``_handler`` call (success +
+    # error), so error turns get their own ``turn_index`` rather than
+    # being silently skipped.
     session = {
         "ctx": None,
         "turns": 0,
+        "attempts": 0,
+        "log_session_id": new_session_id(),
         "last_output": None,
         "cum_usage": None,
         "cdp_endpoint": cdp_endpoint,
@@ -321,6 +328,9 @@ def _chat(IESOWorldviewVLMAgentInputSchema, TextOutput, agent, mo, session):
         return "\n".join(sections)
 
     import asyncio
+    import time
+
+    from ieso_benchmark import TurnRecord, append_turn_record, extract_usage
 
     async def _handler(messages, config):
         """Streaming handler with live tool-call visibility.
@@ -351,6 +361,12 @@ def _chat(IESOWorldviewVLMAgentInputSchema, TextOutput, agent, mo, session):
         # Reset per-turn tool trace. The hook in _agent appends to this
         # list on each before_tool_execute fire.
         session["current_turn_tools"] = []
+
+        # Bump attempt counter immediately so error turns get a
+        # unique turn_index in the log even if the arun fails before
+        # ``session["turns"]`` (successful turns) advances.
+        session["attempts"] += 1
+        t_start = time.monotonic()
 
         latest = messages[-1].content if messages else ""
         arun_task = asyncio.create_task(
@@ -419,10 +435,60 @@ def _chat(IESOWorldviewVLMAgentInputSchema, TextOutput, agent, mo, session):
             closer = "\n</details>\n" if details_opened else ""
             sep = "\n---\n\n" if details_opened else ""
 
+            output = None
+            turn_error: BaseException | None = None
             try:
                 output = arun_task.result()
             except BaseException as exc:  # noqa: BLE001 — surface ExceptionGroup too
-                yield closer + sep + _format_error(exc)
+                turn_error = exc
+
+            wall_clock = time.monotonic() - t_start
+
+            # Build + write benchmark log row. We log success and
+            # error turns uniformly; the distinguishing field is
+            # ``output_kind``. On error we set ``ctx=None`` so we
+            # don't misattribute the previous turn's ``run_id`` /
+            # ``usage`` to this errored attempt.
+            ctx = agent.last_run_context if turn_error is None else None
+            if turn_error is not None:
+                output_kind = "error"
+                final_url = None
+                error_type = type(turn_error).__name__
+                error_message = str(turn_error)[:500]
+            elif isinstance(output, TextOutput):
+                output_kind = "text"
+                final_url = None
+                error_type = None
+                error_message = None
+            else:
+                output_kind = "structured"
+                final_url = getattr(output, "url", None)
+                error_type = None
+                error_message = None
+
+            try:
+                append_turn_record(
+                    TurnRecord(
+                        agent="vlm",
+                        session_id=session["log_session_id"],
+                        run_id=str(getattr(ctx, "run_id", None)) if ctx else None,
+                        turn_index=session["attempts"],
+                        user_prompt=latest,
+                        tool_calls=list(session["current_turn_tools"]),
+                        tool_call_count=len(session["current_turn_tools"]),
+                        wall_clock_s=round(wall_clock, 3),
+                        usage=extract_usage(getattr(ctx, "usage", None)) if ctx else None,
+                        output_kind=output_kind,
+                        final_url=final_url,
+                        error_type=error_type,
+                        error_message=error_message,
+                    )
+                )
+            except Exception:  # noqa: BLE001 — never let logging break the chat
+                pass
+
+            if turn_error is not None:
+                yield closer + sep + _format_error(turn_error)
                 return
 
             # Persist context for the next turn.
@@ -512,11 +578,19 @@ def _session_view(chat, mo, session):
     cum_usage = session.get("cum_usage")
     cum_usage_str = str(cum_usage) if cum_usage is not None else "n/a"
 
+    from ieso_benchmark import DEFAULT_LOG_PATH
+
+    log_session = session.get("log_session_id", "n/a")
+    attempts = session.get("attempts", 0)
+
     mo.md(
         f"""
         ### Session state
 
         - **Turns:** {turns}
+        - **Attempts (logged):** {attempts}
+        - **Log session id:** `{log_session}`
+        - **Log file:** `{DEFAULT_LOG_PATH}`
         - **Last `run_id`:** `{run_id_str}`
         - **Last turn usage:** `{last_usage_str}`
         - **Cumulative usage:** `{cum_usage_str}`
@@ -540,8 +614,12 @@ def _reset_controls(mo, session):
 @app.cell
 def _reset_handler(mo, reset, session):
     if reset.value:
+        from ieso_benchmark import new_session_id
+
         session["ctx"] = None
         session["turns"] = 0
+        session["attempts"] = 0
+        session["log_session_id"] = new_session_id()
         session["last_output"] = None
         session["cum_usage"] = None
         mo.md("_Session memory cleared. Next message starts a fresh conversation._")
