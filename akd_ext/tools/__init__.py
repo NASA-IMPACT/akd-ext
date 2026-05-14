@@ -1,6 +1,16 @@
 """Tools module for akd_ext."""
 
 from .dummy import DummyInputSchema, DummyOutputSchema, DummyTool
+from .eonet import (
+    EONETCategoryRef,
+    EONETEvent,
+    EONETGeometry,
+    EONETSearchInputSchema,
+    EONETSearchOutputSchema,
+    EONETSearchTool,
+    EONETSearchToolConfig,
+    EONETSource,
+)
 from .sde_search import (
     SDEDocument,
     SDESearchTool,
@@ -25,6 +35,14 @@ __all__ = [
     "DummyTool",
     "DummyInputSchema",
     "DummyOutputSchema",
+    "EONETSearchTool",
+    "EONETSearchInputSchema",
+    "EONETSearchOutputSchema",
+    "EONETSearchToolConfig",
+    "EONETEvent",
+    "EONETGeometry",
+    "EONETCategoryRef",
+    "EONETSource",
     "SDESearchTool",
     "SDESearchToolInputSchema",
     "SDESearchToolOutputSchema",
