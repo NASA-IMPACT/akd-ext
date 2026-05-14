@@ -60,7 +60,19 @@ def _scraper_to_result(out: ScraperToolOutputSchema) -> dict[str, Any]:
 
 @mcp_tool
 class PDFParserTool(BaseTool[PDFParserToolInputSchema, PDFParserToolOutputSchema]):
-    """Parse PDFs into LLM-ready content using AKD core backends."""
+    """Parse a PDF into LLM-ready text.
+
+    Given an HTTP(S) URL to a PDF, returns the parsed text content plus a
+    metadata dict (backend, return_format, plus parser/document metadata).
+
+    Output text format is selectable via ``return_format``: ``markdown``
+    (default), ``html``, or ``json``.
+
+    Uses a simple PDF scraper backend — best for digital-native PDFs. Does
+    not perform OCR (scanned or image-only PDFs will yield poor or empty
+    text), does not discover or search for PDFs (URL must be supplied),
+    and does not summarize.
+    """
 
     input_schema = PDFParserToolInputSchema
     output_schema = PDFParserToolOutputSchema
