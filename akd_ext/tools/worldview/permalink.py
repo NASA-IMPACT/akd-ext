@@ -378,7 +378,10 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
     "Analysis Support" steps.
 
     Required:
-    - layers: at least one LayerSpec (GIBS layer ID + optional rendering modifiers)
+    - layers: at least one LayerSpec (GIBS layer ID + optional rendering modifiers).
+      Layer IDs must be GIBS layer IDs (e.g. `MODIS_Terra_CorrectedReflectance_TrueColor`,
+      `VIIRS_SNPP_AOD`), NOT CMR collection concept_ids (`C<digits>-<PROVIDER>`). The
+      latter will produce a valid-looking URL that renders blank.
 
     Optional viewport / time:
     - projection, time, bbox, rotation — omit any to inherit Worldview's defaults
