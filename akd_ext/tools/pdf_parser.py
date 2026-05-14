@@ -5,11 +5,10 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 from typing import Any, Literal
+
 from akd._base import InputSchema, OutputSchema
 from akd.tools import BaseTool
-from akd.tools.scrapers import (
-    DoclingScraper,
-    DoclingScraperConfig,
+from akd.tools.scrapers.pdf_scrapers import (
     ScraperToolOutputSchema,
     SimplePDFScraper,
 )
@@ -17,22 +16,11 @@ from pydantic import Field
 
 from akd_ext.mcp import mcp_tool
 
-Mode = Literal["fast", "accurate", "ocr"]
-BackendHint = Literal[
-    "akd_simple",
-    "akd_docling",
-]
-
 
 class PDFParserToolInputSchema(InputSchema):
     """Input schema for PDF parsing."""
 
     url: str = Field(..., description="HTTP(S) URL to a PDF")
-    mode: Mode = Field(default="accurate", description="Parsing mode: fast, accurate, or ocr")
-    backend_hint: BackendHint | None = Field(
-        default=None,
-        description="Optional backend override (akd_simple or akd_docling)",
-    )
     return_format: Literal["markdown", "html", "json"] = Field(
         default="markdown",
         description="Preferred output format hint for backend parsing",
@@ -66,19 +54,6 @@ async def _run_akd_simple(url: str, config: dict[str, Any] | None = None) -> Scr
     return await scraper.arun(params)
 
 
-async def _run_akd_docling(url: str, mode: Mode, config: DoclingScraperConfig | None = None) -> ScraperToolOutputSchema:
-    if mode == "fast":
-        default_cfg = DoclingScraperConfig(pdf_mode="fast", do_table_structure=False, use_ocr=False)
-    elif mode == "accurate":
-        default_cfg = DoclingScraperConfig(pdf_mode="accurate", do_table_structure=True, use_ocr=False)
-    else:
-        default_cfg = DoclingScraperConfig(pdf_mode="accurate", do_table_structure=True, use_ocr=True)
-
-    scraper = DoclingScraper(config=config or default_cfg)
-    params = scraper.input_schema(url=_normalize_url_or_path(url))
-    return await scraper.arun(params)
-
-
 def _scraper_to_result(out: ScraperToolOutputSchema) -> dict[str, Any]:
     return {"content": out.content, "metadata": out.metadata.model_dump()}
 
@@ -91,21 +66,12 @@ class PDFParserTool(BaseTool[PDFParserToolInputSchema, PDFParserToolOutputSchema
     output_schema = PDFParserToolOutputSchema
 
     async def _arun(self, params: PDFParserToolInputSchema) -> PDFParserToolOutputSchema:
-        backend = params.backend_hint
-        if backend is None:
-            backend = "akd_simple" if params.mode == "fast" else "akd_docling"
-
-        if backend == "akd_simple":
-            result = _scraper_to_result(await _run_akd_simple(params.url))
-        elif backend == "akd_docling":
-            result = _scraper_to_result(await _run_akd_docling(params.url, params.mode))
-        else:
-            raise ValueError(f"Unsupported backend: {backend!r}")
+        result = _scraper_to_result(await _run_akd_simple(params.url))
 
         metadata = result.get("metadata", {})
         if not isinstance(metadata, dict):
             metadata = {"raw_metadata": metadata}
-        metadata["backend"] = backend
+        metadata["backend"] = "akd_simple"
         metadata["return_format"] = params.return_format
 
         return PDFParserToolOutputSchema(
