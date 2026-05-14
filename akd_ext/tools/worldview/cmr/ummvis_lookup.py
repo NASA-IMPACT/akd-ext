@@ -252,13 +252,21 @@ class UMMVisLookupToolOutputSchema(OutputSchema):
 
 @mcp_tool
 class UMMVisLookupTool(BaseTool[UMMVisLookupToolInputSchema, UMMVisLookupToolOutputSchema]):
-    """
-    Find Worldview/GIBS layers associated with a CMR collection.
+    """Find Worldview/GIBS layers associated with a CMR collection.
 
-    Given a collection concept-id (e.g. 'C1701805619-GES_DISC'), returns the GIBS
-    visualization layer(s) that render data from that collection. Output ``layer_id``
-    is type-compatible with the ``LayerSpec.id`` consumed by WorldviewPermalinkTool,
-    completing the agent chain ``user query → collection → layer → permalink``.
+    Given a CMR collection concept-id (`C<digits>-<PROVIDER>`, e.g.
+    'C1701805619-GES_DISC'), returns zero or more GIBS visualization layer(s)
+    that render data from that collection. The output list is empty when no UMM-Vis
+    record yet associates the collection with a Worldview layer.
+
+    Each ``layer_id`` is the canonical GIBS layer identifier — the name a
+    Worldview URL or WMTS request actually accepts — bridging a CMR
+    ``concept_id`` to a renderable Worldview/GIBS layer.
+
+    Does not fetch data, does not build URLs, and does not validate `layer_id`
+    against the live GIBS WMTS catalog by default — enable
+    ``validate_against_gibs`` in the config to populate
+    ``LayerMapping.available_in_gibs``.
     """
 
     input_schema = UMMVisLookupToolInputSchema
