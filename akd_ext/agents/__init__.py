@@ -28,6 +28,13 @@ from akd_ext.agents.gap import (
     GapAgentOutputSchema,
 )
 
+from akd_ext.agents.ieso.worldview import (
+    IESOWorldviewAgent,
+    IESOWorldviewAgentConfig,
+    IESOWorldviewAgentInputSchema,
+    IESOWorldviewAgentOutputSchema,
+)
+
 from akd_ext.agents.image_analyzer import (
     ImageAnalyzerAgent,
     ImageAnalyzerConfig,
@@ -92,6 +99,10 @@ __all__ = [
     "GapAgentConfig",
     "GapAgentInputSchema",
     "GapAgentOutputSchema",
+    "IESOWorldviewAgent",
+    "IESOWorldviewAgentConfig",
+    "IESOWorldviewAgentInputSchema",
+    "IESOWorldviewAgentOutputSchema",
     # Image analyzer
     "ImageAnalyzerAgent",
     "ImageAnalyzerConfig",
