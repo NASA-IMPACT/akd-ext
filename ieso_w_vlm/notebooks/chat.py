@@ -365,6 +365,14 @@ def _chat(IESOWorldviewVLMAgentInputSchema, TextOutput, agent, mo, session):
                 # request_limit's intended runaway-protection role;
                 # cumulative usage is tracked manually below.
                 usage=None,
+                # Bump OpenAI HTTP timeout from the SDK default
+                # (10 min) to 15 min so large VLM payloads
+                # (multi-snapshot turns) have headroom before httpx
+                # surfaces a ``Connection error.``. Does not fix
+                # peer-reset disconnects caused by Playwright MCP
+                # attaching a fresh snapshot to every action tool's
+                # return — that needs the snapshot-mode flag fix.
+                model_settings={"timeout": 900},
             )
         )
 

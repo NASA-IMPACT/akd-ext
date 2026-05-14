@@ -467,11 +467,20 @@ def make_playwright_mcp(cdp_endpoint: str | None = None) -> MCPServerStdio:
         Mirrors the GeoUI variant's helper. Demo / notebook path
         sets it; headless tests can leave it ``None`` to get a
         fresh browser per arun.
+
+    Why ``timeout=30``:
+        ``MCPServerStdio``'s default initialisation timeout is 5
+        seconds, which is too tight for ``npx @playwright/mcp@latest``
+        on a cold node_modules cache or a freshly-started
+        Chromium-CDP socket. We've seen
+        ``anyio.fail_after`` fire at ``pydantic_ai/mcp.py:748`` on
+        the first turn of a session. 30 s leaves comfortable
+        headroom for npx + handshake without masking real hangs.
     """
     args = ["@playwright/mcp@latest"]
     if cdp_endpoint:
         args += ["--cdp-endpoint", cdp_endpoint]
-    return MCPServerStdio(command="npx", args=args)
+    return MCPServerStdio(command="npx", args=args, timeout=30)
 
 
 def playwright_capability(server: MCPServerStdio) -> MCP:

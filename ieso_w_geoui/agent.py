@@ -494,11 +494,19 @@ def make_playwright_mcp(cdp_endpoint: str | None = None) -> MCPServerStdio:
         per-arun MCP lifecycle. The fresh-browser-per-arun path
         (``cdp_endpoint=None``) is useful for headless tests where
         state persistence doesn't matter.
+
+    Why ``timeout=30``:
+        ``MCPServerStdio``'s default init timeout is 5 s, which is
+        too tight for ``npx @playwright/mcp@latest`` on a cold
+        node_modules cache plus a fresh Chromium-CDP handshake.
+        We've seen ``anyio.fail_after`` fire at
+        ``pydantic_ai/mcp.py:748`` on the first turn of a session.
+        30 s leaves headroom without masking real hangs.
     """
     args = ["@playwright/mcp@latest"]
     if cdp_endpoint:
         args += ["--cdp-endpoint", cdp_endpoint]
-    return MCPServerStdio(command="npx", args=args)
+    return MCPServerStdio(command="npx", args=args, timeout=30)
 
 
 def playwright_capability(server: MCPServerStdio) -> MCP:

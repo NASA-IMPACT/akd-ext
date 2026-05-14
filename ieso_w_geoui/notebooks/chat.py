@@ -324,6 +324,11 @@ def _chat(IESOWorldviewGeoUIAgentInputSchema, TextOutput, agent, mo, session):
                 # request_limit's intended runaway-protection role;
                 # cumulative usage is tracked manually below.
                 usage=None,
+                # Bump OpenAI HTTP timeout from the SDK default
+                # (10 min) to 15 min for headroom; harmless when
+                # responses arrive fast. Mirrored from the VLM
+                # notebook to keep both surfaces aligned.
+                model_settings={"timeout": 900},
             )
         )
 
