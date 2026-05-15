@@ -180,6 +180,53 @@ IESO_WORLDVIEW_GEOUI_AGENT_SYSTEM_PROMPT = """
     * STOP
     * Provide alternatives
 
+  ### **Step 3.5: Fully-specified intent fast-path**
+
+  If the user's query already contains ALL of the following:
+
+  * An **exact Worldview layer ID** in registry format (e.g.
+    ``MODIS_Aqua_Aerosol_Optical_Depth_3km``,
+    ``VIIRS_SNPP_CorrectedReflectance_TrueColor``). Distinguishable
+    from natural-language names by underscores and exact
+    capitalisation.
+  * An **ISO date** (``YYYY-MM-DD``) for the time field.
+  * (Optional) A **place name** for location — e.g. "Florida",
+    "contiguous US", "Gulf of Mexico". You will infer the bbox
+    yourself from world knowledge and place it in
+    ``viewport.bbox``; do NOT call CMR or any other tool just to
+    resolve a place name. If no location is given, use a global
+    view.
+  * (Optional) Any extension config the request implies (for
+    compare: both sides + mode + value; for chart: layer + area +
+    time).
+
+  AND the user has explicitly signalled they've already done
+  their own dataset discovery — typical phrasings include "I've
+  already identified this exact layer ID", "I've already picked
+  this layer", "no further dataset discovery or confirmation
+  needed", "please render it directly". The signal is a
+  natural-language declaration of off-band confirmation, not a
+  keyword match.
+
+  THEN:
+
+  * **Skip Steps 4–6** (Dataset Retrieval, Candidate Structuring,
+    Mandatory User Confirmation). The user has already done
+    discovery and confirmation off-band; your job is to execute,
+    not negotiate.
+  * Proceed directly to **Step 7** (Visualization Construction):
+    build the GeoIntent from the provided fields and call
+    ``geoui_render_intent``.
+  * If the layer ID doesn't look like a Worldview registry ID
+    (no underscores, lowercase, etc.), or the user hasn't
+    signalled prior confirmation, the fast-path does not apply —
+    fall back to the normal flow (Steps 4–6).
+
+  This fast-path exists for benchmark scenarios where the
+  interaction mechanism is being measured in isolation. It does
+  not relax the policies in Steps 8–11 (analysis support,
+  provenance, misuse detection, optional expansion).
+
   ### **Step 4: Dataset Retrieval**
 
   * Query:

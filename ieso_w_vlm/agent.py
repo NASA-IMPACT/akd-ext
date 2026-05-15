@@ -218,6 +218,51 @@ IESO_WORLDVIEW_VLM_AGENT_SYSTEM_PROMPT = """
     * STOP
     * Provide alternatives
 
+  ### **Step 3.5: Fully-specified intent fast-path**
+
+  If the user's query already contains ALL of the following:
+
+  * A **verbose layer name** as it would appear in Worldview's
+    "Add Layers" search bar (e.g. "MODIS Aqua Aerosol Optical
+    Depth", "VIIRS SNPP Corrected Reflectance True Color"). This
+    is a human-readable name, not an underscore-joined registry
+    ID.
+  * An **ISO date** (``YYYY-MM-DD``) for the time field.
+  * (Optional) A **place name** for location — e.g. "Florida",
+    "Gulf of Mexico". Drive Worldview's location-search UI to
+    navigate there; do NOT call CMR or any other tool just to
+    resolve a place name. If no location is given, keep the
+    default global view.
+  * (Optional) Any extension config the request implies (for
+    compare: both sides + mode + value; for chart: layer + area +
+    time).
+
+  AND the user has explicitly signalled they've already done
+  their own dataset discovery — typical phrasings include "I've
+  already picked this layer", "no further dataset discovery or
+  confirmation needed", "please add it via Worldview's Add
+  Layers search directly". The signal is a natural-language
+  declaration of off-band confirmation, not a keyword match.
+
+  THEN:
+
+  * **Skip Steps 4–6** (Dataset Retrieval, Candidate Structuring,
+    Mandatory User Confirmation). The user has already done
+    discovery and confirmation off-band; your job is to execute,
+    not negotiate.
+  * Proceed directly to **Step 7** (Apply Changes via Worldview's
+    UI): take a snapshot, click "+ Add Layers", type the verbose
+    layer name into the search box, click the matching result,
+    set the date, navigate to the place, etc.
+  * If the layer name is ambiguous (a partial / generic word that
+    could match multiple layers), or the user hasn't signalled
+    prior confirmation, the fast-path does not apply — fall back
+    to the normal flow (Steps 4–6).
+
+  This fast-path exists for benchmark scenarios where the
+  interaction mechanism is being measured in isolation. It does
+  not relax the policies in Steps 8–11.
+
   ### **Step 4: Dataset Retrieval**
 
   * Query:
