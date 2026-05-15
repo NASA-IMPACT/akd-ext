@@ -614,12 +614,16 @@ def _reset_controls(mo, session):
 @app.cell
 def _reset_handler(mo, reset, session):
     if reset.value:
-        from ieso_benchmark import new_session_id
+        # Aliased to ``_new_session_id`` so marimo doesn't flag this
+        # cell as a duplicate definition of ``new_session_id``
+        # (which is also imported by the ``_agent`` cell for the
+        # initial session-id assignment).
+        from ieso_benchmark import new_session_id as _new_session_id
 
         session["ctx"] = None
         session["turns"] = 0
         session["attempts"] = 0
-        session["log_session_id"] = new_session_id()
+        session["log_session_id"] = _new_session_id()
         session["last_output"] = None
         session["cum_usage"] = None
         mo.md("_Session memory cleared. Next message starts a fresh conversation._")
