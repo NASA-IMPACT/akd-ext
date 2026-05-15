@@ -330,7 +330,79 @@ def _chat(IESOWorldviewVLMAgentInputSchema, TextOutput, agent, mo, session):
     import asyncio
     import time
 
-    from ieso_benchmark import TurnRecord, append_turn_record, extract_usage
+    from ieso_benchmark import (
+        ErrorRecord,
+        TurnRecord,
+        append_error_record,
+        append_turn_record,
+        extract_usage,
+    )
+    from pydantic_ai.exceptions import ModelAPIError
+
+    def _is_connection_error(exc: BaseException) -> bool:
+        """Whether ``exc`` (or any leaf in its ``ExceptionGroup``) is a
+        ``ModelAPIError: Connection error.`` from pydantic_ai.
+
+        pydantic_ai wraps OpenAI's ``APIConnectionError`` (httpx-layer
+        TCP / TLS failure) and stamps the bare message
+        ``"Connection error."``. We match on both the class and the
+        message so unrelated ``ModelAPIError`` cases (rate limits,
+        5xx, etc.) don't trigger an auto-retry. MCP-init timeouts
+        (``mcp.py:748``) are NOT connection errors — they need real
+        attention, not a silent retry.
+        """
+        for leaf in _flatten_exceptions(exc):
+            if isinstance(leaf, ModelAPIError) and "connection error" in str(leaf).lower():
+                return True
+        return False
+
+    def _deepest_in_chain(exc: BaseException) -> BaseException:
+        """Walk the exception chain (``__cause__`` *or* ``__context__``)
+        to the deepest reachable exception.
+
+        Python's chained-exception machinery uses two fields:
+        ``__cause__`` is set by ``raise X from Y``; ``__context__`` is
+        set implicitly when one exception is raised while handling
+        another ("During handling of the above exception …"). Many of
+        the failure modes we care about — ``asyncio.CancelledError`` →
+        ``TimeoutError`` from ``anyio.fail_after``, or ``WouldBlock``
+        → ``CancelledError`` from the MCP client — are stitched via
+        ``__context__``, not ``__cause__``. Walking both lets us
+        actually reach the underlying ``TimeoutError`` /
+        ``ConnectError`` / ``ReadError`` instead of stopping at the
+        outer ``ExceptionGroup`` leaf.
+        """
+        cur = exc
+        seen: set[int] = {id(cur)}
+        while True:
+            nxt = cur.__cause__ or cur.__context__
+            if nxt is None or id(nxt) in seen:
+                return cur
+            seen.add(id(nxt))
+            cur = nxt
+
+    def _underlying_cause_summary(exc: BaseException) -> str:
+        """Format the deepest cause of ``exc`` as ``"ClassName: message"``.
+
+        Used both for the in-chat retry notice and for the
+        ``ErrorRecord.underlying_cause`` log field. Returns the
+        sentinel string ``"(no underlying cause)"`` only when there's
+        literally no chain to descend and the top-level exception
+        carries no useful information (rare).
+        """
+        for leaf in _flatten_exceptions(exc):
+            deepest = _deepest_in_chain(leaf)
+            if deepest is not leaf:
+                msg = str(deepest).strip() or "(empty)"
+                return f"{type(deepest).__name__}: {msg}"
+        # Fall back to the first leaf itself so we surface *something*
+        # actionable — better than ``None`` in the log.
+        leaves = _flatten_exceptions(exc)
+        if leaves:
+            leaf = leaves[0]
+            msg = str(leaf).strip() or "(empty)"
+            return f"{type(leaf).__name__}: {msg}"
+        return "(no underlying cause)"
 
     async def _handler(messages, config):
         """Streaming handler with live tool-call visibility.
@@ -358,179 +430,239 @@ def _chat(IESOWorldviewVLMAgentInputSchema, TextOutput, agent, mo, session):
             yield "Agent not initialised — fix the missing env vars above and re-run the notebook."
             return
 
-        # Reset per-turn tool trace. The hook in _agent appends to this
-        # list on each before_tool_execute fire.
-        session["current_turn_tools"] = []
-
-        # Bump attempt counter immediately so error turns get a
-        # unique turn_index in the log even if the arun fails before
-        # ``session["turns"]`` (successful turns) advances.
-        session["attempts"] += 1
-        t_start = time.monotonic()
-
         latest = messages[-1].content if messages else ""
-        arun_task = asyncio.create_task(
-            agent.arun(
-                IESOWorldviewVLMAgentInputSchema(query=latest),
-                run_context=session["ctx"],
-                # Reset per-turn usage. AKD's _wire_usage_limits caps
-                # request_limit at max_tool_iterations (≤50); the
-                # default arun threads cumulative usage from run_context
-                # — together they fire UsageLimitExceeded after ~5–10
-                # tool-heavy turns. Per-turn reset restores
-                # request_limit's intended runaway-protection role;
-                # cumulative usage is tracked manually below.
-                usage=None,
-                # Bump OpenAI HTTP timeout from the SDK default
-                # (10 min) to 15 min so large VLM payloads
-                # (multi-snapshot turns) have headroom before httpx
-                # surfaces a ``Connection error.``. Does not fix
-                # peer-reset disconnects caused by Playwright MCP
-                # attaching a fresh snapshot to every action tool's
-                # return — that needs the snapshot-mode flag fix.
-                model_settings={"timeout": 900},
+
+        # Retry loop: at most one auto-retry on
+        # ``ModelAPIError: Connection error.`` (i.e. httpx-layer TCP /
+        # TLS failure to api.openai.com). One extra attempt absorbs
+        # transient OpenAI / network hiccups without masking persistent
+        # problems — any other error class falls straight through.
+        # Each attempt logs its own benchmark row (the first as
+        # ``output_kind="error"``, the second whichever way it lands)
+        # so the underlying flake rate stays visible in the data.
+        for retry_attempt in range(2):
+            # Reset per-turn tool trace. The hook in _agent appends to
+            # this list on each before_tool_execute fire.
+            session["current_turn_tools"] = []
+
+            # Bump attempt counter immediately so error turns get a
+            # unique turn_index in the log even if the arun fails before
+            # ``session["turns"]`` (successful turns) advances.
+            session["attempts"] += 1
+            t_start = time.monotonic()
+
+            arun_task = asyncio.create_task(
+                agent.arun(
+                    IESOWorldviewVLMAgentInputSchema(query=latest),
+                    run_context=session["ctx"],
+                    # Reset per-turn usage. AKD's _wire_usage_limits caps
+                    # request_limit at max_tool_iterations (≤50); the
+                    # default arun threads cumulative usage from run_context
+                    # — together they fire UsageLimitExceeded after ~5–10
+                    # tool-heavy turns. Per-turn reset restores
+                    # request_limit's intended runaway-protection role;
+                    # cumulative usage is tracked manually below.
+                    usage=None,
+                    # Bump OpenAI HTTP timeout from the SDK default
+                    # (10 min) to 15 min so large VLM payloads
+                    # (multi-snapshot turns) have headroom before httpx
+                    # surfaces a ``Connection error.``. Does not fix
+                    # peer-reset disconnects caused by Playwright MCP
+                    # attaching a fresh snapshot to every action tool's
+                    # return — that needs the snapshot-mode flag fix.
+                    model_settings={"timeout": 900},
+                )
             )
-        )
 
-        details_opened = False
-        last_count = 0
+            details_opened = False
+            last_count = 0
 
-        def _flush_new_tools() -> str:
-            """Build a chunk for any tools recorded since the last yield.
+            def _flush_new_tools() -> str:
+                """Build a chunk for any tools recorded since the last yield.
 
-            Empty string when no new tools fired this tick. Opens the
-            ``<details>`` block lazily on the first tool so turns that
-            never call a tool don't render an empty collapsible.
-            """
-            nonlocal details_opened, last_count
-            tools = list(session["current_turn_tools"])
-            if len(tools) <= last_count:
-                return ""
-            chunk = ""
-            if not details_opened:
-                # Closed by default — Gemini-style "show thinking" toggle.
-                chunk = "<details><summary>Tool calls</summary>\n\n"
-                details_opened = True
-            new = tools[last_count:]
-            chunk += "".join(f"{i}. `{n}`\n" for i, n in enumerate(new, last_count + 1))
-            last_count = len(tools)
-            return chunk
+                Empty string when no new tools fired this tick. Opens
+                the ``<details>`` block lazily on the first tool so
+                turns that never call a tool don't render an empty
+                collapsible.
+                """
+                nonlocal details_opened, last_count
+                tools = list(session["current_turn_tools"])
+                if len(tools) <= last_count:
+                    return ""
+                chunk = ""
+                if not details_opened:
+                    # Closed by default — Gemini-style "show thinking" toggle.
+                    chunk = "<details><summary>Tool calls</summary>\n\n"
+                    details_opened = True
+                new = tools[last_count:]
+                chunk += "".join(f"{i}. `{n}`\n" for i, n in enumerate(new, last_count + 1))
+                last_count = len(tools)
+                return chunk
 
-        try:
-            # Poll the trace list while arun runs. 0.5s timeout keeps
-            # this cooperative without flooding the marimo wire protocol.
-            # asyncio.wait doesn't cancel the task on timeout — it just
-            # bounds how long we wait before checking again.
-            while not arun_task.done():
-                await asyncio.wait({arun_task}, timeout=0.5)
+            try:
+                # Poll the trace list while arun runs. 0.5s timeout
+                # keeps this cooperative without flooding the marimo
+                # wire protocol. asyncio.wait doesn't cancel the task
+                # on timeout — it just bounds how long we wait before
+                # checking again.
+                while not arun_task.done():
+                    await asyncio.wait({arun_task}, timeout=0.5)
+                    chunk = _flush_new_tools()
+                    if chunk:
+                        yield chunk
+
+                # Drain anything that fired in the final tick.
                 chunk = _flush_new_tools()
                 if chunk:
                     yield chunk
 
-            # Drain anything that fired in the final tick.
-            chunk = _flush_new_tools()
-            if chunk:
-                yield chunk
+                closer = "\n</details>\n" if details_opened else ""
+                sep = "\n---\n\n" if details_opened else ""
 
-            closer = "\n</details>\n" if details_opened else ""
-            sep = "\n---\n\n" if details_opened else ""
-
-            output = None
-            turn_error: BaseException | None = None
-            try:
-                output = arun_task.result()
-            except BaseException as exc:  # noqa: BLE001 — surface ExceptionGroup too
-                turn_error = exc
-
-            wall_clock = time.monotonic() - t_start
-
-            # Build + write benchmark log row. We log success and
-            # error turns uniformly; the distinguishing field is
-            # ``output_kind``. On error we set ``ctx=None`` so we
-            # don't misattribute the previous turn's ``run_id`` /
-            # ``usage`` to this errored attempt.
-            ctx = agent.last_run_context if turn_error is None else None
-            if turn_error is not None:
-                output_kind = "error"
-                final_url = None
-                error_type = type(turn_error).__name__
-                error_message = str(turn_error)[:500]
-            elif isinstance(output, TextOutput):
-                output_kind = "text"
-                final_url = None
-                error_type = None
-                error_message = None
-            else:
-                output_kind = "structured"
-                final_url = getattr(output, "url", None)
-                error_type = None
-                error_message = None
-
-            try:
-                append_turn_record(
-                    TurnRecord(
-                        agent="vlm",
-                        session_id=session["log_session_id"],
-                        run_id=str(getattr(ctx, "run_id", None)) if ctx else None,
-                        turn_index=session["attempts"],
-                        user_prompt=latest,
-                        tool_calls=list(session["current_turn_tools"]),
-                        tool_call_count=len(session["current_turn_tools"]),
-                        wall_clock_s=round(wall_clock, 3),
-                        usage=extract_usage(getattr(ctx, "usage", None)) if ctx else None,
-                        output_kind=output_kind,
-                        final_url=final_url,
-                        error_type=error_type,
-                        error_message=error_message,
-                    )
-                )
-            except Exception:  # noqa: BLE001 — never let logging break the chat
-                pass
-
-            if turn_error is not None:
-                yield closer + sep + _format_error(turn_error)
-                return
-
-            # Persist context for the next turn.
-            session["ctx"] = agent.last_run_context
-            session["turns"] += 1
-            session["last_output"] = output
-            # AKDRunUsage has no __add__; sum field-wise.
-            turn_usage = getattr(agent.last_run_context, "usage", None)
-            if turn_usage is not None:
-                cum = session.get("cum_usage")
-                if cum is None:
-                    session["cum_usage"] = turn_usage
-                else:
-                    session["cum_usage"] = type(turn_usage)(
-                        input_tokens=(cum.input_tokens or 0) + (turn_usage.input_tokens or 0),
-                        output_tokens=(cum.output_tokens or 0) + (turn_usage.output_tokens or 0),
-                        requests=(cum.requests or 0) + (turn_usage.requests or 0),
-                    )
-
-            if isinstance(output, TextOutput):
-                body = output.content
-            else:
-                # Structured final output: render `result` markdown + clickable url.
-                # ``str(output)`` would give the Pydantic repr with escaped \n.
-                lines = [output.result.strip()]
-                url = getattr(output, "url", "") or ""
-                if url.strip():
-                    lines.append(f"\n**Worldview URL:** [{url}]({url})")
-                body = "\n".join(lines)
-
-            yield closer + sep + body
-        finally:
-            # Cancel the detached arun_task on any exit path (normal,
-            # exception, or generator close from a "stop" click). Without
-            # this, hitting stop leaves the agent firing tools in the
-            # background.
-            if not arun_task.done():
-                arun_task.cancel()
+                output = None
+                turn_error: BaseException | None = None
                 try:
-                    await arun_task
-                except BaseException:  # noqa: BLE001 — swallow cancel propagation
+                    output = arun_task.result()
+                except BaseException as exc:  # noqa: BLE001 — surface ExceptionGroup too
+                    turn_error = exc
+
+                wall_clock = time.monotonic() - t_start
+
+                # Build + write benchmark log row. We log success and
+                # error turns uniformly; the distinguishing field is
+                # ``output_kind``. On error we set ``ctx=None`` so we
+                # don't misattribute the previous turn's ``run_id`` /
+                # ``usage`` to this errored attempt.
+                ctx = agent.last_run_context if turn_error is None else None
+                if turn_error is not None:
+                    output_kind = "error"
+                    final_url = None
+                    error_type = type(turn_error).__name__
+                    error_message = str(turn_error)[:500]
+                elif isinstance(output, TextOutput):
+                    output_kind = "text"
+                    final_url = None
+                    error_type = None
+                    error_message = None
+                else:
+                    output_kind = "structured"
+                    final_url = getattr(output, "url", None)
+                    error_type = None
+                    error_message = None
+
+                try:
+                    append_turn_record(
+                        TurnRecord(
+                            agent="vlm",
+                            session_id=session["log_session_id"],
+                            run_id=str(getattr(ctx, "run_id", None)) if ctx else None,
+                            turn_index=session["attempts"],
+                            user_prompt=latest,
+                            tool_calls=list(session["current_turn_tools"]),
+                            tool_call_count=len(session["current_turn_tools"]),
+                            wall_clock_s=round(wall_clock, 3),
+                            usage=extract_usage(getattr(ctx, "usage", None)) if ctx else None,
+                            output_kind=output_kind,
+                            final_url=final_url,
+                            error_type=error_type,
+                            error_message=error_message,
+                        )
+                    )
+                except Exception:  # noqa: BLE001 — never let logging break the chat
                     pass
+
+                if turn_error is not None:
+                    # Append a detailed error log row (full traceback +
+                    # underlying-cause chain). Done on every error
+                    # turn, retried or not — pair with TurnRecord on
+                    # ``session_id`` + ``turn_index`` for analysis.
+                    try:
+                        import traceback as _tb
+
+                        _tb_text = "".join(_tb.format_exception(type(turn_error), turn_error, turn_error.__traceback__))
+                        _cause = _underlying_cause_summary(turn_error)
+                        append_error_record(
+                            ErrorRecord(
+                                agent="vlm",
+                                session_id=session["log_session_id"],
+                                turn_index=session["attempts"],
+                                retry_attempt=retry_attempt,
+                                user_prompt=latest,
+                                error_type=type(turn_error).__name__,
+                                error_message=str(turn_error),
+                                # _underlying_cause_summary now falls
+                                # back to the first leaf when there's
+                                # no chain; only the truly-empty
+                                # sentinel needs ``None``.
+                                underlying_cause=_cause if _cause != "(no underlying cause)" else None,
+                                traceback=_tb_text,
+                                tool_calls=list(session["current_turn_tools"]),
+                                tool_call_count=len(session["current_turn_tools"]),
+                                wall_clock_s=round(wall_clock, 3),
+                            )
+                        )
+                    except Exception:  # noqa: BLE001 — never let logging break the chat
+                        pass
+
+                    # Retry once on ``Connection error.``; otherwise
+                    # surface the error and bail. The underlying-cause
+                    # summary tells us which httpx failure mode hit
+                    # (ConnectError / ReadError / RemoteProtocolError /
+                    # WriteError) so subsequent failures are actionable.
+                    if retry_attempt == 0 and _is_connection_error(turn_error):
+                        cause = _underlying_cause_summary(turn_error)
+                        yield (
+                            closer
+                            + sep
+                            + "\n**Connection error to OpenAI** "
+                            + f"(underlying: `{cause}`). Retrying in 2 s…\n\n"
+                        )
+                        await asyncio.sleep(2)
+                        continue  # next retry_attempt
+                    yield closer + sep + _format_error(turn_error)
+                    return
+
+                # Persist context for the next turn.
+                session["ctx"] = agent.last_run_context
+                session["turns"] += 1
+                session["last_output"] = output
+                # AKDRunUsage has no __add__; sum field-wise.
+                turn_usage = getattr(agent.last_run_context, "usage", None)
+                if turn_usage is not None:
+                    cum = session.get("cum_usage")
+                    if cum is None:
+                        session["cum_usage"] = turn_usage
+                    else:
+                        session["cum_usage"] = type(turn_usage)(
+                            input_tokens=(cum.input_tokens or 0) + (turn_usage.input_tokens or 0),
+                            output_tokens=(cum.output_tokens or 0) + (turn_usage.output_tokens or 0),
+                            requests=(cum.requests or 0) + (turn_usage.requests or 0),
+                        )
+
+                if isinstance(output, TextOutput):
+                    body = output.content
+                else:
+                    # Structured final output: render `result` markdown + clickable url.
+                    # ``str(output)`` would give the Pydantic repr with escaped \n.
+                    lines = [output.result.strip()]
+                    url = getattr(output, "url", "") or ""
+                    if url.strip():
+                        lines.append(f"\n**Worldview URL:** [{url}]({url})")
+                    body = "\n".join(lines)
+
+                yield closer + sep + body
+                return
+            finally:
+                # Cancel the detached arun_task on any exit path
+                # (normal, exception, or generator close from a "stop"
+                # click). Without this, hitting stop leaves the agent
+                # firing tools in the background.
+                if not arun_task.done():
+                    arun_task.cancel()
+                    try:
+                        await arun_task
+                    except BaseException:  # noqa: BLE001 — swallow cancel propagation
+                        pass
 
     chat = mo.ui.chat(
         _handler,

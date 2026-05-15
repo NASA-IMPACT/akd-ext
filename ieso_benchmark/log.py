@@ -35,7 +35,22 @@ def _default_log_path() -> Path:
     return Path(__file__).resolve().parents[1] / "benchmarks" / "runs.jsonl"
 
 
+def _default_error_log_path() -> Path:
+    """Resolve ``benchmarks/errors.jsonl`` at the worktree root.
+
+    Sibling to :func:`_default_log_path`; overridable via
+    ``BENCHMARK_ERROR_LOG_PATH``. The error log stores per-error
+    diagnostics (full traceback + underlying-cause chain) that don't
+    fit cleanly inside :class:`TurnRecord`'s summary fields.
+    """
+    override = os.environ.get("BENCHMARK_ERROR_LOG_PATH")
+    if override:
+        return Path(override).expanduser().resolve()
+    return Path(__file__).resolve().parents[1] / "benchmarks" / "errors.jsonl"
+
+
 DEFAULT_LOG_PATH: Path = _default_log_path()
+DEFAULT_ERROR_LOG_PATH: Path = _default_error_log_path()
 
 
 def new_session_id() -> str:
@@ -80,6 +95,50 @@ class TurnRecord(BaseModel):
     error_message: str | None = None
 
 
+class ErrorRecord(BaseModel):
+    """One row of the error log.
+
+    Logged on **every** errored turn (including the first attempt
+    that triggers an auto-retry). Carries the full traceback and the
+    deepest ``__cause__`` summary, which :class:`TurnRecord` deliberately
+    truncates. Pair this log with ``runs.jsonl`` (TurnRecord rows) on
+    ``session_id`` + ``turn_index`` to correlate an error row with its
+    summary row.
+    """
+
+    timestamp: str = Field(default_factory=lambda: datetime.now(timezone.utc).isoformat())
+    agent: AgentKind
+    session_id: str
+    turn_index: int
+    retry_attempt: int = 0
+    """0 = first attempt, 1 = the retry. ``TurnRecord`` doesn't carry
+    this because its ``turn_index`` already advances on retries (each
+    attempt logs a row); here we keep it explicit so error analysis
+    can group an error+retry pair without inferring."""
+
+    user_prompt: str
+    error_type: str
+    """Top-level exception class name (e.g. ``"ModelAPIError"``)."""
+
+    error_message: str
+    """Top-level exception ``str()`` — **not** truncated."""
+
+    underlying_cause: str | None = None
+    """Deepest ``__cause__`` formatted as ``"ClassName: message"``.
+    For OpenAI connection failures this is the actual httpx error
+    (``ConnectError`` / ``ReadError`` / ``RemoteProtocolError`` /
+    ``WriteError``). ``None`` when the exception has no chained cause.
+    """
+
+    traceback: str
+    """Full Python traceback as produced by
+    ``traceback.format_exception``. Multi-line."""
+
+    tool_calls: list[str] = Field(default_factory=list)
+    tool_call_count: int = 0
+    wall_clock_s: float
+
+
 def extract_usage(usage_obj: Any) -> TurnUsage | None:
     """Pull the relevant fields out of an ``AKDRunUsage`` (or compatible) object.
 
@@ -117,6 +176,20 @@ def append_turn_record(record: TurnRecord, path: Path | None = None) -> Path:
     return target
 
 
+def append_error_record(record: ErrorRecord, path: Path | None = None) -> Path:
+    """Append one error JSONL row to ``path`` (default: ``DEFAULT_ERROR_LOG_PATH``).
+
+    Same write semantics as :func:`append_turn_record` — append-only,
+    creates the parent dir on first call. Returns the resolved path.
+    """
+    target = (path or DEFAULT_ERROR_LOG_PATH).expanduser().resolve()
+    target.parent.mkdir(parents=True, exist_ok=True)
+    line = record.model_dump_json(exclude_none=False)
+    with target.open("a", encoding="utf-8") as f:
+        f.write(line + "\n")
+    return target
+
+
 def load_runs(path: Path | None = None) -> list[TurnRecord]:
     """Read all turns from a JSONL log into a list of :class:`TurnRecord`.
 
@@ -138,9 +211,12 @@ def load_runs(path: Path | None = None) -> list[TurnRecord]:
 
 
 __all__ = [
+    "DEFAULT_ERROR_LOG_PATH",
     "DEFAULT_LOG_PATH",
+    "ErrorRecord",
     "TurnRecord",
     "TurnUsage",
+    "append_error_record",
     "append_turn_record",
     "extract_usage",
     "load_runs",

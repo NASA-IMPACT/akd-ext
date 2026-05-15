@@ -28,9 +28,18 @@ from akd_ext.tools.sde_search import SDESearchTool
 
 from pydantic import Field
 from pydantic_ai.capabilities import MCP
-from pydantic_ai.mcp import MCPServerStdio
+from pydantic_ai.mcp import MCPServerStdio, MCPServerStreamableHTTP
 
 from ieso_w_geoui.tools import GeoUIGetStateTool, GeoUIRenderIntentTool
+
+# Init timeout for remote streamable-HTTP MCPs (CMR, IESO Validation).
+# The default ``MCPServerStreamableHTTP.timeout`` is 5 s, which is too
+# tight for FastMCP-hosted instances that hibernate when idle; their
+# wake-up can take 10–25 s. We've seen ``mcp.py:748`` fire its
+# ``anyio.fail_after`` on the first ``arun`` after a quiet period.
+# 30 s leaves comfortable headroom without masking real hangs.
+_REMOTE_MCP_INIT_TIMEOUT_S = 30.0
+
 
 # -----------------------------------------------------------------------------
 # System prompt
@@ -452,7 +461,38 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
       - IESO_MCP_KEY:        currently unused; was for the disabled MCPs
       - VECTOR_DB_TOOL_KEY:  IESO validation / layer vector-DB server
       - SDE_MCP_KEY:         currently unused; was for the disabled SDE MCP
+
+    Why each ``MCP(...)`` wraps a pre-built ``MCPServerStreamableHTTP``:
+        Passing ``timeout=...`` straight to ``MCP(url=...)`` is not
+        supported — the ``MCP`` capability hardcodes the default
+        ``MCPServerStreamableHTTP`` timeout (5 s). Building the server
+        explicitly and handing it to ``local=`` lets us set
+        ``_REMOTE_MCP_INIT_TIMEOUT_S`` so FastMCP cold-starts don't
+        fire ``mcp.py:748``'s ``anyio.fail_after`` on the first turn.
+        ``builtin=False`` forces pydantic_ai to use our local server
+        rather than negotiating an in-model builtin MCP path.
     """
+    # CMR MCP — AWS Lambda-hosted; trailing slash is load-bearing
+    # (server returns 307 redirect without it, and pydantic_ai's
+    # streamable-HTTP client raises on raise_for_status rather than
+    # following the redirect).
+    cmr_server = MCPServerStreamableHTTP(
+        "https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp/",
+        timeout=_REMOTE_MCP_INIT_TIMEOUT_S,
+    )
+
+    # IESO Validation MCP — FastMCP free instance that hibernates;
+    # this is the cold-start culprit. Auth header is built here so we
+    # can also pass it to the underlying server (the ``MCP`` capability
+    # only forwards ``authorization_token`` to its builtin path, not to
+    # our pre-built ``local=`` server).
+    vector_db_token = os.environ.get("VECTOR_DB_TOOL_KEY")
+    ieso_validation_server = MCPServerStreamableHTTP(
+        "https://ieso-benchmark-mcp-tools.fastmcp.app/mcp",
+        headers={"Authorization": f"Bearer {vector_db_token}"} if vector_db_token else None,
+        timeout=_REMOTE_MCP_INIT_TIMEOUT_S,
+    )
+
     return [
         # ── DISABLED: replaced by local UMMVisLookupTool ──────────────────
         # MCP(
@@ -471,12 +511,10 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
         #     description="Earthdata search landing page for concept id",
         # ),
         MCP(
-            # Trailing slash is load-bearing: the server returns a 307 redirect
-            # without it, and pydantic_ai's MCP streamable-http client does not
-            # follow redirects (raises on raise_for_status).
             url="https://w4hu71445m.execute-api.us-east-1.amazonaws.com/mcp/cmr/mcp/",
-            id="CMR_MCP_Server",
+            local=cmr_server,
             builtin=False,  # Force local streamable-HTTP client (respects trailing slash)
+            id="CMR_MCP_Server",
             allowed_tools=[
                 "search_collections",
                 "get_granules",
@@ -487,12 +525,14 @@ def get_default_ieso_worldview_geoui_capabilities() -> list[Any]:
         # ── Currently authorization issue ────
         MCP(
             url="https://ieso-benchmark-mcp-tools.fastmcp.app/mcp",
+            local=ieso_validation_server,
+            builtin=False,
             id="IESO_Validation_MCP_Server",
+            authorization_token=f"Bearer {vector_db_token}" if vector_db_token else None,
             allowed_tools=[
                 "search_worldview_layers",
                 "validate_temporal_coverage",
             ],
-            authorization_token=f"Bearer {os.environ.get('VECTOR_DB_TOOL_KEY')}",
         ),
         # ── DISABLED: replaced by local SDESearchTool ─────────────────────
         # MCP(

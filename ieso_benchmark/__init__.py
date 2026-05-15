@@ -9,9 +9,12 @@ poster-ready summaries — see :func:`load_runs`.
 """
 
 from ieso_benchmark.log import (
+    DEFAULT_ERROR_LOG_PATH,
     DEFAULT_LOG_PATH,
+    ErrorRecord,
     TurnRecord,
     TurnUsage,
+    append_error_record,
     append_turn_record,
     extract_usage,
     load_runs,
@@ -19,9 +22,12 @@ from ieso_benchmark.log import (
 )
 
 __all__ = [
+    "DEFAULT_ERROR_LOG_PATH",
     "DEFAULT_LOG_PATH",
+    "ErrorRecord",
     "TurnRecord",
     "TurnUsage",
+    "append_error_record",
     "append_turn_record",
     "extract_usage",
     "load_runs",
