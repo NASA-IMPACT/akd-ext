@@ -20,6 +20,12 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .pdf_parser import (
+    PDFParserTool,
+    PDFParserToolConfig,
+    PDFParserToolInputSchema,
+    PDFParserToolOutputSchema,
+)
 
 __all__ = [
     "DummyTool",
@@ -38,4 +44,8 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "PDFParserTool",
+    "PDFParserToolConfig",
+    "PDFParserToolInputSchema",
+    "PDFParserToolOutputSchema",
 ]
