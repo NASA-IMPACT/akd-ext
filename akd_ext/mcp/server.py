@@ -4,6 +4,7 @@ from fastmcp import FastMCP
 
 from akd_ext.mcp.registry import MCPToolRegistry
 from akd_ext.mcp.converter import tool_converter, register_mcp_tool
+from akd_ext.observability import init_observability
 from akd.tools._base import BaseTool
 
 # Create MCP server
@@ -51,6 +52,7 @@ def register_tools_manually(tools: list[type[BaseTool]]) -> None:
         register_mcp_tool(mcp_func, mcp)
 
 
+init_observability(service_name="akd-ext-mcp")
 register_all_tools()
 # register_tools_manually(tools=[])  # Add tools here if needed
 

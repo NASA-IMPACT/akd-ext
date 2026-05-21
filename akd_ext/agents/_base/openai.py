@@ -60,6 +60,7 @@ from akd._base.errors import (
 from akd.utils import PartialModel
 
 from akd_ext.agents._mixins import FileAttachmentMixin
+from akd_ext.observability import init_observability
 
 from akd_ext._types import AKDTool, OPENAI_TOOL_TYPES
 from akd_ext.mcp.converter import tool_converter
@@ -189,6 +190,7 @@ class OpenAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
         debug: bool = False,
         **kwargs,
     ) -> None:
+        init_observability(service_name="akd-ext")
         super().__init__(config=config, debug=debug)
         self._agent = self._create_agent()
 

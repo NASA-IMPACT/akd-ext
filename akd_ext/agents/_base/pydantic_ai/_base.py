@@ -52,6 +52,8 @@ from akd._base.structures import RunUsage as AKDRunUsage
 from akd.agents._base import BaseAgentConfig
 from akd.tools._base import BaseTool
 
+from akd_ext.observability import init_observability
+
 from ._context_adapter import (
     _message_history_from_run_context,
     _pai_messages_to_akd_dicts,
@@ -173,6 +175,7 @@ class PydanticAIBaseAgent[InSchema: InputSchema, OutSchema: OutputSchema](
     # ── Construction ──────────────────────────────────────────────────────
 
     def __init__(self, config: PydanticAIBaseAgentConfig | None = None) -> None:
+        init_observability(service_name="akd-ext")
         self.config = config or self.config_schema()
         self._bind_metadata()
 
