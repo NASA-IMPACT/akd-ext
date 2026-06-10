@@ -17,12 +17,13 @@ classifiers = [
 ]
 requires-python = ">=3.12"
 dependencies = [
-    "akd @ git+https://github.com/NASA-IMPACT/akd-core.git@develop",
+    "akd @ git+https://${GITHUB_TOKEN}@github.com/NASA-IMPACT/akd-core.git@develop",
     "fastmcp>=2.0.0,<3.2.4",
     "griffe>=1.0.0,<2",
     "openai-agents>=0.6.7",
     "pydantic-ai>=1.81.0",
     "PyGithub>=2.1.1",
+    "python-dateutil>=2.8",
 ]
 
 [project.urls]
