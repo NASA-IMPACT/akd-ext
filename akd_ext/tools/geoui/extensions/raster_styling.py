@@ -19,7 +19,7 @@ from __future__ import annotations
 
 from pydantic import BaseModel, ConfigDict
 
-from ieso_w_geoui.core import GeoIntent, LayerRef
+from akd_ext.tools.geoui.core import GeoIntent, LayerRef
 
 URI = "https://geoui.org/ext/raster-styling/v1.0.0"
 PREFIX = "raster-styling"

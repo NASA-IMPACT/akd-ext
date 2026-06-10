@@ -21,7 +21,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from ieso_w_geoui.core import GeoIntent, LayerRef, TimeWindow
+from akd_ext.tools.geoui.core import GeoIntent, LayerRef, TimeWindow
 
 URI = "https://geoui.org/ext/compare/v1.0.0"
 PREFIX = "compare"

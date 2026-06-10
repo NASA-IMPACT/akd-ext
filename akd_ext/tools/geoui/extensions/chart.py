@@ -16,10 +16,11 @@ Optional fields:
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
 from typing import Self
 
-from ieso_w_geoui.core import GeoIntent, TimeWindow
+from pydantic import BaseModel, ConfigDict, Field, model_validator
+
+from akd_ext.tools.geoui.core import GeoIntent, TimeWindow
 
 URI = "https://geoui.org/ext/chart/v1.0.0"
 PREFIX = "chart"
