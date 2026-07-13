@@ -18,6 +18,7 @@ from akd.tools.search import (
 )
 
 from akd_ext.mcp import mcp_tool
+from ..sde_search import DEFAULT_SDE_BASE_URL
 from .utils import RepositoryMetadata, fetch_github_metadata, calculate_reliability_score
 
 
@@ -88,9 +89,12 @@ class RepositorySearchToolConfig(SearchToolConfig):
     """
 
     # SDE search backend (formerly inherited from SDECodeSearchToolConfig).
+    # SDE_BASE_URL is a bare host, consistent with sde_search / code_signals; the
+    # /api/code/search path is appended per request. Default routes through the
+    # shared DEFAULT_SDE_BASE_URL so the host lives in one place.
     base_url: str = Field(
-        default_factory=lambda: os.getenv("SDE_BASE_URL", "https://dyejsbdumgpqz.cloudfront.net/api/code/search"),
-        description="SDE code search REST endpoint.",
+        default_factory=lambda: os.getenv("SDE_BASE_URL", DEFAULT_SDE_BASE_URL),
+        description="SDE API host. The /api/code/search path is appended on each request.",
     )
     page_size: int = Field(default=10, description="Number of results per page from the SDE API.")
     max_pages: int = Field(default=1, description="Maximum number of pages to fetch per query.")
@@ -161,7 +165,9 @@ class RepositorySearchTool(SearchTool):
         }
         if self.debug:
             logger.debug(f"SDE payload: {payload}")
-        response = await client.post(self.config.base_url, headers=self.config.headers, json=payload)
+        # base_url is a host; append the code-search path (rstrip guards a trailing slash).
+        url = f"{self.config.base_url.rstrip('/')}/api/code/search"
+        response = await client.post(url, headers=self.config.headers, json=payload)
         # Surface HTTP errors (and let @retry act on transient 5xx) instead of
         # silently treating an error body as "no results".
         response.raise_for_status()

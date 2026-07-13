@@ -17,15 +17,17 @@ class TestRepositorySearchBackend:
     """Guards the SDE backend contract: current code endpoint + min_score on every request."""
 
     @pytest.mark.unit
-    def test_default_targets_current_code_endpoint(self):
+    def test_default_base_url_is_the_current_host(self):
+        # SDE_BASE_URL is a bare host (consistent with sde_search / code_signals),
+        # not the full endpoint; the code-search path is appended per request.
         config = RepositorySearchToolConfig()
-        assert config.base_url == "https://dyejsbdumgpqz.cloudfront.net/api/code/search"
+        assert config.base_url == "https://dyejsbdumgpqz.cloudfront.net"
         assert config.min_score == 0.0
 
     @pytest.mark.unit
-    async def test_sde_search_sends_min_score(self, monkeypatch):
-        """min_score must be on every payload: the endpoint applies a 0.55 default and returns
-        nothing when it is omitted, so a dropped min_score silently breaks the tool."""
+    async def test_sde_search_appends_path_and_sends_min_score(self, monkeypatch):
+        """The bare host gets /api/code/search appended (rstrip guards a trailing slash), and
+        min_score is on every payload — the endpoint's 0.55 default drops everything without it."""
         captured: dict = {}
 
         class _Response:
@@ -42,10 +44,11 @@ class TestRepositorySearchBackend:
 
         monkeypatch.setattr(httpx.AsyncClient, "post", _post)
 
+        tool = RepositorySearchTool(config=RepositorySearchToolConfig(base_url="https://example.org/"))
         async with httpx.AsyncClient() as client:
-            await RepositorySearchTool(config=RepositorySearchToolConfig())._sde_search(client, page=1, query="anything")
+            await tool._sde_search(client, page=1, query="anything")
 
-        assert captured["url"].endswith("/api/code/search")
+        assert captured["url"] == "https://example.org/api/code/search"
         assert captured["payload"]["min_score"] == 0.0
 
     @pytest.mark.unit
