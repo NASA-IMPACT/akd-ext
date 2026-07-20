@@ -118,6 +118,10 @@ class OPUSSearchTool(BaseTool[OPUSSearchInputSchema, OPUSSearchOutputSchema]):
     OPUS contains 400,000+ observations from Cassini, Voyager, Galileo,
     New Horizons, Juno, and Hubble Space Telescope missions covering outer
     planets (Jupiter, Saturn, Uranus, Neptune, Pluto).
+
+    Results are capped at `limit` (max 15) to avoid overwhelming context. If `available` in the
+    response exceeds `count`, page through the rest with `startobs`
+    (e.g. startobs=16, startobs=31, ...) rather than raising `limit`.
     """
 
     input_schema = OPUSSearchInputSchema

@@ -75,6 +75,11 @@ class PDS4SearchInstrumentHostsTool(
     Example: Cassini Orbiter - urn:nasa:pds:context:instrument_host:spacecraft.cassini
 
     Use for queries about specific spacecraft, rovers, or platforms that carry instruments.
+
+    Results are capped at `limit` (max 25) to avoid overwhelming context. This endpoint has no
+    offset/pagination — if `total_hits` in the response exceeds the number of instrument hosts
+    returned, narrow the query with keywords or instrument_host_type rather than expecting to page
+    through the rest.
     """
 
     input_schema = PDS4SearchInstrumentHostsInputSchema

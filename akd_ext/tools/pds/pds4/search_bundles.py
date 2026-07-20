@@ -102,6 +102,11 @@ class PDS4SearchBundlesTool(BaseTool[PDS4SearchBundlesInputSchema, PDS4SearchBun
     - Raw: Unprocessed instrument data as received from spacecraft
     - Calibrated: Instrument effects removed, science-ready data
     - Derived: Higher-level data products (maps, mosaics, etc.)
+
+    Results are capped at `limit` (max 10) to avoid overwhelming context. This endpoint has no
+    offset/pagination — if `total_hits` in the response exceeds the number of bundles returned,
+    narrow the query (title, LID substring, time range, or processing level) rather than expecting
+    to page through the rest.
     """
 
     input_schema = PDS4SearchBundlesInputSchema

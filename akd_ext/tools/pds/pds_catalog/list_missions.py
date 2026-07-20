@@ -41,7 +41,9 @@ class PDSCatalogListMissionsOutputSchema(OutputSchema):
     """Output schema for PDSCatalogListMissionsTool."""
 
     status: str = Field(..., description="Status of the request ('success')")
-    count: int = Field(..., description="Number of missions returned")
+    count: int = Field(..., description="Number of missions returned in this response")
+    total_available: int = Field(..., description="Total number of missions matching the filter, before limit")
+    has_more: bool = Field(..., description="Whether more missions are available beyond this response's limit")
     missions: list[PDSCatalogMissionItem] = Field(
         default_factory=list,
         description="List of missions with dataset counts",
@@ -71,6 +73,9 @@ class PDSCatalogListMissionsTool(BaseTool[PDSCatalogListMissionsInputSchema, PDS
 
     Optionally filter by PDS node to see missions available at specific nodes.
 
+    Results are capped at `limit` (max 30) to avoid overwhelming context. There is no
+    offset/pagination parameter — if the response's `has_more` is true, narrow the result set
+    with the `node` filter rather than expecting to page through the rest.
     """
 
     input_schema = PDSCatalogListMissionsInputSchema
@@ -94,7 +99,7 @@ class PDSCatalogListMissionsTool(BaseTool[PDSCatalogListMissionsInputSchema, PDS
             client = PDSCatalogClient(catalog_dir=self.config.catalog_dir)
 
             # List missions
-            missions = await client.list_missions(node=params.node, limit=params.limit)
+            missions, total_available = await client.list_missions(node=params.node, limit=params.limit)
 
             # Convert to output format
             mission_items = [
@@ -109,6 +114,8 @@ class PDSCatalogListMissionsTool(BaseTool[PDSCatalogListMissionsInputSchema, PDS
             return PDSCatalogListMissionsOutputSchema(
                 status="success",
                 count=len(mission_items),
+                total_available=total_available,
+                has_more=total_available > len(mission_items),
                 missions=mission_items,
             )
 

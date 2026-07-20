@@ -135,6 +135,10 @@ class PDSCatalogSearchTool(BaseTool[PDSCatalogSearchInputSchema, PDSCatalogSearc
     - volume: PDS3 data volumes
     - bundle: PDS4 top-level collections
     - collection: PDS4 data collections
+
+    Results are capped at `limit` (max 20) to avoid overwhelming context, especially with
+    fields="full". If the response's `has_more` is true, page through the rest with `offset`
+    (e.g. offset=10, offset=20, ...) rather than raising `limit`.
     """
 
     input_schema = PDSCatalogSearchInputSchema

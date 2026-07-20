@@ -391,7 +391,7 @@ class CatalogIndex:
 
         return stats
 
-    def list_missions(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+    def list_missions(self, node: str | None = None, limit: int = 30) -> tuple[list[dict[str, Any]], int]:
         """List all missions with dataset counts.
 
         Args:
@@ -399,7 +399,7 @@ class CatalogIndex:
             limit: Maximum missions to return
 
         Returns:
-            List of missions with counts and nodes
+            Tuple of (list of missions with counts and nodes, total matching missions before limit)
         """
         missions = []
         for mission, datasets in sorted(self._by_mission.items()):
@@ -414,9 +414,9 @@ class CatalogIndex:
 
             missions.append(mission_data)
 
-        return missions[:limit]
+        return missions[:limit], len(missions)
 
-    def list_targets(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+    def list_targets(self, node: str | None = None, limit: int = 30) -> tuple[list[dict[str, Any]], int]:
         """List all targets with dataset counts.
 
         Args:
@@ -424,7 +424,7 @@ class CatalogIndex:
             limit: Maximum targets to return
 
         Returns:
-            List of targets with counts and nodes
+            Tuple of (list of targets with counts and nodes, total matching targets before limit)
         """
         targets = []
         for target, datasets in sorted(self._by_target.items()):
@@ -439,7 +439,7 @@ class CatalogIndex:
 
             targets.append(target_data)
 
-        return targets[:limit]
+        return targets[:limit], len(targets)
 
 
 class PDSCatalogClient:
@@ -550,7 +550,7 @@ class PDSCatalogClient:
         """
         return self.index.get_dataset_by_id(dataset_id)
 
-    async def list_missions(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+    async def list_missions(self, node: str | None = None, limit: int = 30) -> tuple[list[dict[str, Any]], int]:
         """List all missions.
 
         Args:
@@ -558,11 +558,11 @@ class PDSCatalogClient:
             limit: Maximum missions to return
 
         Returns:
-            List of missions with counts
+            Tuple of (list of missions with counts, total matching missions before limit)
         """
         return self.index.list_missions(node=node, limit=limit)
 
-    async def list_targets(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
+    async def list_targets(self, node: str | None = None, limit: int = 30) -> tuple[list[dict[str, Any]], int]:
         """List all targets.
 
         Args:
@@ -570,7 +570,7 @@ class PDSCatalogClient:
             limit: Maximum targets to return
 
         Returns:
-            List of targets with counts
+            Tuple of (list of targets with counts, total matching targets before limit)
         """
         return self.index.list_targets(node=node, limit=limit)
 

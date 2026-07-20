@@ -73,6 +73,10 @@ class PDS4SearchTargetsTool(BaseTool[PDS4SearchTargetsInputSchema, PDS4SearchTar
 
     Use for queries about specific celestial bodies, finding targets by type, or targets
     studied by missions.
+
+    Results are capped at `limit` (max 25) to avoid overwhelming context. This endpoint has no
+    offset/pagination — if `total_hits` in the response exceeds the number of targets returned,
+    narrow the query with keywords or target_type rather than expecting to page through the rest.
     """
 
     input_schema = PDS4SearchTargetsInputSchema

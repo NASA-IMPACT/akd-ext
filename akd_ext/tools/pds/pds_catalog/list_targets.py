@@ -41,7 +41,9 @@ class PDSCatalogListTargetsOutputSchema(OutputSchema):
     """Output schema for PDSCatalogListTargetsTool."""
 
     status: str = Field(..., description="Status of the request ('success')")
-    count: int = Field(..., description="Number of targets returned")
+    count: int = Field(..., description="Number of targets returned in this response")
+    total_available: int = Field(..., description="Total number of targets matching the filter, before limit")
+    has_more: bool = Field(..., description="Whether more targets are available beyond this response's limit")
     targets: list[PDSCatalogTargetItem] = Field(
         default_factory=list,
         description="List of targets with dataset counts",
@@ -71,6 +73,10 @@ class PDSCatalogListTargetsTool(BaseTool[PDSCatalogListTargetsInputSchema, PDSCa
     - nodes: List of PDS nodes containing data for this target
 
     Optionally filter by PDS node to see targets available at specific nodes.
+
+    Results are capped at `limit` (max 30) to avoid overwhelming context. There is no
+    offset/pagination parameter — if the response's `has_more` is true, narrow the result set
+    with the `node` filter rather than expecting to page through the rest.
 
     Example Usage:
         # List all targets
@@ -109,7 +115,7 @@ class PDSCatalogListTargetsTool(BaseTool[PDSCatalogListTargetsInputSchema, PDSCa
             client = PDSCatalogClient(catalog_dir=self.config.catalog_dir)
 
             # List targets
-            targets = await client.list_targets(node=params.node, limit=params.limit)
+            targets, total_available = await client.list_targets(node=params.node, limit=params.limit)
 
             # Convert to output format
             target_items = [
@@ -124,6 +130,8 @@ class PDSCatalogListTargetsTool(BaseTool[PDSCatalogListTargetsInputSchema, PDSCa
             return PDSCatalogListTargetsOutputSchema(
                 status="success",
                 count=len(target_items),
+                total_available=total_available,
+                has_more=total_available > len(target_items),
                 targets=target_items,
             )
 

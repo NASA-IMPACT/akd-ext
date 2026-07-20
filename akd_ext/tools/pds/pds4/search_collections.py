@@ -96,6 +96,11 @@ class PDS4SearchCollectionsTool(BaseTool[PDS4SearchCollectionsInputSchema, PDS4S
     - Raw: Unprocessed instrument data
     - Calibrated: Instrument effects removed
     - Derived: Higher-level data products
+
+    Results are capped at `limit` (max 15) to avoid overwhelming context. This endpoint has no
+    offset/pagination — if `total_hits` in the response exceeds the number of collections returned,
+    narrow the query with the ref_lid_* filters, time range, or processing level rather than
+    expecting to page through the rest.
     """
 
     input_schema = PDS4SearchCollectionsInputSchema

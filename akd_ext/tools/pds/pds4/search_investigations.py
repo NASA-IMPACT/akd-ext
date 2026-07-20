@@ -73,6 +73,11 @@ class PDS4SearchInvestigationsTool(BaseTool[PDS4SearchInvestigationsInputSchema,
 
     Use for queries about space missions, mission timelines, or finding missions that studied
     specific targets.
+
+    Results are capped at `limit` (max 25) to avoid overwhelming context. This endpoint has no
+    offset/pagination — if `total_hits` in the response exceeds the number of investigations
+    returned, narrow the query with more specific keywords rather than expecting to page through
+    the rest.
     """
 
     input_schema = PDS4SearchInvestigationsInputSchema

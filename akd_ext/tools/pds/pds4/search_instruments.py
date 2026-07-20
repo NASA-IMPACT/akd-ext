@@ -71,6 +71,10 @@ class PDS4SearchInstrumentsTool(BaseTool[PDS4SearchInstrumentsInputSchema, PDS4S
     Example: Cassini RADAR - urn:nasa:pds:context:instrument:radar.cassini
 
     Use for queries about specific instruments, instrument types, or instruments on missions/spacecraft.
+
+    Results are capped at `limit` (max 25) to avoid overwhelming context. This endpoint has no
+    offset/pagination — if `total_hits` in the response exceeds the number of instruments returned,
+    narrow the query with keywords or instrument_type rather than expecting to page through the rest.
     """
 
     input_schema = PDS4SearchInstrumentsInputSchema

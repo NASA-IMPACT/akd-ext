@@ -1137,16 +1137,19 @@ class TestCatalogIndex:
         assert "rings" in stats["by_node"]
 
     def test_list_missions(self):
-        ms = self.idx.list_missions()
+        ms, total = self.idx.list_missions()
         assert len(ms) == 2
+        assert total == 2
 
     def test_list_missions_node_filter(self):
-        ms = self.idx.list_missions(node="rings")
+        ms, total = self.idx.list_missions(node="rings")
         assert len(ms) == 1
+        assert total == 1
 
     def test_list_targets(self):
-        ts = self.idx.list_targets()
+        ts, total = self.idx.list_targets()
         assert len(ts) == 2
+        assert total == 2
 
     def test_find_similar(self):
         similar = self.idx.find_similar_dataset_ids("CASS")

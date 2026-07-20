@@ -146,6 +146,10 @@ class IMGSearchTool(BaseTool[IMGSearchInputSchema, IMGSearchOutputSchema]):
 
     This tool provides comprehensive search capabilities across multiple missions with filtering
     by target, mission, instrument, time range, sol number, and various image properties.
+
+    Results are capped at `rows` (max 10) to avoid overwhelming context. If `num_found` in the
+    response exceeds the number of products returned, page through the rest with `start`
+    (e.g. start=10, start=20, ...) rather than raising `rows`.
     """
 
     input_schema = IMGSearchInputSchema

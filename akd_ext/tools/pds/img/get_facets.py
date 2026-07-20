@@ -104,6 +104,10 @@ class IMGGetFacetsTool(BaseTool[IMGGetFacetsInputSchema, IMGGetFacetsOutputSchem
 
         Discover available filter names for MASTCAM:
             facet_field="FILTER_NAME", instrument="MASTCAM"
+
+    Results are capped at `limit` (max 25) and sorted by count descending, so the most common
+    values are always included even when truncated. There is no offset/pagination — use `target`,
+    `mission`, or `instrument` filters to narrow further if you need values beyond the top ones.
     """
 
     input_schema = IMGGetFacetsInputSchema

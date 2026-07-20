@@ -99,6 +99,11 @@ class PDS4SearchProductsTool(BaseTool[PDS4SearchProductsInputSchema, PDS4SearchP
     - Latitude (North/South): -90 to 90 degrees
     - Longitude (East/West): -180 to 180 degrees
     - Products that intersect the query box will be returned
+
+    Results are capped at `limit` (max 10) to avoid overwhelming context. This endpoint has no
+    offset/pagination — if `total_hits` in the response exceeds the number of products returned,
+    narrow the query (keywords, time range, bounding box, or target) rather than expecting to page
+    through the rest.
     """
 
     input_schema = PDS4SearchProductsInputSchema
