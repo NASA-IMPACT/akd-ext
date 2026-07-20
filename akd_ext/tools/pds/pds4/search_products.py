@@ -12,6 +12,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import PROCESSING_LEVEL
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
 
+# Response size limit to prevent overwhelming LLM context windows (heavy per-record payload)
+MAX_SEARCH_PRODUCTS_LIMIT = 10
+
 
 class ProductSummary(BaseModel):
     """Product item in search results."""
@@ -48,7 +51,12 @@ class PDS4SearchProductsInputSchema(InputSchema):
     ref_lid_target: str | None = Field(
         None, description="URN identifier for target (e.g., 'urn:nasa:pds:context:target:planet.mars')"
     )
-    limit: int = Field(10, ge=0, le=25, description="Maximum results to return (default 10, max 25)")
+    limit: int = Field(
+        10,
+        ge=0,
+        le=MAX_SEARCH_PRODUCTS_LIMIT,
+        description=f"Maximum results to return (default 10, max {MAX_SEARCH_PRODUCTS_LIMIT})",
+    )
 
 
 class PDS4SearchProductsOutputSchema(OutputSchema):
@@ -111,6 +119,7 @@ class PDS4SearchProductsTool(BaseTool[PDS4SearchProductsInputSchema, PDS4SearchP
             ValueError: If coordinate values are invalid
         """
         try:
+            limit = min(params.limit, MAX_SEARCH_PRODUCTS_LIMIT)
             # Create client and perform search
             async with PDS4Client(
                 base_url=self.config.base_url,
@@ -127,7 +136,7 @@ class PDS4SearchProductsTool(BaseTool[PDS4SearchProductsInputSchema, PDS4SearchP
                     bbox_east=params.bbox_east,
                     bbox_west=params.bbox_west,
                     ref_lid_target=params.ref_lid_target,
-                    limit=params.limit,
+                    limit=limit,
                 )
 
             # Format response
@@ -176,7 +185,7 @@ class PDS4SearchProductsTool(BaseTool[PDS4SearchProductsInputSchema, PDS4SearchP
                 total_hits=response.summary.hits,
                 query_time_ms=response.summary.took,
                 query=response.summary.q,
-                limit=params.limit,
+                limit=limit,
                 products=products,
             )
 

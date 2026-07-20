@@ -12,6 +12,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.opus.types import OPUS_INSTRUMENTS, OPUS_MISSIONS, OPUS_PLANETS
 from akd_ext.tools.pds.utils.opus_client import OPUSClient, OPUSClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_OPUS_SEARCH_LIMIT = 15
+
 
 class OPUSObservationSummary(BaseModel):
     """Observation item in search results."""
@@ -67,8 +70,8 @@ class OPUSSearchInputSchema(InputSchema):
     limit: int = Field(
         10,
         ge=1,
-        le=25,
-        description="Maximum observations to return (default 10, max 25)",
+        le=MAX_OPUS_SEARCH_LIMIT,
+        description=f"Maximum observations to return (default 10, max {MAX_OPUS_SEARCH_LIMIT})",
     )
     startobs: int = Field(
         1,

@@ -12,6 +12,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import PROCESSING_LEVEL
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
 
+# Response size limit to prevent overwhelming LLM context windows (heavy per-record payload)
+MAX_SEARCH_BUNDLES_LIMIT = 10
+
 
 class BundleSummary(BaseModel):
     """Bundle item in search results."""
@@ -45,7 +48,12 @@ class PDS4SearchBundlesInputSchema(InputSchema):
     end_time: str | None = Field(None, description="End of time range (ISO 8601 format)")
     processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by processing level")
     limit: int = Field(
-        10, ge=0, le=25, description="Number of bundle results to return (default 10, set to 0 for facets only)"
+        10,
+        ge=0,
+        le=MAX_SEARCH_BUNDLES_LIMIT,
+        description=(
+            f"Number of bundle results to return (default 10, max {MAX_SEARCH_BUNDLES_LIMIT}, set to 0 for facets only)"
+        ),
     )
     facet_fields: str | None = Field(
         None,

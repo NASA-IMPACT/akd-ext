@@ -12,6 +12,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import INSTRUMENT_TYPE
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_SEARCH_INSTRUMENTS_LIMIT = 25
+
 
 class InstrumentSummary(BaseModel):
     """Instrument item in search results."""
@@ -30,7 +33,12 @@ class PDS4SearchInstrumentsInputSchema(InputSchema):
         None, description="Space-delimited search terms (e.g. 'camera mars', 'spectrometer cassini')"
     )
     instrument_type: INSTRUMENT_TYPE | None = Field(None, description="Filter by instrument type")
-    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
+    limit: int = Field(
+        10,
+        ge=0,
+        le=MAX_SEARCH_INSTRUMENTS_LIMIT,
+        description=f"Max results (default 10, max {MAX_SEARCH_INSTRUMENTS_LIMIT})",
+    )
 
 
 class PDS4SearchInstrumentsOutputSchema(OutputSchema):

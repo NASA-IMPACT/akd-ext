@@ -11,6 +11,7 @@ from pydantic import Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds_catalog.types import DATASET_TYPE, FIELD_PROFILE, PDS_NODE, PDS_VERSION
 from akd_ext.tools.pds.utils.pds_catalog_client import (
+    DEFAULT_RESULTS_LIMIT,
     FIELD_PROFILES,
     MAX_RESULTS_LIMIT,
     PDSCatalogClient,
@@ -66,10 +67,10 @@ class PDSCatalogSearchInputSchema(InputSchema):
         description="Filter datasets that have data on or before this date (YYYY-MM-DD)",
     )
     limit: int = Field(
-        20,
+        DEFAULT_RESULTS_LIMIT,
         ge=1,
-        le=50,
-        description="Maximum results to return (default 20, max 50)",
+        le=MAX_RESULTS_LIMIT,
+        description=f"Maximum results to return (default {DEFAULT_RESULTS_LIMIT}, max {MAX_RESULTS_LIMIT})",
     )
     offset: int = Field(
         0,

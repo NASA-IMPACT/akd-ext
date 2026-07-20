@@ -12,6 +12,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds4.types import PROCESSING_LEVEL
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_SEARCH_COLLECTIONS_LIMIT = 15
+
 
 class CollectionSummary(BaseModel):
     """Collection item in search results."""
@@ -50,7 +53,12 @@ class PDS4SearchCollectionsInputSchema(InputSchema):
         None, description="End of time range in ISO 8601 format (e.g., '2021-01-01T00:00:00Z')"
     )
     processing_level: PROCESSING_LEVEL | None = Field(None, description="Filter by calibration level")
-    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
+    limit: int = Field(
+        10,
+        ge=0,
+        le=MAX_SEARCH_COLLECTIONS_LIMIT,
+        description=f"Max results (default 10, max {MAX_SEARCH_COLLECTIONS_LIMIT})",
+    )
 
 
 class PDS4SearchCollectionsOutputSchema(OutputSchema):

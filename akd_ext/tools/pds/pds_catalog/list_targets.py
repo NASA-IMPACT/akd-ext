@@ -10,6 +10,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds_catalog.types import PDS_NODE
 from akd_ext.tools.pds.utils.pds_catalog_client import PDSCatalogClient, PDSCatalogClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_TARGETS_LIMIT = 30
+
 
 class PDSCatalogTargetItem(BaseModel):
     """Target item in list results."""
@@ -27,10 +30,10 @@ class PDSCatalogListTargetsInputSchema(InputSchema):
         description="Filter by PDS node (optional)",
     )
     limit: int = Field(
-        50,
+        MAX_TARGETS_LIMIT,
         ge=1,
-        le=50,
-        description="Maximum targets to return (default 50)",
+        le=MAX_TARGETS_LIMIT,
+        description=f"Maximum targets to return (default {MAX_TARGETS_LIMIT}, max {MAX_TARGETS_LIMIT})",
     )
 
 

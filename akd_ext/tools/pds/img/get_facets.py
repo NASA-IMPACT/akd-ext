@@ -11,6 +11,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.img.types import IMGFacetField, IMGInstrument, IMGMission, IMGTarget
 from akd_ext.tools.pds.utils.img_client import IMGAtlasClient, IMGAtlasClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_FACET_VALUES_LIMIT = 25
+
 
 class IMGFacetValueItem(BaseModel):
     """A single facet value with its count."""
@@ -36,7 +39,12 @@ class IMGGetFacetsInputSchema(InputSchema):
             "- 'pds_standard': PDS version (PDS3, PDS4)"
         ),
     )
-    limit: int = Field(10, ge=1, le=25, description="Maximum number of values to return (default 10, max 25)")
+    limit: int = Field(
+        10,
+        ge=1,
+        le=MAX_FACET_VALUES_LIMIT,
+        description=f"Maximum number of values to return (default 10, max {MAX_FACET_VALUES_LIMIT})",
+    )
     target: IMGTarget | None = Field(None, description="Optional target filter to narrow results")
     mission: IMGMission | None = Field(None, description="Optional mission filter to narrow results")
     instrument: IMGInstrument | None = Field(None, description="Optional instrument filter to narrow results")

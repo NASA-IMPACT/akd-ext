@@ -10,6 +10,9 @@ from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.pds_catalog.types import PDS_NODE
 from akd_ext.tools.pds.utils.pds_catalog_client import PDSCatalogClient, PDSCatalogClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_MISSIONS_LIMIT = 30
+
 
 class PDSCatalogMissionItem(BaseModel):
     """Mission item in list results."""
@@ -27,10 +30,10 @@ class PDSCatalogListMissionsInputSchema(InputSchema):
         description="Filter by PDS node (optional)",
     )
     limit: int = Field(
-        50,
+        MAX_MISSIONS_LIMIT,
         ge=1,
-        le=50,
-        description="Maximum missions to return (default 50)",
+        le=MAX_MISSIONS_LIMIT,
+        description=f"Maximum missions to return (default {MAX_MISSIONS_LIMIT}, max {MAX_MISSIONS_LIMIT})",
     )
 
 

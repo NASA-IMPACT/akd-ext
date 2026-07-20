@@ -11,6 +11,9 @@ from pydantic import BaseModel, Field
 from akd_ext.mcp.decorators import mcp_tool
 from akd_ext.tools.pds.utils.pds4_client import PDS4Client, PDS4ClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_SEARCH_INVESTIGATIONS_LIMIT = 25
+
 
 class InvestigationSummary(BaseModel):
     """Investigation item in search results."""
@@ -29,7 +32,12 @@ class PDS4SearchInvestigationsInputSchema(InputSchema):
     keywords: str | None = Field(
         None, description="Space-delimited search terms (e.g. 'mars rover', 'jupiter cassini')"
     )
-    limit: int = Field(10, ge=0, le=25, description="Max results (default 10, max 25)")
+    limit: int = Field(
+        10,
+        ge=0,
+        le=MAX_SEARCH_INVESTIGATIONS_LIMIT,
+        description=f"Max results (default 10, max {MAX_SEARCH_INVESTIGATIONS_LIMIT})",
+    )
 
 
 class PDS4SearchInvestigationsOutputSchema(OutputSchema):

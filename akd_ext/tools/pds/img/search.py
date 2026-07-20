@@ -18,6 +18,9 @@ from akd_ext.tools.pds.img.types import (
 )
 from akd_ext.tools.pds.utils.img_client import IMGAtlasClient, IMGAtlasClientError
 
+# Response size limit to prevent overwhelming LLM context windows
+MAX_SEARCH_ROWS_LIMIT = 10
+
 
 class IMGImageSize(BaseModel):
     """Image dimensions in pixels."""
@@ -100,7 +103,12 @@ class IMGSearchInputSchema(InputSchema):
     )
     sort_by: IMGSortField | None = Field(None, description="Field to sort results by")
     sort_order: IMGSortOrder = Field("desc", description="Sort direction: 'asc' or 'desc'")
-    rows: int = Field(10, ge=1, le=25, description="Maximum number of products to return (default 10, max 25)")
+    rows: int = Field(
+        10,
+        ge=1,
+        le=MAX_SEARCH_ROWS_LIMIT,
+        description=f"Maximum number of products to return (default 10, max {MAX_SEARCH_ROWS_LIMIT})",
+    )
     start: int = Field(0, ge=0, description="Pagination offset (for retrieving additional pages)")
 
 

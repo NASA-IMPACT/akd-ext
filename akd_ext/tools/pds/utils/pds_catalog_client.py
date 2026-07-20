@@ -18,9 +18,10 @@ from akd_ext.tools.pds.utils.pds_catalog_api_models import PDSDataset, load_from
 # Default catalog directory containing scraped JSONL files
 DEFAULT_CATALOG_DIR = Path(__file__).parent.parent / "pds_catalog" / "scraped_data"
 
-# Response limits
-MAX_RESULTS_LIMIT = 50
-DEFAULT_RESULTS_LIMIT = 20
+# Response limits (kept small to avoid overwhelming LLM context windows,
+# especially with fields="full")
+MAX_RESULTS_LIMIT = 20
+DEFAULT_RESULTS_LIMIT = 10
 
 # Minimal mission abbreviations (only non-obvious ones)
 # Many PDS3 datasets use abbreviated mission names in their IDs/titles
@@ -390,7 +391,7 @@ class CatalogIndex:
 
         return stats
 
-    def list_missions(self, node: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    def list_missions(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
         """List all missions with dataset counts.
 
         Args:
@@ -415,7 +416,7 @@ class CatalogIndex:
 
         return missions[:limit]
 
-    def list_targets(self, node: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    def list_targets(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
         """List all targets with dataset counts.
 
         Args:
@@ -549,7 +550,7 @@ class PDSCatalogClient:
         """
         return self.index.get_dataset_by_id(dataset_id)
 
-    async def list_missions(self, node: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    async def list_missions(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
         """List all missions.
 
         Args:
@@ -561,7 +562,7 @@ class PDSCatalogClient:
         """
         return self.index.list_missions(node=node, limit=limit)
 
-    async def list_targets(self, node: str | None = None, limit: int = 50) -> list[dict[str, Any]]:
+    async def list_targets(self, node: str | None = None, limit: int = 30) -> list[dict[str, Any]]:
         """List all targets.
 
         Args:
