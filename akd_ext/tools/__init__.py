@@ -32,6 +32,18 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .psi.api import (
+    PsiApiConfig,
+    PsiApiInput,
+    PsiApiOutput,
+    PsiApiTool,
+)
+from .psi.metadata import (
+    PsiMetadataExpansionConfig,
+    PsiMetadataExpansionInput,
+    PsiMetadataExpansionOutput,
+    PsiMetadataExpansionTool,
+)
 
 __all__ = [
     "DummyTool",
@@ -58,4 +70,12 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "PsiApiConfig",
+    "PsiApiInput",
+    "PsiApiOutput",
+    "PsiApiTool",
+    "PsiMetadataExpansionConfig",
+    "PsiMetadataExpansionInput",
+    "PsiMetadataExpansionOutput",
+    "PsiMetadataExpansionTool",
 ]
