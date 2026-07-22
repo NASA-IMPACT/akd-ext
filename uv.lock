@@ -143,8 +143,8 @@ wheels = [
 
 [[package]]
 name = "akd"
-version = "0.1.0"
-source = { git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=develop#9477008cfe4029158a1b430e5ad6150bece8717a" }
+version = "0.1.1"
+source = { git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=f2713ba#f2713bad053ab0cfe4f1f4d3e5bd0b2d0b18e382" }
 dependencies = [
     { name = "crawl4ai" },
     { name = "dateparser" },
@@ -210,7 +210,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "akd", git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=develop" },
+    { name = "akd", git = "https://github.com/NASA-IMPACT/accelerated-discovery.git?rev=f2713ba" },
     { name = "beautifulsoup4", specifier = ">=4.9.1" },
     { name = "fastmcp", specifier = ">=2.0.0" },
     { name = "openai-agents", specifier = ">=0.6.7" },
