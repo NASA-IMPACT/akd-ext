@@ -52,6 +52,9 @@ class FileEdit(BaseModel):
     z_max: float = Field(default=0.0, description="Upper height bound in metres")
     profile: str = Field(default="", description="Profile shape: 'linear_ramp', 'constant', or 'gaussian'")
 
+    # -- file_replace fields
+    content: str = Field(default="", description="Full replacement content (file_replace only)")
+
 
 class ExperimentSpec(BaseModel):
     """Complete specification for one experiment."""
@@ -92,6 +95,15 @@ class ExperimentImplementationInputSchema(InputSchema):
     stage_3_spec: str = Field(
         ..., description="Stage-3 workflow specification markdown with experiment matrix and control definition."
     )
+    config: str = Field(
+        default="",
+        description=(
+            "Optional standalone pipeline config from Stage 3 (YAML, JSON, or any format). "
+            "When provided, use this directly instead of extracting the config from the "
+            "markdown spec. The spec is still provided for context (RQ, design narrative, "
+            "validation plan)."
+        ),
+    )
 
 
 class ExperimentImplementationOutputSchema(OutputSchema):
@@ -101,6 +113,13 @@ class ExperimentImplementationOutputSchema(OutputSchema):
 
     __response_field__ = "report"
     job_id: str = Field(..., description="Job ID returned by the job_submit MCP tool after submitting experiments.")
+    workspace_name: str = Field(
+        ...,
+        description=(
+            "Workspace directory name sent in the job_submit payload. Must match the payload value exactly — "
+            "Stage 5 uses this to call job_plot."
+        ),
+    )
     report: str = Field(default="", description="Markdown implementation summary report")
 
 
@@ -133,6 +152,11 @@ class ExperimentImplementationAgent(
         if isinstance(output, ExperimentImplementationOutputSchema):
             if not output.job_id.strip():
                 return "job_id is empty. You must call job_submit and include the returned job_id."
+            if not output.workspace_name.strip():
+                return (
+                    "workspace_name is empty. Return the exact workspace_name you sent in the "
+                    "job_submit payload so Stage 5 can fetch plots."
+                )
             if not output.report.strip():
                 return "Report is empty. Provide an implementation summary."
         return super().check_output(output)
