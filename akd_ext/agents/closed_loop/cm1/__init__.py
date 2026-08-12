@@ -7,6 +7,8 @@ pre-configured with CM1 system prompts, context files, and MCP tools.
 from akd_ext.agents.closed_loop.cm1.agents import (
     CM1CapabilityFeasibilityMapperAgent,
     CM1CapabilityFeasibilityMapperConfig,
+    CM1ExperimentAnalysisAgent,
+    CM1ExperimentAnalysisConfig,
     CM1ExperimentImplementationAgent,
     CM1ExperimentImplementationConfig,
     CM1InterpretationPaperAssemblyAgent,
@@ -24,6 +26,8 @@ __all__ = [
     "CM1WorkflowSpecBuilderConfig",
     "CM1ExperimentImplementationAgent",
     "CM1ExperimentImplementationConfig",
+    "CM1ExperimentAnalysisAgent",
+    "CM1ExperimentAnalysisConfig",
     "CM1ResearchReportGeneratorAgent",
     "CM1ResearchReportGeneratorConfig",
     "CM1InterpretationPaperAssemblyAgent",
