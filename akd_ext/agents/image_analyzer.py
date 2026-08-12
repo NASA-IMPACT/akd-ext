@@ -57,6 +57,15 @@ class FigureAnalysis(BaseModel):
     url: str = Field(default="", description="Filled programmatically; leave empty.")
     figure_type: Literal["plot", "illustration", "unknown"] = Field(default="unknown")
     description: str = Field(default="")
+    inference: str = Field(
+        default="",
+        description=(
+            "What this figure means in the context of the research question and "
+            "hypothesis. Go beyond description — state what the figure implies "
+            "about H0/H1, what patterns support or contradict the hypothesis, "
+            "and what the reader should take away."
+        ),
+    )
     x_axis: str = Field(default="", description="Axis label and visible range with units. Plots only.")
     y_axis: str = Field(default="", description="Axis label and visible range with units. Plots only.")
     legend: list[str] = Field(default_factory=list, description="Legend entries verbatim with color. Plots only.")
@@ -223,6 +232,12 @@ STEP 3 — Fill remaining fields.
   Leave empty if no legend.
 
 - caption: figure title or visible caption text exactly as shown.
+
+- inference: what this figure means in the context of the research
+  question and hypothesis. Go beyond description. State what the figure
+  implies about H0/H1, what patterns support or contradict the
+  hypothesis, and what the reader should take away. If context is
+  insufficient to make an inference, state "insufficient context."
 
 - notes: ONLY genuine anomalies — axis clipping, suspicious scaling,
   missing data, outliers inconsistent with the rest, suspected plotting
@@ -436,10 +451,13 @@ class ImageAnalyzerAgent(
 
 
 def render_markdown(analyses: list[FigureAnalysis], context: str = "") -> str:
-    """Render a Markdown report from a list of :class:`FigureAnalysis`."""
+    """Render a Markdown report from a list of :class:`FigureAnalysis`.
+
+    Note: ``context`` is accepted for API compatibility but is NOT included
+    in the rendered output — it was used as input to the analyzer LLM, not
+    as part of the deliverable. The output contains only figure analyses.
+    """
     parts: list[str] = ["# Image Analysis Report\n"]
-    if context:
-        parts.append(f"## Context\n\n{context.strip()}\n")
     parts.append(f"## Figures ({len(analyses)} total)\n")
     for i, f in enumerate(analyses, 1):
         parts.append(f"### {i}. `{f.slug}` — _{f.figure_type}_\n")
@@ -448,6 +466,7 @@ def render_markdown(analyses: list[FigureAnalysis], context: str = "") -> str:
         for label, value in (
             ("Caption", f.caption),
             ("Description", f.description),
+            ("Inference", f.inference),
             ("X-axis", f.x_axis),
             ("Y-axis", f.y_axis),
             ("Notes", f.notes),

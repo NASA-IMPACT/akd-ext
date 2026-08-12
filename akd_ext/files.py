@@ -58,12 +58,14 @@ class URLFileResolver:
 
     async def _get_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=self._timeout)
+            # ``follow_redirects=True`` is required for pre-signed URLs (S3, GCS)
+            # and shortlink services that 30x to a final asset.
+            self._client = httpx.AsyncClient(timeout=self._timeout, follow_redirects=True)
         return self._client
 
     async def _fetch(self, url: str) -> bytes:
         client = await self._get_client()
-        response = await client.get(url)
+        response = await client.get(url, follow_redirects=True)
         response.raise_for_status()
         return response.content
 
