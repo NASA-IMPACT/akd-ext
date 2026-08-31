@@ -32,3 +32,19 @@ The best way to execute scripts is with `uv run`:
 ```bash
 uv run python your_script.py
 ```
+
+## `min_score` and the SDE search backend
+
+Both SDE-backed tools send `min_score` on every request — `sde_search_tool` on `/api/search`,
+`repository_search_tool` on `/api/code/search`. It is a lower bound on the `_score` each document is
+returned with, and the endpoint applies a server-side default of `0.55` when the field is omitted,
+which is above the score most documents receive — so omitting it silently returns nothing. The tools
+default to `min_score=0.0` and expose it as a config field.
+
+Measured against the current endpoint, for `"UF universal format weather radar .uf reader python
+reflectivity"`:
+
+| `min_score` | results |
+| --- | --- |
+| omitted (server default `0.55`) | 0 |
+| `0.0` | 385 |

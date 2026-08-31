@@ -4,6 +4,7 @@ import pytest
 import httpx
 from akd_ext.structures import SDEIndexedDocumentType, NASASMDDivision
 from akd_ext.tools import SDESearchTool, SDESearchToolInputSchema, SDESearchToolConfig
+from akd_ext.tools.sde_search import DEFAULT_SDE_BASE_URL
 
 
 @pytest.mark.integration
@@ -306,3 +307,82 @@ async def test_sde_search_result_multiplier_disabled():
     assert result.extra.get("requested_limit") == limit
     # Results should equal the requested limit (no over-fetching when validation is off)
     assert len(result.results) <= limit
+
+
+@pytest.mark.unit
+async def test_sde_search_always_sends_min_score(monkeypatch):
+    """min_score must be on every request; omitting it lets the server apply its 0.55 default."""
+    captured: dict = {}
+
+    class _Response:
+        def raise_for_status(self) -> None: ...
+
+        @staticmethod
+        def json() -> dict:
+            return {"success": True, "total_count": 0, "documents": []}
+
+    async def _post(self, url, json=None, **kwargs):
+        captured["url"] = url
+        captured["body"] = json
+        return _Response()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _post)
+
+    await SDESearchTool().arun(SDESearchToolInputSchema(query="anything", limit=3))
+
+    assert captured["url"].endswith("/api/search")
+    assert captured["body"]["min_score"] == 0.0
+
+
+@pytest.mark.unit
+async def test_sde_search_min_score_is_configurable(monkeypatch):
+    """A caller-supplied min_score reaches the API unchanged."""
+    captured: dict = {}
+
+    class _Response:
+        def raise_for_status(self) -> None: ...
+
+        @staticmethod
+        def json() -> dict:
+            return {"success": True, "total_count": 0, "documents": []}
+
+    async def _post(self, url, json=None, **kwargs):
+        captured["body"] = json
+        return _Response()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _post)
+
+    tool = SDESearchTool(config=SDESearchToolConfig(min_score=0.8))
+    await tool.arun(SDESearchToolInputSchema(query="anything", limit=3))
+
+    assert captured["body"]["min_score"] == 0.8
+
+
+@pytest.mark.unit
+def test_default_base_url_is_the_current_sde_host():
+    """Guards against a silent revert to the retired d2kqty7z3q8ugg distribution."""
+    assert DEFAULT_SDE_BASE_URL == "https://dyejsbdumgpqz.cloudfront.net"
+
+
+@pytest.mark.unit
+async def test_base_url_trailing_slash_does_not_double_up(monkeypatch):
+    """SDE_BASE_URL is shared with code_signals, whose default carries a trailing slash."""
+    captured: dict = {}
+
+    class _Response:
+        def raise_for_status(self) -> None: ...
+
+        @staticmethod
+        def json() -> dict:
+            return {"success": True, "total_count": 0, "documents": []}
+
+    async def _post(self, url, json=None, **kwargs):
+        captured["url"] = url
+        return _Response()
+
+    monkeypatch.setattr(httpx.AsyncClient, "post", _post)
+
+    tool = SDESearchTool(config=SDESearchToolConfig(base_url="https://example.org/"))
+    await tool.arun(SDESearchToolInputSchema(query="anything", limit=1))
+
+    assert captured["url"] == "https://example.org/api/search"

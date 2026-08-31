@@ -31,6 +31,8 @@ class TestFetchGithubMetadata:
         assert isinstance(result.closed_pulls, int)
         assert isinstance(result.last_updated, str)
         assert isinstance(result.created_at, str)
+        # Must stay a str: a None here serializes to null and fails MCP output validation.
+        assert isinstance(result.first_commit_date, str)
 
     @pytest.mark.asyncio
     async def test_fetch_github_metadata_failure(self):

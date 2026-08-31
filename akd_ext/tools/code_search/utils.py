@@ -52,7 +52,8 @@ async def fetch_github_metadata(repo_name: str, access_token: str | None = None)
             repository_metadata.open_issues = repo.get_issues(state="open").totalCount
             repository_metadata.pulls = repo.get_pulls(state="open", sort="created", base="master").totalCount
             repository_metadata.closed_pulls = repo.get_pulls(state="closed", sort="created", base="master").totalCount
-            repository_metadata.first_commit_date = None  # The original code provided also fell back to created_at if first_commit_date was not available. And it was set to None by default.
+            # first_commit_date is left at its "" default: GitHub doesn't expose it cheaply, and
+            # calculate_reliability_score falls back to created_at when it is empty.
     except Exception as e:
         logger.error(f"Error fetching metadata for {repo_name}: {e}")
         return repository_metadata
