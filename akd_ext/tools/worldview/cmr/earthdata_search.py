@@ -72,3 +72,4 @@ if __name__ == "__main__":
     tool = EarthdataSearchLandingPageTool()
     result = asyncio.run(tool.arun(EarthdataSearchLandingPageInputSchema(concept_id=concept_id)))
     logger.info(result.model_dump())
+    
