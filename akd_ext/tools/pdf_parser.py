@@ -90,3 +90,4 @@ class PDFParserTool(BaseTool[PDFParserToolInputSchema, PDFParserToolOutputSchema
             content=str(result.get("content", "") or ""),
             metadata=metadata,
         )
+
