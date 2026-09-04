@@ -52,3 +52,4 @@ __all__ = [
     "permalink_input_to_intent",
     "url_to_intent",
 ]
+
