@@ -40,6 +40,18 @@ async def test_get_investigation_live_nonexistent_id_maps_psi_403():
 
 
 @pytest.mark.integration
+async def test_search_files_live_default_scope_returns_only_reports():
+    # PSI-187 has one 'Reports' file among ~120 records; the default scope
+    # must return only that category.
+    result = await PsiApiTool().arun(PsiApiInput(operation="search_files", investigation_selector="187"))
+    limits = result.data["result_limits"]
+    assert limits["category_scope"] == ["Reports"]
+    assert limits["files_matching_filters"] >= 1
+    files = [record for group in result.data["investigations"] for record in group["files"]]
+    assert files and all(record["category"] == "Reports" for record in files)
+
+
+@pytest.mark.integration
 async def test_navigate_dataset_live():
     result = await PsiApiTool().arun(PsiApiInput(operation="navigate_dataset", investigation_id="PSI-117"))
     assert result.data["totals"]["files_scanned"] >= 16

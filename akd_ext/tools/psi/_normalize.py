@@ -8,6 +8,7 @@ identically against the live PSI API.
 import re
 from fnmatch import fnmatch
 from pathlib import PurePosixPath
+from typing import Sequence
 from urllib.parse import urljoin
 
 _INVESTIGATION_RE = re.compile(r"^(?:PSI-)?(\d+)$", re.IGNORECASE)
@@ -77,9 +78,14 @@ def matches_file_filters(
     category: str | None = None,
     subcategory: str | None = None,
     subdirectory_prefix: str | None = None,
+    allowed_categories: Sequence[str] | None = None,
 ) -> bool:
     """Apply the optional file filters (AND semantics, case-insensitive)."""
     if pattern and not fnmatch(str(record.get("file_name", "")).lower(), pattern.lower()):
+        return False
+    if allowed_categories and str(record.get("category", "")).casefold() not in {
+        item.casefold() for item in allowed_categories
+    }:
         return False
     if category and str(record.get("category", "")).casefold() != category.casefold():
         return False

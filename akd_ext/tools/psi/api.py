@@ -29,6 +29,12 @@ Operation = Literal[
 ]
 
 
+def _search_categories_from_env() -> list[str]:
+    """Parse PSI_SEARCH_CATEGORIES (comma-separated; default 'Reports')."""
+    raw = os.getenv("PSI_SEARCH_CATEGORIES", "Reports")
+    return [item.strip() for item in raw.split(",") if item.strip()]
+
+
 class PsiApiInput(InputSchema):
     """Input schema for psi_api_tool (fields are per-operation; see ``operation``)."""
 
@@ -48,7 +54,10 @@ class PsiApiInput(InputSchema):
     file_name_pattern: str | None = Field(
         default=None, description="search_files/navigate_dataset: case-insensitive glob, e.g. '*.csv'"
     )
-    category: str | None = Field(default=None, description="File filter: exact category")
+    category: str | None = Field(
+        default=None,
+        description="File filter: exact category (search_files only honors categories inside the configured scope)",
+    )
     subcategory: str | None = Field(default=None, description="File filter: exact subcategory")
     subdirectory_prefix: str | None = Field(default=None, description="File filter: subdirectory prefix")
     max_items: int = Field(default=250, ge=1, le=10_000, description="Maximum records to return inline")
@@ -99,6 +108,11 @@ class PsiApiConfig(PsiToolConfig):
     """Configuration for psi_api_tool (endpoints, download, and artifact paths)."""
 
     name: str = Field(default="psi_api_tool", description="Tool name")
+    search_categories: list[str] = Field(
+        default_factory=_search_categories_from_env,
+        description="search_files only returns files in these categories (default: Reports); "
+        "an empty list disables the restriction. Env: PSI_SEARCH_CATEGORIES (comma-separated).",
+    )
     datacite_doi_url_template: str = Field(
         default=os.getenv("DATACITE_DOI_URL_TEMPLATE", "https://api.datacite.org/dois/{doi}"),
         description="DataCite endpoint template for DOI lookups",
@@ -129,6 +143,9 @@ class PsiApiTool(BaseTool[PsiApiInput, PsiApiOutput]):
     search_files, navigate_dataset, retrieve_file, lookup_publication. All PSI
     endpoints are public. Returns normalized data by default; pass
     response_mode='raw' or 'both' to also receive the raw upstream JSON.
+    search_files is scoped to the 'Reports' file category by default
+    (config ``search_categories`` / env ``PSI_SEARCH_CATEGORIES``);
+    navigate_dataset still shows the full dataset structure.
     """
 
     config_schema = PsiApiConfig

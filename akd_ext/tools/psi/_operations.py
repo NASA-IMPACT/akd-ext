@@ -12,7 +12,7 @@ from __future__ import annotations
 import hashlib
 import uuid
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Sequence
 from urllib.parse import quote
 
 import httpx
@@ -61,6 +61,7 @@ async def fetch_file_groups(
     category: str | None = None,
     subcategory: str | None = None,
     subdirectory_prefix: str | None = None,
+    allowed_categories: Sequence[str] | None = None,
     transport: httpx.AsyncBaseTransport | None = None,
 ) -> tuple[list[dict], dict, list[dict]]:
     """Query PSI file search; return (per-study groups, source metadata, warnings)."""
@@ -100,6 +101,7 @@ async def fetch_file_groups(
                 category=category,
                 subcategory=subcategory,
                 subdirectory_prefix=subdirectory_prefix,
+                allowed_categories=allowed_categories,
             )
         ]
         groups.append(
@@ -237,8 +239,13 @@ async def op_get_investigation(config: PsiApiConfig, params: PsiApiInput, transp
 
 
 async def op_search_files(config: PsiApiConfig, params: PsiApiInput, transport=None) -> dict:
-    """Search investigation files with filters; truncate and spill overflow to an artifact."""
+    """Search investigation files with filters; truncate and spill overflow to an artifact.
+
+    Results are restricted to the categories in ``config.search_categories``
+    (default: Reports). An empty list disables the restriction.
+    """
     selector = params.investigation_selector or params.investigation_id
+    scope = [item for item in (config.search_categories or []) if str(item).strip()]
     groups, source_metadata, warnings = await fetch_file_groups(
         config,
         selector,
@@ -247,8 +254,17 @@ async def op_search_files(config: PsiApiConfig, params: PsiApiInput, transport=N
         category=params.category,
         subcategory=params.subcategory,
         subdirectory_prefix=params.subdirectory_prefix,
+        allowed_categories=scope or None,
         transport=transport,
     )
+    if scope and params.category and params.category.casefold() not in {item.casefold() for item in scope}:
+        warnings.append(
+            {
+                "code": "CATEGORY_OUT_OF_SCOPE",
+                "message": f"Requested category {params.category!r} is outside the current search scope "
+                f"({', '.join(scope)}). Set search_categories (env PSI_SEARCH_CATEGORIES) to broaden it.",
+            }
+        )
     received = sum(group["returned_file_count"] for group in groups)
     matched = sum(group["matched_file_count"] for group in groups)
     truncated = matched > params.max_items
@@ -268,19 +284,25 @@ async def op_search_files(config: PsiApiConfig, params: PsiApiInput, transport=N
         "files_matching_filters": matched,
         "files_returned_to_agent": returned,
         "truncated": truncated,
+        "category_scope": scope,
     }
     if truncated:
         result_limits["complete_inventory_artifact"] = store_json_artifact(
             config.artifact_root, {"investigations": groups}, prefix="file_inventory"
         )
+    summary = (
+        f"The PSI API returned {received} file records; {matched} matched the requested "
+        f"filters and {returned} were included inline."
+    )
+    if scope:
+        summary += f" Search was scoped to categories: {', '.join(scope)}."
     return {
         "data": {
             "investigations": returned_groups,
             "result_limits": result_limits,
             "source_metadata": source_metadata,
         },
-        "summary": f"The PSI API returned {received} file records; {matched} matched the requested "
-        f"filters and {returned} were included inline.",
+        "summary": summary,
         "warnings": warnings,
         "sources": [{"type": "psi_api", "resource": f"files:{selector}"}],
         "raw": None,

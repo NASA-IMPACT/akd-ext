@@ -59,10 +59,10 @@ CSV_BYTES = b"Pressure,Kavg\n0.5,0.315\n"
 
 FILES_PAYLOAD = {
     "hits": 1,
-    "total_hits": 3,
+    "total_hits": 4,
     "studies": {
         "117": {
-            "file_count": 3,
+            "file_count": 4,
             "study_files": [
                 {
                     "file_name": "kavg.csv",
@@ -87,6 +87,14 @@ FILES_PAYLOAD = {
                     "subcategory": "",
                     "subdirectory": "",
                     "remote_url": "/api/download/talk.pdf",
+                },
+                {
+                    "file_name": "final_report.pdf",
+                    "file_size": 2048,
+                    "category": "Reports",
+                    "subcategory": "",
+                    "subdirectory": "",
+                    "remote_url": "/api/download/final_report.pdf",
                 },
             ],
         }
@@ -238,7 +246,7 @@ def test_retrieve_file_requires_locator():
 
 @pytest.mark.unit
 async def test_search_files_filters_and_truncates(tmp_path):
-    result = await api_tool(artifact_root=str(tmp_path)).arun(
+    result = await api_tool(artifact_root=str(tmp_path), search_categories=[]).arun(
         PsiApiInput(
             operation="search_files",
             investigation_selector="PSI-117",
@@ -247,7 +255,7 @@ async def test_search_files_filters_and_truncates(tmp_path):
         )
     )
     limits = result.data["result_limits"]
-    assert limits["files_received_from_api"] == 3
+    assert limits["files_received_from_api"] == 4
     assert limits["files_matching_filters"] == 2
     assert limits["files_returned_to_agent"] == 1
     assert limits["truncated"] is True
@@ -259,11 +267,69 @@ async def test_search_files_filters_and_truncates(tmp_path):
 
 
 @pytest.mark.unit
+async def test_search_files_defaults_to_reports_scope():
+    result = await api_tool().arun(PsiApiInput(operation="search_files", investigation_selector="PSI-117"))
+    limits = result.data["result_limits"]
+    assert limits["category_scope"] == ["Reports"]
+    assert limits["files_received_from_api"] == 4
+    assert limits["files_matching_filters"] == 1
+    files = result.data["investigations"][0]["files"]
+    assert [record["file_name"] for record in files] == ["final_report.pdf"]
+    assert "Reports" in result.summary
+
+
+@pytest.mark.unit
+async def test_search_files_warns_when_category_out_of_scope():
+    result = await api_tool().arun(
+        PsiApiInput(operation="search_files", investigation_selector="PSI-117", category="Analyzed Data")
+    )
+    assert result.data["result_limits"]["files_matching_filters"] == 0
+    assert any(warning["code"] == "CATEGORY_OUT_OF_SCOPE" for warning in result.warnings)
+
+
+@pytest.mark.unit
+async def test_search_files_scope_broadens_via_config():
+    result = await api_tool(search_categories=["Reports", "Analyzed Data"]).arun(
+        PsiApiInput(operation="search_files", investigation_selector="PSI-117")
+    )
+    files = [record["file_name"] for group in result.data["investigations"] for record in group["files"]]
+    assert sorted(files) == ["dext.csv", "final_report.pdf", "kavg.csv"]
+
+
+@pytest.mark.unit
+async def test_search_files_empty_scope_searches_all_categories():
+    result = await api_tool(search_categories=[]).arun(
+        PsiApiInput(operation="search_files", investigation_selector="PSI-117")
+    )
+    limits = result.data["result_limits"]
+    assert limits["files_matching_filters"] == 4
+    assert limits["category_scope"] == []
+
+
+@pytest.mark.unit
+async def test_search_files_scope_is_case_insensitive():
+    result = await api_tool(search_categories=["reports"]).arun(
+        PsiApiInput(operation="search_files", investigation_selector="PSI-117", category="REPORTS")
+    )
+    files = [record["file_name"] for group in result.data["investigations"] for record in group["files"]]
+    assert files == ["final_report.pdf"]
+    assert not [warning for warning in result.warnings if warning["code"] == "CATEGORY_OUT_OF_SCOPE"]
+
+
+@pytest.mark.unit
+def test_search_categories_env_override(monkeypatch):
+    monkeypatch.setenv("PSI_SEARCH_CATEGORIES", "Reports, Science Documents")
+    assert PsiApiConfig().search_categories == ["Reports", "Science Documents"]
+
+
+@pytest.mark.unit
 async def test_navigate_dataset_builds_tree():
+    # Default config scopes search_files to Reports, but navigation must still
+    # show the whole dataset structure — all categories appear in the tree.
     result = await api_tool().arun(PsiApiInput(operation="navigate_dataset", investigation_id="117"))
-    assert result.data["totals"] == {"files_scanned": 3, "files_matching_filters": 3}
+    assert result.data["totals"] == {"files_scanned": 4, "files_matching_filters": 4}
     names = [node["name"] for node in result.data["tree"]]
-    assert names == ["Analyzed Data", "Presentations"]
+    assert names == ["Analyzed Data", "Presentations", "Reports"]
     directory = result.data["tree"][0]["children"][0]["children"][0]
     assert directory["file_types"] == {".csv": 2}
     assert "kavg.csv" in directory["representative_files"]
