@@ -32,6 +32,13 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .eie import (
+    STACItemStatsTool,
+    STACItemStatsToolConfig,
+    STACItemStatsInputSchema,
+    STACItemStatsOutputSchema,
+    ItemStats,
+)
 
 __all__ = [
     "DummyTool",
@@ -58,4 +65,9 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "STACItemStatsTool",
+    "STACItemStatsToolConfig",
+    "STACItemStatsInputSchema",
+    "STACItemStatsOutputSchema",
+    "ItemStats",
 ]
