@@ -19,6 +19,7 @@ import httpx
 
 from ._client import (
     DownloadUrlExpiredError,
+    PsiToolConfig,
     ensure_allowed_download_url,
     get_json,
     make_async_client,
@@ -53,7 +54,7 @@ def store_json_artifact(artifact_root: str, value: Any, prefix: str) -> dict:
 
 
 async def fetch_file_groups(
-    config: PsiApiConfig,
+    config: PsiToolConfig,
     selector: str,
     file_type: str = "all",
     *,
@@ -238,77 +239,6 @@ async def op_get_investigation(config: PsiApiConfig, params: PsiApiInput, transp
     }
 
 
-async def op_search_files(config: PsiApiConfig, params: PsiApiInput, transport=None) -> dict:
-    """Search investigation files with filters; truncate and spill overflow to an artifact.
-
-    Results are restricted to the categories in ``config.search_categories``
-    (default: Reports). An empty list disables the restriction.
-    """
-    selector = params.investigation_selector or params.investigation_id
-    scope = [item for item in (config.search_categories or []) if str(item).strip()]
-    groups, source_metadata, warnings = await fetch_file_groups(
-        config,
-        selector,
-        params.file_type,
-        pattern=params.file_name_pattern,
-        category=params.category,
-        subcategory=params.subcategory,
-        subdirectory_prefix=params.subdirectory_prefix,
-        allowed_categories=scope or None,
-        transport=transport,
-    )
-    if scope and params.category and params.category.casefold() not in {item.casefold() for item in scope}:
-        warnings.append(
-            {
-                "code": "CATEGORY_OUT_OF_SCOPE",
-                "message": f"Requested category {params.category!r} is outside the current search scope "
-                f"({', '.join(scope)}). Set search_categories (env PSI_SEARCH_CATEGORIES) to broaden it.",
-            }
-        )
-    received = sum(group["returned_file_count"] for group in groups)
-    matched = sum(group["matched_file_count"] for group in groups)
-    truncated = matched > params.max_items
-
-    returned_groups: list[dict] = []
-    remaining = params.max_items
-    for group in groups:
-        if remaining <= 0:
-            break
-        files = group["files"][:remaining]
-        remaining -= len(files)
-        returned_groups.append({**group, "files": files})
-
-    returned = min(matched, params.max_items)
-    result_limits = {
-        "files_received_from_api": received,
-        "files_matching_filters": matched,
-        "files_returned_to_agent": returned,
-        "truncated": truncated,
-        "category_scope": scope,
-    }
-    if truncated:
-        result_limits["complete_inventory_artifact"] = store_json_artifact(
-            config.artifact_root, {"investigations": groups}, prefix="file_inventory"
-        )
-    summary = (
-        f"The PSI API returned {received} file records; {matched} matched the requested "
-        f"filters and {returned} were included inline."
-    )
-    if scope:
-        summary += f" Search was scoped to categories: {', '.join(scope)}."
-    return {
-        "data": {
-            "investigations": returned_groups,
-            "result_limits": result_limits,
-            "source_metadata": source_metadata,
-        },
-        "summary": summary,
-        "warnings": warnings,
-        "sources": [{"type": "psi_api", "resource": f"files:{selector}"}],
-        "raw": None,
-    }
-
-
 async def op_navigate_dataset(config: PsiApiConfig, params: PsiApiInput, transport=None) -> dict:
     """Summarize an investigation's files as a category/subcategory/directory tree."""
     investigation_id = normalize_investigation_id(params.investigation_id)
@@ -461,7 +391,6 @@ async def op_lookup_publication(config: PsiApiConfig, params: PsiApiInput, trans
 OPERATIONS = {
     "discover_investigations": op_discover,
     "get_investigation": op_get_investigation,
-    "search_files": op_search_files,
     "navigate_dataset": op_navigate_dataset,
     "retrieve_file": op_retrieve_file,
     "lookup_publication": op_lookup_publication,

@@ -4,11 +4,14 @@ Run with: uv run pytest -m integration tests/tools/psi/
 PSI-117 is a stable public investigation used as a known-good fixture.
 """
 
+import httpx
 import pytest
 
 from akd_ext.tools import (
     PsiApiInput,
     PsiApiTool,
+    PsiFileSearchInput,
+    PsiFileSearchTool,
     PsiMetadataExpansionConfig,
     PsiMetadataExpansionInput,
     PsiMetadataExpansionTool,
@@ -40,15 +43,35 @@ async def test_get_investigation_live_nonexistent_id_maps_psi_403():
 
 
 @pytest.mark.integration
-async def test_search_files_live_default_scope_returns_only_reports():
+async def test_file_search_live_default_scope_returns_only_reports():
     # PSI-187 has one 'Reports' file among ~120 records; the default scope
     # must return only that category.
-    result = await PsiApiTool().arun(PsiApiInput(operation="search_files", investigation_selector="187"))
+    result = await PsiFileSearchTool().arun(PsiFileSearchInput(investigation_selector="187"))
     limits = result.data["result_limits"]
     assert limits["category_scope"] == ["Reports"]
     assert limits["files_matching_filters"] >= 1
     files = [record for group in result.data["investigations"] for record in group["files"]]
     assert files and all(record["category"] == "Reports" for record in files)
+
+
+@pytest.mark.integration
+async def test_file_search_live_per_call_categories():
+    result = await PsiFileSearchTool().arun(
+        PsiFileSearchInput(investigation_selector="187", categories=["Experimental table"])
+    )
+    files = [record for group in result.data["investigations"] for record in group["files"]]
+    assert files and all(record["category"] == "Experimental table" for record in files)
+
+
+@pytest.mark.integration
+async def test_file_search_live_download_link_resolves():
+    result = await PsiFileSearchTool().arun(
+        PsiFileSearchInput(investigation_selector="187", categories=["Experimental table"], file_name_pattern="*.xlsx")
+    )
+    record = result.data["investigations"][0]["files"][0]
+    async with httpx.AsyncClient(follow_redirects=True, timeout=30) as client:
+        response = await client.get(record["download_url"], headers={"Range": "bytes=0-0"})
+    assert response.status_code in (200, 206)
 
 
 @pytest.mark.integration

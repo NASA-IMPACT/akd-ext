@@ -38,6 +38,12 @@ from .psi.api import (
     PsiApiOutput,
     PsiApiTool,
 )
+from .psi.file_search import (
+    PsiFileSearchConfig,
+    PsiFileSearchInput,
+    PsiFileSearchOutput,
+    PsiFileSearchTool,
+)
 from .psi.metadata import (
     PsiMetadataExpansionConfig,
     PsiMetadataExpansionInput,
@@ -74,6 +80,10 @@ __all__ = [
     "PsiApiInput",
     "PsiApiOutput",
     "PsiApiTool",
+    "PsiFileSearchConfig",
+    "PsiFileSearchInput",
+    "PsiFileSearchOutput",
+    "PsiFileSearchTool",
     "PsiMetadataExpansionConfig",
     "PsiMetadataExpansionInput",
     "PsiMetadataExpansionOutput",

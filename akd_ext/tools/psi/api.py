@@ -1,9 +1,9 @@
-"""psi_api_tool — the single runtime tool for NASA PSI API operations.
+"""psi_api_tool — the runtime tool for NASA PSI API operations.
 
 One tool exposes an ``operation`` selector over the PSI Public Investigations
-API, file search, download, dataset navigation, and DataCite DOI lookup. This
-mirrors the reference ``psi-agent-tools`` design (one API tool + one metadata
-tool) rather than one akd-ext tool per operation.
+API, download, dataset navigation, and DataCite DOI lookup rather than one
+akd-ext tool per operation. File search is its own tool
+(``psi_file_search_tool``) so each call can restrict results by category.
 """
 
 import json
@@ -22,17 +22,10 @@ from ._operations import OPERATIONS
 Operation = Literal[
     "discover_investigations",
     "get_investigation",
-    "search_files",
     "navigate_dataset",
     "retrieve_file",
     "lookup_publication",
 ]
-
-
-def _search_categories_from_env() -> list[str]:
-    """Parse PSI_SEARCH_CATEGORIES (comma-separated; default 'Reports')."""
-    raw = os.getenv("PSI_SEARCH_CATEGORIES", "Reports")
-    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 class PsiApiInput(InputSchema):
@@ -41,25 +34,18 @@ class PsiApiInput(InputSchema):
     operation: Operation = Field(..., description="Which PSI operation to run")
     query: str | None = Field(default=None, description="discover_investigations: keywords to rank investigations by")
     investigation_id: str | None = Field(default=None, description="Target investigation id, e.g. 'PSI-117' or '117'")
-    investigation_selector: str | None = Field(
-        default=None,
-        description="search_files: investigation id or selector ('117', '4,10', '20-25')",
-    )
     fields: list[str] | None = Field(
         default=None, description="get_investigation: optional upstream field names to restrict to"
     )
     file_type: Literal["all", "img", "video"] = Field(
-        default="all", description="search_files/navigate_dataset: restrict to image or video files"
+        default="all", description="navigate_dataset: restrict to image or video files"
     )
     file_name_pattern: str | None = Field(
-        default=None, description="search_files/navigate_dataset: case-insensitive glob, e.g. '*.csv'"
+        default=None, description="navigate_dataset: case-insensitive glob, e.g. '*.csv'"
     )
-    category: str | None = Field(
-        default=None,
-        description="File filter: exact category (search_files only honors categories inside the configured scope)",
-    )
-    subcategory: str | None = Field(default=None, description="File filter: exact subcategory")
-    subdirectory_prefix: str | None = Field(default=None, description="File filter: subdirectory prefix")
+    category: str | None = Field(default=None, description="navigate_dataset: exact category")
+    subcategory: str | None = Field(default=None, description="navigate_dataset: exact subcategory")
+    subdirectory_prefix: str | None = Field(default=None, description="navigate_dataset: subdirectory prefix")
     max_items: int = Field(default=250, ge=1, le=10_000, description="Maximum records to return inline")
     remote_url: str | None = Field(default=None, description="retrieve_file: direct PSI download URL")
     file_name: str | None = Field(default=None, description="retrieve_file: exact file name to download")
@@ -77,8 +63,6 @@ class PsiApiInput(InputSchema):
     def _validate_operation_fields(self) -> "PsiApiInput":
         if self.operation == "get_investigation" and not self.investigation_id:
             raise ValueError("get_investigation requires investigation_id")
-        if self.operation == "search_files" and not (self.investigation_selector or self.investigation_id):
-            raise ValueError("search_files requires investigation_selector or investigation_id")
         if self.operation == "navigate_dataset" and not self.investigation_id:
             raise ValueError("navigate_dataset requires investigation_id")
         if self.operation == "retrieve_file":
@@ -108,11 +92,6 @@ class PsiApiConfig(PsiToolConfig):
     """Configuration for psi_api_tool (endpoints, download, and artifact paths)."""
 
     name: str = Field(default="psi_api_tool", description="Tool name")
-    search_categories: list[str] = Field(
-        default_factory=_search_categories_from_env,
-        description="search_files only returns files in these categories (default: Reports); "
-        "an empty list disables the restriction. Env: PSI_SEARCH_CATEGORIES (comma-separated).",
-    )
     datacite_doi_url_template: str = Field(
         default=os.getenv("DATACITE_DOI_URL_TEMPLATE", "https://api.datacite.org/dois/{doi}"),
         description="DataCite endpoint template for DOI lookups",
@@ -127,7 +106,7 @@ class PsiApiConfig(PsiToolConfig):
     )
     artifact_root: str = Field(
         default=os.getenv("PSI_ARTIFACT_ROOT", "./artifacts"),
-        description="Directory for overflow/raw JSON artifacts",
+        description="Directory for raw JSON responses too large to inline",
     )
     max_inline_json_bytes: int = Field(
         default=int(os.getenv("PSI_MAX_INLINE_JSON_BYTES", str(512 * 1024))),
@@ -140,12 +119,11 @@ class PsiApiTool(BaseTool[PsiApiInput, PsiApiOutput]):
     """Query the NASA PSI (Physical Sciences Informatics) API.
 
     Set ``operation`` to one of: discover_investigations, get_investigation,
-    search_files, navigate_dataset, retrieve_file, lookup_publication. All PSI
-    endpoints are public. Returns normalized data by default; pass
-    response_mode='raw' or 'both' to also receive the raw upstream JSON.
-    search_files is scoped to the 'Reports' file category by default
-    (config ``search_categories`` / env ``PSI_SEARCH_CATEGORIES``);
-    navigate_dataset still shows the full dataset structure.
+    navigate_dataset, retrieve_file, lookup_publication. All PSI endpoints are
+    public. Returns normalized data by default; pass response_mode='raw' or
+    'both' to also receive the raw upstream JSON. To find files, use
+    psi_file_search_tool; navigate_dataset shows an investigation's full
+    category and folder structure.
     """
 
     config_schema = PsiApiConfig

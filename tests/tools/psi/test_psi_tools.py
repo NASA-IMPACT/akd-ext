@@ -11,6 +11,9 @@ from akd_ext.tools import (
     PsiApiInput,
     PsiApiOutput,
     PsiApiTool,
+    PsiFileSearchConfig,
+    PsiFileSearchInput,
+    PsiFileSearchTool,
     PsiMetadataExpansionConfig,
     PsiMetadataExpansionInput,
     PsiMetadataExpansionTool,
@@ -245,87 +248,9 @@ def test_retrieve_file_requires_locator():
 
 
 @pytest.mark.unit
-async def test_search_files_filters_and_truncates(tmp_path):
-    result = await api_tool(artifact_root=str(tmp_path), search_categories=[]).arun(
-        PsiApiInput(
-            operation="search_files",
-            investigation_selector="PSI-117",
-            file_name_pattern="*.csv",
-            max_items=1,
-        )
-    )
-    limits = result.data["result_limits"]
-    assert limits["files_received_from_api"] == 4
-    assert limits["files_matching_filters"] == 2
-    assert limits["files_returned_to_agent"] == 1
-    assert limits["truncated"] is True
-    assert len(result.data["investigations"][0]["files"]) == 1
-    # overflow artifact holds the full filtered set
-    artifact = limits["complete_inventory_artifact"]
-    inventory = json.loads((tmp_path / f"{artifact['artifact_id']}.json").read_text(encoding="utf-8"))
-    assert len(inventory["investigations"][0]["files"]) == 2
-
-
-@pytest.mark.unit
-async def test_search_files_defaults_to_reports_scope():
-    result = await api_tool().arun(PsiApiInput(operation="search_files", investigation_selector="PSI-117"))
-    limits = result.data["result_limits"]
-    assert limits["category_scope"] == ["Reports"]
-    assert limits["files_received_from_api"] == 4
-    assert limits["files_matching_filters"] == 1
-    files = result.data["investigations"][0]["files"]
-    assert [record["file_name"] for record in files] == ["final_report.pdf"]
-    assert "Reports" in result.summary
-
-
-@pytest.mark.unit
-async def test_search_files_warns_when_category_out_of_scope():
-    result = await api_tool().arun(
-        PsiApiInput(operation="search_files", investigation_selector="PSI-117", category="Analyzed Data")
-    )
-    assert result.data["result_limits"]["files_matching_filters"] == 0
-    assert any(warning["code"] == "CATEGORY_OUT_OF_SCOPE" for warning in result.warnings)
-
-
-@pytest.mark.unit
-async def test_search_files_scope_broadens_via_config():
-    result = await api_tool(search_categories=["Reports", "Analyzed Data"]).arun(
-        PsiApiInput(operation="search_files", investigation_selector="PSI-117")
-    )
-    files = [record["file_name"] for group in result.data["investigations"] for record in group["files"]]
-    assert sorted(files) == ["dext.csv", "final_report.pdf", "kavg.csv"]
-
-
-@pytest.mark.unit
-async def test_search_files_empty_scope_searches_all_categories():
-    result = await api_tool(search_categories=[]).arun(
-        PsiApiInput(operation="search_files", investigation_selector="PSI-117")
-    )
-    limits = result.data["result_limits"]
-    assert limits["files_matching_filters"] == 4
-    assert limits["category_scope"] == []
-
-
-@pytest.mark.unit
-async def test_search_files_scope_is_case_insensitive():
-    result = await api_tool(search_categories=["reports"]).arun(
-        PsiApiInput(operation="search_files", investigation_selector="PSI-117", category="REPORTS")
-    )
-    files = [record["file_name"] for group in result.data["investigations"] for record in group["files"]]
-    assert files == ["final_report.pdf"]
-    assert not [warning for warning in result.warnings if warning["code"] == "CATEGORY_OUT_OF_SCOPE"]
-
-
-@pytest.mark.unit
-def test_search_categories_env_override(monkeypatch):
-    monkeypatch.setenv("PSI_SEARCH_CATEGORIES", "Reports, Science Documents")
-    assert PsiApiConfig().search_categories == ["Reports", "Science Documents"]
-
-
-@pytest.mark.unit
 async def test_navigate_dataset_builds_tree():
-    # Default config scopes search_files to Reports, but navigation must still
-    # show the whole dataset structure — all categories appear in the tree.
+    # File search defaults to Reports, but navigation must still show the
+    # whole dataset structure — all categories appear in the tree.
     result = await api_tool().arun(PsiApiInput(operation="navigate_dataset", investigation_id="117"))
     assert result.data["totals"] == {"files_scanned": 4, "files_matching_filters": 4}
     names = [node["name"] for node in result.data["tree"]]
@@ -450,8 +375,135 @@ def test_metadata_expansion_requires_query_for_multiple_candidates():
         PsiMetadataExpansionInput(discovery_results=[{"investigation_id": "PSI-117"}, {"investigation_id": "PSI-42"}])
 
 
+# ---- psi_file_search_tool: the third tool ----
+
+
+def file_search_tool(**config_kwargs) -> PsiFileSearchTool:
+    return PsiFileSearchTool(config=PsiFileSearchConfig(**config_kwargs), transport=psi_transport())
+
+
+def file_names(result) -> list[str]:
+    return sorted(record["file_name"] for group in result.data["investigations"] for record in group["files"])
+
+
 @pytest.mark.unit
-def test_only_two_psi_tools_are_registered():
+def test_file_search_requires_selector():
+    with pytest.raises(ValidationError, match="requires investigation_selector or investigation_id"):
+        PsiFileSearchInput(file_name_pattern="*.csv")
+
+
+@pytest.mark.unit
+async def test_file_search_filters_and_truncates(tmp_path):
+    result = await file_search_tool(artifact_root=str(tmp_path), psi_origin="https://psi.nasa.gov").arun(
+        PsiFileSearchInput(
+            investigation_selector="PSI-117",
+            file_name_pattern="*.csv",
+            categories=[],
+            max_items=1,
+        )
+    )
+    limits = result.data["result_limits"]
+    assert limits["files_received_from_api"] == 4
+    assert limits["files_matching_filters"] == 2
+    assert limits["files_returned_to_agent"] == 1
+    assert limits["truncated"] is True
+    assert len(result.data["investigations"][0]["files"]) == 1
+    # overflow artifact holds the full filtered set
+    artifact = limits["complete_inventory_artifact"]
+    inventory = json.loads((tmp_path / f"{artifact['artifact_id']}.json").read_text(encoding="utf-8"))
+    assert len(inventory["investigations"][0]["files"]) == 2
+    assert [record["download_url"] for record in inventory["investigations"][0]["files"]] == [
+        "https://psi.nasa.gov/api/download/kavg.csv",
+        "https://psi.nasa.gov/api/download/dext.csv",
+    ]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    ("filters", "expected"),
+    [
+        ({"file_name_pattern": "*.pdf"}, ["final_report.pdf", "talk.pdf"]),
+        ({"subcategory": "reduced gravity"}, ["dext.csv", "kavg.csv"]),
+        ({"subdirectory_prefix": "Simulation"}, ["dext.csv", "kavg.csv"]),
+    ],
+)
+async def test_file_search_applies_file_filters(filters, expected):
+    result = await file_search_tool().arun(PsiFileSearchInput(investigation_selector="117", categories=[], **filters))
+    assert file_names(result) == expected
+
+
+@pytest.mark.unit
+async def test_file_search_defaults_to_reports_scope():
+    result = await file_search_tool().arun(PsiFileSearchInput(investigation_selector="PSI-117"))
+    limits = result.data["result_limits"]
+    assert limits["category_scope"] == ["Reports"]
+    assert limits["files_received_from_api"] == 4
+    assert file_names(result) == ["final_report.pdf"]
+    assert "Reports" in result.summary
+
+
+@pytest.mark.unit
+async def test_file_search_categories_override_config_default():
+    result = await file_search_tool().arun(
+        PsiFileSearchInput(investigation_selector="PSI-117", categories=["Analyzed Data"])
+    )
+    assert result.data["result_limits"]["category_scope"] == ["Analyzed Data"]
+    assert file_names(result) == ["dext.csv", "kavg.csv"]
+
+
+@pytest.mark.unit
+async def test_file_search_empty_categories_searches_every_category():
+    result = await file_search_tool().arun(PsiFileSearchInput(investigation_selector="PSI-117", categories=[]))
+    assert result.data["result_limits"]["category_scope"] == []
+    assert file_names(result) == ["dext.csv", "final_report.pdf", "kavg.csv", "talk.pdf"]
+
+
+@pytest.mark.unit
+async def test_file_search_config_categories_apply_when_call_omits_them():
+    result = await file_search_tool(search_categories=["Reports", "Analyzed Data"]).arun(
+        PsiFileSearchInput(investigation_selector="PSI-117")
+    )
+    assert file_names(result) == ["dext.csv", "final_report.pdf", "kavg.csv"]
+
+
+@pytest.mark.unit
+async def test_file_search_categories_are_case_insensitive():
+    result = await file_search_tool().arun(
+        PsiFileSearchInput(investigation_selector="PSI-117", categories=["ANALYZED DATA"])
+    )
+    assert file_names(result) == ["dext.csv", "kavg.csv"]
+
+
+@pytest.mark.unit
+async def test_file_search_returns_download_links():
+    result = await file_search_tool(psi_origin="https://psi.nasa.gov").arun(
+        PsiFileSearchInput(investigation_selector="PSI-117")
+    )
+    links = {record["file_name"]: record["download_url"] for record in result.data["investigations"][0]["files"]}
+    assert links == {"final_report.pdf": "https://psi.nasa.gov/api/download/final_report.pdf"}
+
+
+@pytest.mark.unit
+async def test_file_search_link_is_none_when_psi_gives_no_download_url():
+    payload = {
+        "studies": {"117": {"file_count": 1, "study_files": [{"file_name": "orphan.pdf", "category": "Reports"}]}}
+    }
+    tool = PsiFileSearchTool(transport=httpx.MockTransport(lambda request: httpx.Response(200, json=payload)))
+    result = await tool.arun(PsiFileSearchInput(investigation_selector="117", categories=[]))
+    assert result.data["investigations"][0]["files"][0]["download_url"] is None
+
+
+@pytest.mark.unit
+def test_search_categories_env_override(monkeypatch):
+    monkeypatch.setenv("PSI_SEARCH_CATEGORIES", "Reports, Science Documents")
+    assert PsiFileSearchConfig().search_categories == ["Reports", "Science Documents"]
+
+
+# ---- registration and schemas ----
+
+
+@pytest.mark.unit
+def test_only_three_psi_tools_are_registered():
     from akd_ext.mcp.registry import MCPToolRegistry
 
     import akd_ext.tools  # noqa: F401  (fire @mcp_tool registration)
@@ -459,7 +511,7 @@ def test_only_two_psi_tools_are_registered():
     registry = MCPToolRegistry()
     tools = getattr(registry, "_tools", None) or getattr(registry, "tools", None) or []
     psi = sorted(t().name for t in tools if t.__module__.startswith("akd_ext.tools.psi"))
-    assert psi == ["metadata_expansion_tool", "psi_api_tool"]
+    assert psi == ["metadata_expansion_tool", "psi_api_tool", "psi_file_search_tool"]
 
 
 @pytest.mark.unit
