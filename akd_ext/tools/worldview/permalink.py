@@ -265,7 +265,10 @@ class WorldviewPermalinkInputSchema(InputSchema):
         max_length=4,
         description=(
             "Area-of-interest for the chart, as [x1, y1, x2, y2] in the same coordinate "
-            "system as `bbox`. Statistics are computed over this region."
+            "system as `bbox`. Statistics are computed over this region. In the "
+            "geographic projection, an area crossing the 180° meridian may be given "
+            "either as x1 > x2 (e.g. [120, -60, -70, 65] for the whole Pacific) or "
+            "with x2 extended past 180 (e.g. [120, -60, 290, 65])."
         ),
     )
     chart_time_start: str | date | datetime | None = Field(
@@ -326,10 +329,17 @@ class WorldviewPermalinkInputSchema(InputSchema):
             if x1 == x2:
                 raise ValueError(f"chart_area x1 ({x1}) must differ from x2 ({x2}); zero-width area is invalid")
             if self.projection == "geographic":
-                if not (-180 <= x1 <= 180 and -180 <= x2 <= 180):
-                    raise ValueError(f"chart_area lon out of [-180, 180] for geographic projection: {self.chart_area}")
+                # x2 may extend past 180 (up to 540) to express a 180° meridian crossing.
+                if not (-180 <= x1 <= 180 and -180 <= x2 <= 540):
+                    raise ValueError(
+                        f"chart_area lon out of range for geographic projection "
+                        f"(x1 in [-180, 180], x2 in [-180, 540]): {self.chart_area}"
+                    )
                 if not (-90 <= y1 <= 90 and -90 <= y2 <= 90):
                     raise ValueError(f"chart_area lat out of [-90, 90] for geographic projection: {self.chart_area}")
+                unwrapped_x1, _, unwrapped_x2, _ = WorldviewPermalinkTool._unwrap_antimeridian(self.chart_area)
+                if unwrapped_x2 - unwrapped_x1 > 360:
+                    raise ValueError(f"chart_area spans more than 360° of longitude: {self.chart_area}")
 
         if self.chart_time_start is not None and self.chart_time_end is not None:
             start = _coerce_to_datetime(self.chart_time_start)
@@ -453,7 +463,10 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
             out["cha"] = "true"
             out["chl"] = params.chart_layer
             if params.chart_area is not None:
-                out["chc"] = ",".join(cls._fmt_num(x) for x in params.chart_area)
+                chart_area = params.chart_area
+                if params.projection == "geographic":
+                    chart_area = cls._unwrap_antimeridian(chart_area)
+                out["chc"] = ",".join(cls._fmt_num(x) for x in chart_area)
             if (formatted := cls._format_time(params.chart_time_start)) is not None:
                 out["cht"] = formatted
             if (formatted := cls._format_time(params.chart_time_end)) is not None:
@@ -473,6 +486,18 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
         if isinstance(n, float) and n.is_integer():
             return str(int(n))
         return str(n)
+
+    @staticmethod
+    def _unwrap_antimeridian(area: list[float]) -> list[float]:
+        """Express a 180° meridian crossing as x2 + 360 so Worldview sees x1 < x2.
+
+        Worldview's charting draws the area from x1 rightward to x2 and errors on
+        a negative width, so [120, -60, -70, 65] must become [120, -60, 290, 65].
+        """
+        x1, y1, x2, y2 = area
+        if x1 > x2:
+            x2 += 360
+        return [x1, y1, x2, y2]
 
     @classmethod
     def _format_layer(cls, spec: LayerSpec) -> str:

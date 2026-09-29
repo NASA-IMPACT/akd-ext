@@ -284,6 +284,29 @@ class TestChartingMode:
         )
         assert "chch=false" in url
 
+    def test_chart_area_crossing_antimeridian_is_unwrapped(self):
+        url = _build(layers=[LayerSpec(id="L")], chart_active=True, chart_layer="L", chart_area=[120, -60, -70, 65])
+        assert "chc=120,-60,290,65" in url
+
+    def test_chart_area_normal_box_unchanged(self):
+        url = _build(layers=[LayerSpec(id="L")], chart_active=True, chart_layer="L", chart_area=[-180, -60, -70, 65])
+        assert "chc=-180,-60,-70,65" in url
+
+    def test_chart_area_already_unwrapped_unchanged(self):
+        url = _build(layers=[LayerSpec(id="L")], chart_active=True, chart_layer="L", chart_area=[120, -60, 290, 65])
+        assert "chc=120,-60,290,65" in url
+
+    def test_chart_area_polar_not_unwrapped(self):
+        # Polar coordinates are projected meters; x1 > x2 is not a meridian crossing.
+        url = _build(
+            layers=[LayerSpec(id="L")],
+            projection="arctic",
+            chart_active=True,
+            chart_layer="L",
+            chart_area=[1000, -1000, -1000, 1000],
+        )
+        assert "chc=1000,-1000,-1000,1000" in url
+
 
 class TestLayerPreprocessing:
     """Unconditional pre-processing: auto-add base, auto-append default reference

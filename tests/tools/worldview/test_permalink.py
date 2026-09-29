@@ -235,6 +235,14 @@ class TestChartAreaValidation:
         with pytest.raises(ValidationError, match="chart_area lon out of"):
             WorldviewPermalinkInputSchema(**self._base(chart_area=(-200.0, 0.0, 0.0, 10.0)))
 
+    def test_unwrapped_antimeridian_chart_area_accepted(self):
+        schema = WorldviewPermalinkInputSchema(**self._base(chart_area=(120.0, -60.0, 290.0, 65.0)))
+        assert schema.chart_area == [120.0, -60.0, 290.0, 65.0]
+
+    def test_chart_area_wider_than_360_rejected(self):
+        with pytest.raises(ValidationError, match="more than 360"):
+            WorldviewPermalinkInputSchema(**self._base(chart_area=(-180.0, 0.0, 200.0, 10.0)))
+
     def test_chart_area_ignored_when_chart_inactive(self):
         # When chart_active is False, chart_area validation is skipped — only emission is gated.
         schema = WorldviewPermalinkInputSchema(
