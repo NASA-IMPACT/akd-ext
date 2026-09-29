@@ -7,6 +7,7 @@ resulting URL.
 """
 
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import parse_qs
 
 import pytest
 from pydantic import ValidationError
@@ -236,7 +237,29 @@ class TestCompareMode:
         )
         assert "ca=true" in url
         assert ",L_B," in url
-        assert "t1=" not in query_string(url)
+        params = parse_qs(query_string(url))
+        assert params["t1"] == params["t"]
+
+    def test_compare_time_defaults_to_time(self):
+        url = _build(
+            layers=[LayerSpec(id="A")],
+            time="2026-09-22",
+            compare_active=True,
+            compare_layers=[LayerSpec(id="B")],
+        )
+        qs = query_string(url)
+        assert "t=2026-09-22" in qs
+        assert "t1=2026-09-22" in qs
+
+    def test_explicit_compare_time_kept(self):
+        url = _build(
+            layers=[LayerSpec(id="A")],
+            time="2026-09-22",
+            compare_active=True,
+            compare_layers=[LayerSpec(id="A")],
+            compare_time="2025-09-22",
+        )
+        assert "t1=2025-09-22" in query_string(url)
 
 
 class TestChartingMode:

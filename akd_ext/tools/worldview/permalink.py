@@ -225,7 +225,8 @@ class WorldviewPermalinkInputSchema(InputSchema):
         default=None,
         description=(
             "Time for the B state, same accepted forms as `time`. Optional even when "
-            "compare is on; if omitted, the B state uses the same time as the A state."
+            "compare is on; if omitted, the B state is set to the A state's resolved "
+            "time (including the yesterday-UTC default when `time` is also omitted)."
         ),
     )
     compare_mode: Literal["swipe", "spy", "opacity"] = Field(
@@ -442,8 +443,11 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
         if (formatted := cls._format_time(time_value)) is not None:
             out["t"] = formatted
 
-        if params.compare_active is not None and (formatted := cls._format_time(params.compare_time)) is not None:
-            out["t1"] = formatted
+        if params.compare_active is not None:
+            # Side B defaults to side A's resolved time so both sides show the same date.
+            compare_time = params.compare_time if params.compare_time is not None else time_value
+            if (formatted := cls._format_time(compare_time)) is not None:
+                out["t1"] = formatted
 
         if params.bbox is not None:
             out["v"] = ",".join(cls._fmt_num(x) for x in params.bbox)
