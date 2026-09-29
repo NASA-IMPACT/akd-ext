@@ -196,6 +196,14 @@ class WorldviewPermalinkInputSchema(InputSchema):
             "antarctic projections; ignored by geographic."
         ),
     )
+    embed_mode: bool = Field(
+        default=False,
+        description=(
+            "If True, opens Worldview in embed mode (em=true): minimal chrome intended "
+            "for iframes, with most UI controls hidden. Default False opens the full "
+            "interactive Worldview app."
+        ),
+    )
 
     compare_active: bool | None = Field(
         default=None,
@@ -384,7 +392,7 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
       latter will produce a valid-looking URL that renders blank.
 
     Optional viewport / time:
-    - projection, time, bbox, rotation — omit any to inherit Worldview's defaults
+    - projection, time, bbox, rotation, embed_mode — omit any to inherit Worldview's defaults
 
     Optional feature blocks (each gated by an _active flag; the rest of the
     block is silently ignored when the gate is off):
@@ -452,7 +460,8 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
                 out["cht2"] = formatted
             out["chch"] = "true" if params.chart_autoload else "false"
 
-        out["em"] = "true"
+        if params.embed_mode:
+            out["em"] = "true"
         return f"{base_url}?{urlencode(out, safe=',()=:')}"
 
     # -----------------------------------------------------------------------------
@@ -564,4 +573,3 @@ if __name__ == "__main__":
         )
     )
     print("Rich:", rich)
-    

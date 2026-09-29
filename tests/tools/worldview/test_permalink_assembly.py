@@ -173,10 +173,13 @@ class TestCoreParams:
         url = _build(layers=[LayerSpec(id="L")])
         assert "r=" not in query_string(url)
 
-    def test_embed_mode_always_emitted(self):
-        # Embed mode is unconditional — em=true must appear on every URL so
-        # the link renders cleanly in chat / iframe contexts.
+    def test_embed_mode_off_by_default(self):
+        # Embed mode hides most of the Worldview UI, so it is opt-in only.
         url = _build(layers=[LayerSpec(id="L")])
+        assert "em=" not in query_string(url)
+
+    def test_embed_mode_opt_in(self):
+        url = _build(layers=[LayerSpec(id="L")], embed_mode=True)
         assert "em=true" in url
 
 
