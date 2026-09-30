@@ -46,6 +46,14 @@ class GeoUIRenderIntentInputSchema(InputSchema):
             "raster-styling:min, raster-styling:max, raster-styling:squash, raster-styling:style."
         ),
     )
+    embed_mode: bool = Field(
+        default=False,
+        description=(
+            "If True, opens Worldview in embed mode (em=true): minimal chrome intended "
+            "for iframes, with most UI controls hidden. Default False opens the full "
+            "interactive Worldview app."
+        ),
+    )
 
 
 class GeoUIRenderIntentOutputSchema(OutputSchema):
@@ -70,7 +78,7 @@ class GeoUIRenderIntentTool(BaseTool[GeoUIRenderIntentInputSchema, GeoUIRenderIn
     output_schema = GeoUIRenderIntentOutputSchema
 
     async def _arun(self, params: GeoUIRenderIntentInputSchema) -> GeoUIRenderIntentOutputSchema:
-        return GeoUIRenderIntentOutputSchema(url=intent_to_url(params.intent))
+        return GeoUIRenderIntentOutputSchema(url=intent_to_url(params.intent, embed_mode=params.embed_mode))
 
 
 # -----------------------------------------------------------------------------

@@ -51,6 +51,10 @@ class ResearchReportGeneratorInputSchema(InputSchema):
 
     Takes the workflow specification and job ID from the experiment stage.
     The agent uses MCP tools to check job status and fetch figure URLs.
+
+    Note: domains whose Stage 6 receives pre-analyzed figures instead of a
+    ``job_id`` (e.g. Prithvi) define their own input schema and override
+    ``input_schema`` on their agent subclass rather than mutating this one.
     """
 
     workflow_spec: str = Field(

@@ -111,9 +111,10 @@ def parse_url(url: str) -> WorldviewPermalinkInputSchema:
     """Parse a Worldview permalink URL into a ``WorldviewPermalinkInputSchema``.
 
     Round-trip property: ``build_url(parse_url(u))`` yields a URL with
-    the same logical state as ``u`` (parameter order may differ; the
-    ``em=true`` housekeeping flag is dropped on parse and re-added on
-    re-build).
+    the same logical state as ``u``. Parameter order may differ, a
+    compare URL without ``t1`` gains one (side B defaults to side A's
+    time), and a chart area crossing the 180° meridian is normalised to
+    the ``x2 + 360`` form.
     """
     parsed = urlparse(url)
     qs = parse_qs(parsed.query, keep_blank_values=True)
@@ -129,6 +130,8 @@ def parse_url(url: str) -> WorldviewPermalinkInputSchema:
         fields["bbox"] = _parse_coord_list(flat["v"], n=4)
     if "r" in flat:
         fields["rotation"] = float(flat["r"])
+    if "em" in flat:
+        fields["embed_mode"] = flat["em"].lower() == "true"
 
     if "ca" in flat:
         fields["compare_active"] = flat["ca"].lower() == "true"

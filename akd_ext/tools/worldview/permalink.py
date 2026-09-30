@@ -196,6 +196,14 @@ class WorldviewPermalinkInputSchema(InputSchema):
             "antarctic projections; ignored by geographic."
         ),
     )
+    embed_mode: bool = Field(
+        default=False,
+        description=(
+            "If True, opens Worldview in embed mode (em=true): minimal chrome intended "
+            "for iframes, with most UI controls hidden. Default False opens the full "
+            "interactive Worldview app."
+        ),
+    )
 
     compare_active: bool | None = Field(
         default=None,
@@ -217,7 +225,8 @@ class WorldviewPermalinkInputSchema(InputSchema):
         default=None,
         description=(
             "Time for the B state, same accepted forms as `time`. Optional even when "
-            "compare is on; if omitted, the B state uses the same time as the A state."
+            "compare is on; if omitted, the B state is set to the A state's resolved "
+            "time (including the yesterday-UTC default when `time` is also omitted)."
         ),
     )
     compare_mode: Literal["swipe", "spy", "opacity"] = Field(
@@ -257,7 +266,10 @@ class WorldviewPermalinkInputSchema(InputSchema):
         max_length=4,
         description=(
             "Area-of-interest for the chart, as [x1, y1, x2, y2] in the same coordinate "
-            "system as `bbox`. Statistics are computed over this region."
+            "system as `bbox`. Statistics are computed over this region. In the "
+            "geographic projection, an area crossing the 180° meridian may be given "
+            "either as x1 > x2 (e.g. [120, -60, -70, 65] for the whole Pacific) or "
+            "with x2 extended past 180 (e.g. [120, -60, 290, 65])."
         ),
     )
     chart_time_start: str | date | datetime | None = Field(
@@ -318,10 +330,17 @@ class WorldviewPermalinkInputSchema(InputSchema):
             if x1 == x2:
                 raise ValueError(f"chart_area x1 ({x1}) must differ from x2 ({x2}); zero-width area is invalid")
             if self.projection == "geographic":
-                if not (-180 <= x1 <= 180 and -180 <= x2 <= 180):
-                    raise ValueError(f"chart_area lon out of [-180, 180] for geographic projection: {self.chart_area}")
+                # x2 may extend past 180 (up to 540) to express a 180° meridian crossing.
+                if not (-180 <= x1 <= 180 and -180 <= x2 <= 540):
+                    raise ValueError(
+                        f"chart_area lon out of range for geographic projection "
+                        f"(x1 in [-180, 180], x2 in [-180, 540]): {self.chart_area}"
+                    )
                 if not (-90 <= y1 <= 90 and -90 <= y2 <= 90):
                     raise ValueError(f"chart_area lat out of [-90, 90] for geographic projection: {self.chart_area}")
+                unwrapped_x1, _, unwrapped_x2, _ = WorldviewPermalinkTool._unwrap_antimeridian(self.chart_area)
+                if unwrapped_x2 - unwrapped_x1 > 360:
+                    raise ValueError(f"chart_area spans more than 360° of longitude: {self.chart_area}")
 
         if self.chart_time_start is not None and self.chart_time_end is not None:
             start = _coerce_to_datetime(self.chart_time_start)
@@ -378,10 +397,13 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
     "Analysis Support" steps.
 
     Required:
-    - layers: at least one LayerSpec (GIBS layer ID + optional rendering modifiers)
+    - layers: at least one LayerSpec (GIBS layer ID + optional rendering modifiers).
+      Layer IDs must be GIBS layer IDs (e.g. `MODIS_Terra_CorrectedReflectance_TrueColor`,
+      `VIIRS_SNPP_AOD`), NOT CMR collection concept_ids (`C<digits>-<PROVIDER>`). The
+      latter will produce a valid-looking URL that renders blank.
 
     Optional viewport / time:
-    - projection, time, bbox, rotation — omit any to inherit Worldview's defaults
+    - projection, time, bbox, rotation, embed_mode — omit any to inherit Worldview's defaults
 
     Optional feature blocks (each gated by an _active flag; the rest of the
     block is silently ignored when the gate is off):
@@ -421,8 +443,11 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
         if (formatted := cls._format_time(time_value)) is not None:
             out["t"] = formatted
 
-        if params.compare_active is not None and (formatted := cls._format_time(params.compare_time)) is not None:
-            out["t1"] = formatted
+        if params.compare_active is not None:
+            # Side B defaults to side A's resolved time so both sides show the same date.
+            compare_time = params.compare_time if params.compare_time is not None else time_value
+            if (formatted := cls._format_time(compare_time)) is not None:
+                out["t1"] = formatted
 
         if params.bbox is not None:
             out["v"] = ",".join(cls._fmt_num(x) for x in params.bbox)
@@ -442,14 +467,18 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
             out["cha"] = "true"
             out["chl"] = params.chart_layer
             if params.chart_area is not None:
-                out["chc"] = ",".join(cls._fmt_num(x) for x in params.chart_area)
+                chart_area = params.chart_area
+                if params.projection == "geographic":
+                    chart_area = cls._unwrap_antimeridian(chart_area)
+                out["chc"] = ",".join(cls._fmt_num(x) for x in chart_area)
             if (formatted := cls._format_time(params.chart_time_start)) is not None:
                 out["cht"] = formatted
             if (formatted := cls._format_time(params.chart_time_end)) is not None:
                 out["cht2"] = formatted
             out["chch"] = "true" if params.chart_autoload else "false"
 
-        out["em"] = "true"
+        if params.embed_mode:
+            out["em"] = "true"
         return f"{base_url}?{urlencode(out, safe=',()=:')}"
 
     # -----------------------------------------------------------------------------
@@ -461,6 +490,18 @@ class WorldviewPermalinkTool(BaseTool[WorldviewPermalinkInputSchema, WorldviewPe
         if isinstance(n, float) and n.is_integer():
             return str(int(n))
         return str(n)
+
+    @staticmethod
+    def _unwrap_antimeridian(area: list[float]) -> list[float]:
+        """Express a 180° meridian crossing as x2 + 360 so Worldview sees x1 < x2.
+
+        Worldview's charting draws the area from x1 rightward to x2 and errors on
+        a negative width, so [120, -60, -70, 65] must become [120, -60, 290, 65].
+        """
+        x1, y1, x2, y2 = area
+        if x1 > x2:
+            x2 += 360
+        return [x1, y1, x2, y2]
 
     @classmethod
     def _format_layer(cls, spec: LayerSpec) -> str:

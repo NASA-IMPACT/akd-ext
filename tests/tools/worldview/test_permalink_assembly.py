@@ -7,6 +7,7 @@ resulting URL.
 """
 
 from datetime import date, datetime, timedelta, timezone
+from urllib.parse import parse_qs
 
 import pytest
 from pydantic import ValidationError
@@ -173,10 +174,13 @@ class TestCoreParams:
         url = _build(layers=[LayerSpec(id="L")])
         assert "r=" not in query_string(url)
 
-    def test_embed_mode_always_emitted(self):
-        # Embed mode is unconditional — em=true must appear on every URL so
-        # the link renders cleanly in chat / iframe contexts.
+    def test_embed_mode_off_by_default(self):
+        # Embed mode hides most of the Worldview UI, so it is opt-in only.
         url = _build(layers=[LayerSpec(id="L")])
+        assert "em=" not in query_string(url)
+
+    def test_embed_mode_opt_in(self):
+        url = _build(layers=[LayerSpec(id="L")], embed_mode=True)
         assert "em=true" in url
 
 
@@ -233,7 +237,29 @@ class TestCompareMode:
         )
         assert "ca=true" in url
         assert ",L_B," in url
-        assert "t1=" not in query_string(url)
+        params = parse_qs(query_string(url))
+        assert params["t1"] == params["t"]
+
+    def test_compare_time_defaults_to_time(self):
+        url = _build(
+            layers=[LayerSpec(id="A")],
+            time="2026-09-22",
+            compare_active=True,
+            compare_layers=[LayerSpec(id="B")],
+        )
+        qs = query_string(url)
+        assert "t=2026-09-22" in qs
+        assert "t1=2026-09-22" in qs
+
+    def test_explicit_compare_time_kept(self):
+        url = _build(
+            layers=[LayerSpec(id="A")],
+            time="2026-09-22",
+            compare_active=True,
+            compare_layers=[LayerSpec(id="A")],
+            compare_time="2025-09-22",
+        )
+        assert "t1=2025-09-22" in query_string(url)
 
 
 class TestChartingMode:
@@ -280,6 +306,29 @@ class TestChartingMode:
             chart_layer="L_CHART",
         )
         assert "chch=false" in url
+
+    def test_chart_area_crossing_antimeridian_is_unwrapped(self):
+        url = _build(layers=[LayerSpec(id="L")], chart_active=True, chart_layer="L", chart_area=[120, -60, -70, 65])
+        assert "chc=120,-60,290,65" in url
+
+    def test_chart_area_normal_box_unchanged(self):
+        url = _build(layers=[LayerSpec(id="L")], chart_active=True, chart_layer="L", chart_area=[-180, -60, -70, 65])
+        assert "chc=-180,-60,-70,65" in url
+
+    def test_chart_area_already_unwrapped_unchanged(self):
+        url = _build(layers=[LayerSpec(id="L")], chart_active=True, chart_layer="L", chart_area=[120, -60, 290, 65])
+        assert "chc=120,-60,290,65" in url
+
+    def test_chart_area_polar_not_unwrapped(self):
+        # Polar coordinates are projected meters; x1 > x2 is not a meridian crossing.
+        url = _build(
+            layers=[LayerSpec(id="L")],
+            projection="arctic",
+            chart_active=True,
+            chart_layer="L",
+            chart_area=[1000, -1000, -1000, 1000],
+        )
+        assert "chc=1000,-1000,-1000,1000" in url
 
 
 class TestLayerPreprocessing:
