@@ -13,13 +13,17 @@ from akd_ext.agents.closed_loop.stages.capability_feasibility_mapper import (
     CapabilityFeasibilityMapperInputSchema,
     CapabilityFeasibilityMapperOutputSchema,
 )
+from akd_ext.agents.closed_loop.stages.experiment_analysis import (
+    ExperimentAnalysisAgent,
+    ExperimentAnalysisConfig,
+    ExperimentAnalysisInputSchema,
+    ExperimentAnalysisOutputSchema,
+)
 from akd_ext.agents.closed_loop.stages.experiment_implementation import (
     ExperimentImplementationAgent,
     ExperimentImplementationConfig,
     ExperimentImplementationInputSchema,
     ExperimentImplementationOutputSchema,
-    ExperimentSpec,
-    FileEdit,
 )
 from akd_ext.agents.closed_loop.stages.interpretation_paper_assembly import (
     InterpretationPaperAssemblyAgent,
@@ -53,8 +57,16 @@ __all__ = [
     "ExperimentImplementationConfig",
     "ExperimentImplementationInputSchema",
     "ExperimentImplementationOutputSchema",
+    "ExperimentAnalysisAgent",
+    "ExperimentAnalysisConfig",
+    "ExperimentAnalysisInputSchema",
+    "ExperimentAnalysisOutputSchema",
     "ResearchReportGeneratorAgent",
     "ResearchReportGeneratorConfig",
     "ResearchReportGeneratorInputSchema",
     "ResearchReportGeneratorOutputSchema",
+    "InterpretationPaperAssemblyAgent",
+    "InterpretationPaperAssemblyConfig",
+    "InterpretationPaperAssemblyInputSchema",
+    "InterpretationPaperAssemblyOutputSchema",
 ]

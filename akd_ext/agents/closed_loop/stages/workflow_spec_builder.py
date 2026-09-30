@@ -62,10 +62,20 @@ class WorkflowSpecBuilderInputSchema(InputSchema):
 class WorkflowSpecBuilderOutputSchema(OutputSchema):
     """Use this schema to return the workflow specification and design reasoning.
     Put the full markdown workflow spec in the spec field and design choices explanation in the reasoning field.
+    Optionally populate config with a standalone machine-readable config (e.g. pipeline YAML).
     Use TextOutput for clarification questions or when inputs are insufficient."""
 
     __response_field__ = "spec"
     spec: str = Field(default="", description="Full markdown workflow specification document.")
+    config: str = Field(
+        default="",
+        description=(
+            "Optional standalone machine-readable pipeline config (e.g. YAML, JSON). "
+            "When populated, downstream stages can consume this directly instead of parsing the "
+            "config out of the markdown spec. The config should still be embedded in the spec for "
+            "human readability."
+        ),
+    )
     reasoning: str = Field(
         default="", description="Structured reasoning behind design choices, assumptions, and feasibility handling."
     )

@@ -318,19 +318,21 @@ class TestInputSchemas:
     @pytest.mark.unit
     def test_interp_input_valid(self):
         schema = InterpretationPaperAssemblyInputSchema(
-            research_question="question",
-            experiment_output_dir="/tmp/output",
+            hypothesis="hypothesis report",
+            experiment_design="workflow spec",
+            experiment_analysis="figure analysis markdown",
         )
-        assert schema.figures_dir is None  # Optional
+        assert schema.implementation_report == ""  # Optional
 
     @pytest.mark.unit
-    def test_interp_input_with_figures_dir(self):
+    def test_interp_input_with_impl_report(self):
         schema = InterpretationPaperAssemblyInputSchema(
-            research_question="question",
-            experiment_output_dir="/tmp/output",
-            figures_dir="/tmp/figures",
+            hypothesis="hypothesis report",
+            experiment_design="workflow spec",
+            implementation_report="impl summary",
+            experiment_analysis="figure analysis markdown",
         )
-        assert schema.figures_dir == "/tmp/figures"
+        assert schema.implementation_report == "impl summary"
 
 
 class TestOutputSchemas:
@@ -349,8 +351,9 @@ class TestOutputSchemas:
 
     @pytest.mark.unit
     def test_exp_impl_output(self):
-        schema = ExperimentImplementationOutputSchema(job_id="job-123")
+        schema = ExperimentImplementationOutputSchema(job_id="job-123", workspace_name="cm1_test_ws")
         assert schema.job_id == "job-123"
+        assert schema.workspace_name == "cm1_test_ws"
         assert schema.report == ""
 
     @pytest.mark.unit
@@ -472,7 +475,7 @@ class TestCheckOutput:
     @pytest.mark.unit
     def test_exp_impl_check_output_empty_job_id(self):
         agent = ExperimentImplementationAgent(config=ExperimentImplementationConfig(system_prompt="test"))
-        output = ExperimentImplementationOutputSchema(job_id="", report="some report")
+        output = ExperimentImplementationOutputSchema(job_id="", workspace_name="cm1_test_ws", report="some report")
         result = agent.check_output(output)
         assert result is not None
         assert "job_id" in result.lower()
@@ -480,15 +483,25 @@ class TestCheckOutput:
     @pytest.mark.unit
     def test_exp_impl_check_output_empty_report(self):
         agent = ExperimentImplementationAgent(config=ExperimentImplementationConfig(system_prompt="test"))
-        output = ExperimentImplementationOutputSchema(job_id="job-123", report="")
+        output = ExperimentImplementationOutputSchema(job_id="job-123", workspace_name="cm1_test_ws", report="")
         result = agent.check_output(output)
         assert result is not None
         assert "empty" in result.lower()
 
     @pytest.mark.unit
+    def test_exp_impl_check_output_empty_workspace_name(self):
+        agent = ExperimentImplementationAgent(config=ExperimentImplementationConfig(system_prompt="test"))
+        output = ExperimentImplementationOutputSchema(job_id="job-123", workspace_name="", report="some report")
+        result = agent.check_output(output)
+        assert result is not None
+        assert "workspace_name" in result.lower()
+
+    @pytest.mark.unit
     def test_exp_impl_check_output_valid(self):
         agent = ExperimentImplementationAgent(config=ExperimentImplementationConfig(system_prompt="test"))
-        output = ExperimentImplementationOutputSchema(job_id="job-123", report="Implementation summary")
+        output = ExperimentImplementationOutputSchema(
+            job_id="job-123", workspace_name="cm1_test_ws", report="Implementation summary"
+        )
         result = agent.check_output(output)
         assert result is None
 

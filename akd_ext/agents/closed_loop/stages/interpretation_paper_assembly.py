@@ -1,13 +1,16 @@
-"""Generic Interpretation & Paper Assembly stage for closed-loop workflows.
+"""Stage-6 Interpretation & Paper Assembly Agent (closed-loop).
 
-This module provides the base InterpretationPaperAssemblyAgent that can be
-specialized for any domain by providing a system prompt and context files.
+Stage 6 is a pure LLM writing agent. It receives the outputs of all prior
+stages as text and synthesizes a publication-style scientific report:
 
-Public API:
-    InterpretationPaperAssemblyAgent,
-    InterpretationPaperAssemblyInputSchema,
-    InterpretationPaperAssemblyOutputSchema,
-    InterpretationPaperAssemblyConfig
+- **Stage 1** — hypothesis / feasibility report
+- **Stage 3** — workflow spec (experiment design)
+- **Stage 4** — implementation report (what experiments were run)
+- **Stage 5** — experiment analysis (figure-level analysis markdown)
+
+No MCP calls, no tool use, no filesystem access. The system prompt
+(injected by the domain-specific subclass) guides the model to produce
+the paper structure.
 """
 
 from __future__ import annotations
@@ -22,6 +25,13 @@ from akd._base import InputSchema, OutputSchema, TextOutput
 from akd_ext.agents._base import OpenAIBaseAgent
 from akd_ext.agents.closed_loop._base import ClosedLoopStageConfig, append_context_to_agent
 
+__all__ = [
+    "InterpretationPaperAssemblyAgent",
+    "InterpretationPaperAssemblyConfig",
+    "InterpretationPaperAssemblyInputSchema",
+    "InterpretationPaperAssemblyOutputSchema",
+]
+
 
 # -----------------------------------------------------------------------------
 # Configuration
@@ -29,10 +39,10 @@ from akd_ext.agents.closed_loop._base import ClosedLoopStageConfig, append_conte
 
 
 class InterpretationPaperAssemblyConfig(ClosedLoopStageConfig):
-    """Configuration for Interpretation & Paper Assembly Agent.
+    """Configuration for Stage-6 Interpretation & Paper Assembly Agent.
 
-    Subclass and override system_prompt, context_files, and description
-    to specialize for a specific domain.
+    Subclass and override ``system_prompt``, ``context_files``, and
+    ``description`` to specialize for a specific domain.
     """
 
     system_prompt: str = Field(default="")
@@ -42,32 +52,42 @@ class InterpretationPaperAssemblyConfig(ClosedLoopStageConfig):
 
 
 # -----------------------------------------------------------------------------
-# Public Input/Output Schemas
+# Input / Output Schemas
 # -----------------------------------------------------------------------------
 
 
 class InterpretationPaperAssemblyInputSchema(InputSchema):
-    """Input schema for Interpretation & Paper Assembly Agent."""
+    """Input schema for Stage-6 Interpretation & Paper Assembly Agent."""
 
-    research_question: str = Field(..., description="Research question content as a string")
-    experiment_output_dir: str = Field(
-        ..., description="Path to directory containing experiment artifacts from the previous stage"
+    hypothesis: str = Field(
+        ...,
+        description="Stage-1 feasibility report (CapabilityFeasibilityMapper output).",
     )
-    figures_dir: str | None = Field(
-        default=None, description="Optional path to figures directory; triggers report generation when provided"
+    experiment_design: str = Field(
+        ...,
+        description="Stage-3 workflow spec (WorkflowSpecBuilder output).",
+    )
+    implementation_report: str = Field(
+        default="",
+        description="Stage-4 implementation report (ExperimentImplementation output).",
+    )
+    experiment_analysis: str = Field(
+        ...,
+        description="Stage-5 experiment analysis markdown (ExperimentAnalysis output).",
     )
 
 
 class InterpretationPaperAssemblyOutputSchema(OutputSchema):
-    """Use this schema to return the analysis and assembly report.
-    Put the full report describing artifacts created in the report field.
-    Use TextOutput for approval gates, clarifications, or when inputs are missing."""
+    """Stage-6 structured output — a publication-style scientific report.
+
+    Use TextOutput for clarification questions, approval gates, or when
+    inputs are missing.
+    """
 
     __response_field__ = "report"
     report: str = Field(
         default="",
-        description="Full report describing artifacts created (manifest, analysis plan, notebook, README, "
-        "markdown report)",
+        description="Complete publication-style scientific report in Markdown.",
     )
 
 
@@ -79,12 +99,11 @@ class InterpretationPaperAssemblyOutputSchema(OutputSchema):
 class InterpretationPaperAssemblyAgent(
     OpenAIBaseAgent[InterpretationPaperAssemblyInputSchema, InterpretationPaperAssemblyOutputSchema]
 ):
-    """Generic Interpretation & Paper Assembly Agent.
+    """Stage-6 paper assembly agent.
 
-    Transforms experiment outputs and research questions into structured
-    scientific analysis artifacts including manifests, notebooks, and reports.
-
-    Subclass or configure with domain-specific system_prompt and context_files.
+    Takes outputs from Stages 1, 3, 4, and 5 and produces a publication-style
+    scientific report. Domain-specific behavior is injected via the system
+    prompt and context files in the config.
     """
 
     input_schema = InterpretationPaperAssemblyInputSchema
@@ -97,5 +116,5 @@ class InterpretationPaperAssemblyAgent(
 
     def check_output(self, output) -> str | None:
         if isinstance(output, InterpretationPaperAssemblyOutputSchema) and not output.report.strip():
-            return "Report is empty. Provide a detailed report describing the artifacts created."
+            return "Report is empty. Provide a complete publication-style scientific report."
         return super().check_output(output)
