@@ -8,7 +8,7 @@ permalink-input fields.
 Public API:
   - ``intent_to_permalink_input(intent)`` — outbound (agent → app).
   - ``permalink_input_to_intent(params)`` — inbound  (app → agent).
-  - ``intent_to_url(intent, base_url=None)`` — convenience: full render.
+  - ``intent_to_url(intent, base_url=None, *, embed_mode=False)`` — convenience: full render.
   - ``url_to_intent(url)``                    — convenience: full read.
 """
 
@@ -90,8 +90,12 @@ def _time_to_instant(t: TimeWindow | None):
     return None
 
 
-def intent_to_permalink_input(intent: GeoIntent) -> WorldviewPermalinkInputSchema:
+def intent_to_permalink_input(intent: GeoIntent, *, embed_mode: bool = False) -> WorldviewPermalinkInputSchema:
     """GeoIntent → WorldviewPermalinkInputSchema.
+
+    ``embed_mode`` is a Worldview presentation option (``em=true``: minimal
+    chrome for iframes), not application state, so it is passed alongside
+    the intent rather than carried on it.
 
     Mapping:
       - viewport.bbox → bbox
@@ -113,6 +117,7 @@ def intent_to_permalink_input(intent: GeoIntent) -> WorldviewPermalinkInputSchem
         "projection": projection,
         "time": _time_to_instant(intent.time),
         "bbox": intent.viewport.bbox,
+        "embed_mode": embed_mode,
     }
 
     cmp = compare.extract(intent)
@@ -141,7 +146,8 @@ def permalink_input_to_intent(params: WorldviewPermalinkInputSchema) -> GeoInten
     """WorldviewPermalinkInputSchema → GeoIntent.
 
     Declares ``raster-styling``, ``compare``, ``chart`` extension URIs
-    when their corresponding fields are populated.
+    when their corresponding fields are populated. ``embed_mode`` is
+    dropped — it is presentation, not state.
     """
     all_layers: list[LayerSpec] = list(params.layers) + list(params.compare_layers or [])
     needs_styling = any(
@@ -198,9 +204,9 @@ def permalink_input_to_intent(params: WorldviewPermalinkInputSchema) -> GeoInten
     return intent
 
 
-def intent_to_url(intent: GeoIntent, base_url: str = DEFAULT_BASE_URL) -> str:
+def intent_to_url(intent: GeoIntent, base_url: str = DEFAULT_BASE_URL, *, embed_mode: bool = False) -> str:
     """GeoIntent → Worldview permalink URL (convenience wrapper)."""
-    params = intent_to_permalink_input(intent)
+    params = intent_to_permalink_input(intent, embed_mode=embed_mode)
     return WorldviewPermalinkTool.build_url(params, base_url)
 
 

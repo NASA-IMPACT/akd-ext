@@ -81,6 +81,28 @@ class TestGeoUIRenderIntentTool:
         for fragment in ("ca=", "l1=", "cm=swipe", "cv=60", "cha=true", "palettes"):
             assert fragment in result.url
 
+    @pytest.mark.asyncio
+    async def test_embed_mode_off_by_default(self, simple_intent):
+        tool = GeoUIRenderIntentTool()
+        result = await tool.arun(GeoUIRenderIntentInputSchema(intent=simple_intent))
+        assert "em=" not in result.url
+
+    @pytest.mark.asyncio
+    async def test_embed_mode_opt_in(self, simple_intent):
+        tool = GeoUIRenderIntentTool()
+        result = await tool.arun(GeoUIRenderIntentInputSchema(intent=simple_intent, embed_mode=True))
+        assert "em=true" in result.url
+
+    @pytest.mark.asyncio
+    async def test_antimeridian_chart_area_renders_unwrapped(self, simple_intent):
+        intent = chart.inject(
+            simple_intent,
+            chart.ChartFields(layer="MODIS_Aqua_Aerosol", area=[120, -60, -70, 65]),
+        )
+        tool = GeoUIRenderIntentTool()
+        result = await tool.arun(GeoUIRenderIntentInputSchema(intent=intent))
+        assert "chc=120,-60,290,65" in result.url
+
 
 class TestGeoUIGetStateTool:
     @pytest.mark.asyncio
@@ -117,6 +139,33 @@ class TestGeoUIGetStateTool:
         assert ch is not None
         assert ch.layer == "MODIS_Aqua_Aerosol"
         assert ch.autoload is True
+
+    @pytest.mark.asyncio
+    async def test_round_trip_antimeridian_chart_area(self, simple_intent):
+        intent = chart.inject(
+            simple_intent,
+            chart.ChartFields(layer="MODIS_Aqua_Aerosol", area=[120, -60, -70, 65]),
+        )
+        rendered = await GeoUIRenderIntentTool().arun(GeoUIRenderIntentInputSchema(intent=intent))
+        parsed = await GeoUIGetStateTool().arun(GeoUIGetStateInputSchema(url=rendered.url))
+
+        ch = chart.extract(parsed.intent)
+        assert ch is not None
+        assert ch.area == [120, -60, 290, 65]
+
+    @pytest.mark.asyncio
+    async def test_round_trip_compare_time_defaults_to_side_a(self, simple_intent):
+        intent = compare.inject(
+            simple_intent,
+            compare.CompareFields(layers=[LayerRef(id="MODIS_Aqua_Aerosol")], mode="swipe"),
+        )
+        rendered = await GeoUIRenderIntentTool().arun(GeoUIRenderIntentInputSchema(intent=intent))
+        assert "t1=2025-09-15" in rendered.url
+
+        parsed = await GeoUIGetStateTool().arun(GeoUIGetStateInputSchema(url=rendered.url))
+        cmp = compare.extract(parsed.intent)
+        assert cmp is not None
+        assert str(cmp.time.instant) == "2025-09-15"
 
 
 class TestMCPRegistration:
