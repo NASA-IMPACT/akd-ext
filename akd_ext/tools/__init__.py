@@ -32,6 +32,23 @@ from .code_search.repository_search import (
     RepositorySearchToolOutputSchema,
     RepositorySearchToolConfig,
 )
+from .ads import (
+    ADSLinksResolverInputSchema,
+    ADSLinksResolverOutputSchema,
+    ADSLinksResolverTool,
+    ADSPaper,
+    ADSSearchTool,
+    ADSSearchToolInputSchema,
+    ADSSearchToolOutputSchema,
+    ADSToolConfig,
+)
+from .ascl import (
+    ASCLEntry,
+    ASCLSearchTool,
+    ASCLSearchToolConfig,
+    ASCLSearchToolInputSchema,
+    ASCLSearchToolOutputSchema,
+)
 
 __all__ = [
     "DummyTool",
@@ -58,4 +75,17 @@ __all__ = [
     "RepositorySearchToolInputSchema",
     "RepositorySearchToolOutputSchema",
     "RepositorySearchToolConfig",
+    "ADSSearchTool",
+    "ADSSearchToolInputSchema",
+    "ADSSearchToolOutputSchema",
+    "ADSToolConfig",
+    "ADSPaper",
+    "ADSLinksResolverTool",
+    "ADSLinksResolverInputSchema",
+    "ADSLinksResolverOutputSchema",
+    "ASCLEntry",
+    "ASCLSearchTool",
+    "ASCLSearchToolConfig",
+    "ASCLSearchToolInputSchema",
+    "ASCLSearchToolOutputSchema",
 ]
