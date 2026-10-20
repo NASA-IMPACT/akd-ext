@@ -50,6 +50,3 @@ __all__ = [
     "WorldviewPermalinkOutputSchema",
     "WorldviewPermalinkTool",
 ]
-
-
-
