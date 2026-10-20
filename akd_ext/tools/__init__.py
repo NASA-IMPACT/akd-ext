@@ -52,7 +52,3 @@ __all__ = [
     "UMMVisLookupToolInputSchema",
     "UMMVisLookupToolOutputSchema",
 ]
-
-
-
-
