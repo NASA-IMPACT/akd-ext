@@ -22,6 +22,7 @@ dependencies = [
     "fastmcp>=2.0.0,<3.2.4",
     "griffe>=1.0.0,<2",
     "openai-agents>=0.6.7",
+    "opencv-python-headless>=4.10",
     "pydantic-ai>=1.81.0",
     "PyGithub>=2.1.1",
 ]
@@ -74,7 +75,11 @@ markers = [
 ]
 
 [tool.uv]
-override-dependencies = ["wrapt>=1.14", "mistralai<2"]
+override-dependencies = [
+    "wrapt>=1.14",
+    "mistralai<2",
+    "opencv-python ; sys_platform == 'never'",
+]
 
 [tool.ruff]
 target-version = "py312"
